@@ -1,0 +1,80 @@
+{
+  "name": "vde-worktree",
+  "version": "0.0.1",
+  "description": "Git worktree manager with safe defaults for humans and coding agents",
+  "type": "module",
+  "packageManager": "pnpm@10.28.2",
+  "main": "dist/index.mjs",
+  "module": "dist/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "dist/index.d.mts",
+  "bin": {
+    "vde-worktree": "./bin/vde-worktree",
+    "vw": "./bin/vw"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "clean": "rm -rf dist",
+    "dev": "tsdown --watch",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "pnpm build && vitest run",
+    "ci": "concurrently -n format,typecheck,lint,test -p \"{name}\" --pad-prefix --kill-others-on-fail \"pnpm run format:check\" \"pnpm run typecheck\" \"pnpm run lint\" \"pnpm run test\"",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "typecheck": "tsc -b",
+    "prepublishOnly": "pnpm clean && pnpm build"
+  },
+  "keywords": [
+    "git",
+    "worktree",
+    "cli",
+    "fzf",
+    "vde"
+  ],
+  "author": "Yuki Yano",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuki-yano/vde-worktree.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yuki-yano/vde-worktree/issues"
+  },
+  "homepage": "https://github.com/yuki-yano/vde-worktree#readme",
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "citty": "^0.2.0",
+    "execa": "^9.6.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^24.5.2",
+    "@vitest/coverage-v8": "^3.2.4",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.35.0",
+    "eslint-config-prettier": "^10.1.5",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
+    "tsdown": "^0.20.1",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.1",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

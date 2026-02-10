@@ -1,0 +1,139 @@
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path"
+import { runGitCommand } from "../git/exec"
+import { createCliError } from "./errors"
+
+export type RepoContext = {
+  readonly repoRoot: string
+  readonly currentWorktreeRoot: string
+  readonly gitCommonDir: string
+}
+
+const GIT_DIR_NAME = ".git"
+
+const resolveRepoRootFromCommonDir = ({
+  currentWorktreeRoot,
+  gitCommonDir,
+}: {
+  readonly currentWorktreeRoot: string
+  readonly gitCommonDir: string
+}): string => {
+  if (gitCommonDir.endsWith(`/${GIT_DIR_NAME}`)) {
+    return dirname(gitCommonDir)
+  }
+
+  if (gitCommonDir.endsWith(`\\${GIT_DIR_NAME}`)) {
+    return dirname(gitCommonDir)
+  }
+
+  return currentWorktreeRoot
+}
+
+export const resolveRepoContext = async (cwd: string): Promise<RepoContext> => {
+  const toplevelResult = await runGitCommand({
+    cwd,
+    args: ["rev-parse", "--show-toplevel"],
+    reject: false,
+  })
+
+  if (toplevelResult.exitCode !== 0) {
+    throw createCliError("NOT_GIT_REPOSITORY", {
+      message: "Current directory is not inside a Git repository",
+      details: { cwd },
+    })
+  }
+
+  const currentWorktreeRoot = toplevelResult.stdout.trim()
+  const commonDirResult = await runGitCommand({
+    cwd,
+    args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    reject: false,
+  })
+  const gitCommonDir =
+    commonDirResult.exitCode === 0 ? commonDirResult.stdout.trim() : join(currentWorktreeRoot, GIT_DIR_NAME)
+
+  return {
+    repoRoot: resolveRepoRootFromCommonDir({ currentWorktreeRoot, gitCommonDir }),
+    currentWorktreeRoot,
+    gitCommonDir,
+  }
+}
+
+export const getWorktreeRootPath = (repoRoot: string): string => {
+  return join(repoRoot, ".worktree")
+}
+
+export const getWorktreeMetaRootPath = (repoRoot: string): string => {
+  return join(repoRoot, ".vde", "worktree")
+}
+
+export const getHooksDirectoryPath = (repoRoot: string): string => {
+  return join(getWorktreeMetaRootPath(repoRoot), "hooks")
+}
+
+export const getLogsDirectoryPath = (repoRoot: string): string => {
+  return join(getWorktreeMetaRootPath(repoRoot), "logs")
+}
+
+export const getLocksDirectoryPath = (repoRoot: string): string => {
+  return join(getWorktreeMetaRootPath(repoRoot), "locks")
+}
+
+export const getStateDirectoryPath = (repoRoot: string): string => {
+  return join(getWorktreeMetaRootPath(repoRoot), "state")
+}
+
+export const branchToWorktreeId = (branch: string): string => {
+  return encodeURIComponent(branch)
+}
+
+export const branchToWorktreePath = (repoRoot: string, branch: string): string => {
+  return join(getWorktreeRootPath(repoRoot), branchToWorktreeId(branch))
+}
+
+export const ensurePathInsideRepo = ({
+  repoRoot,
+  path,
+}: {
+  readonly repoRoot: string
+  readonly path: string
+}): string => {
+  const rel = relative(repoRoot, path)
+  if (rel === "") {
+    return path
+  }
+  if (rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw createCliError("PATH_OUTSIDE_REPO", {
+      message: "Path is outside repository root",
+      details: { repoRoot, path },
+    })
+  }
+  return path
+}
+
+export const resolveRepoRelativePath = ({
+  repoRoot,
+  relativePath,
+}: {
+  readonly repoRoot: string
+  readonly relativePath: string
+}): string => {
+  if (isAbsolute(relativePath)) {
+    throw createCliError("ABSOLUTE_PATH_NOT_ALLOWED", {
+      message: "Absolute path is not allowed",
+      details: { path: relativePath },
+    })
+  }
+  const normalizedRelative = normalize(relativePath)
+  const resolved = resolve(repoRoot, normalizedRelative)
+  return ensurePathInsideRepo({
+    repoRoot,
+    path: resolved,
+  })
+}
+
+export const resolvePathFromCwd = ({ cwd, path }: { readonly cwd: string; readonly path: string }): string => {
+  if (isAbsolute(path)) {
+    return path
+  }
+  return resolve(cwd, path)
+}
