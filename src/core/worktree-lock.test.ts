@@ -108,13 +108,13 @@ describe("worktree lock", () => {
       })}\n`,
       "utf8",
     )
-    const invalidRecord = await readWorktreeLock({
+    const validRecord = await readWorktreeLock({
       repoRoot,
       branch: "feature/a",
     })
-    expect(invalidRecord.exists).toBe(true)
-    expect(invalidRecord.valid).toBe(true)
-    expect(invalidRecord.record?.reason).toBe("")
+    expect(validRecord.exists).toBe(true)
+    expect(validRecord.valid).toBe(true)
+    expect(validRecord.record?.reason).toBe("")
   })
 
   it("marks lock metadata as invalid when file cannot be read as text", async () => {

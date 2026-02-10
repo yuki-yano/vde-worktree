@@ -1,8 +1,7 @@
 import { constants as fsConstants } from "node:fs"
 import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
-import { hostname } from "node:os"
+import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it } from "vitest"
 import { acquireRepoLock, readNumberFromEnvOrDefault, withRepoLock } from "./repo-lock"
 
@@ -163,6 +162,11 @@ describe("acquireRepoLock", () => {
   })
 
   it("throws stale recovery error when stale lock cannot be removed", async () => {
+    // rm succeeds as root regardless of directory permissions.
+    if (process.getuid?.() === 0) {
+      return
+    }
+
     const repoRoot = await createRepoRoot()
     const stateDir = join(repoRoot, ".vde", "worktree", "state")
     const lockPath = join(stateDir, "repo.lock")

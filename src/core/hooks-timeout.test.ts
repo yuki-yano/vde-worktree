@@ -32,7 +32,7 @@ afterEach(async () => {
   tempDirs.clear()
 })
 
-describe("runPreHook timeout handling", () => {
+describe("hook execution error handling", () => {
   it("maps timeout errors to HOOK_TIMEOUT", async () => {
     const repoRoot = await createRepoRoot()
     const hookPath = join(repoRoot, ".vde", "worktree", "hooks", "pre-switch")

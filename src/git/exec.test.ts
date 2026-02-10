@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { execa } from "execa"
-import { doesGitRefExist, runGitCommand } from "./exec"
 
 vi.mock("execa", () => {
   return {
     execa: vi.fn(),
   }
 })
+
+import { execa } from "execa"
+import { doesGitRefExist, runGitCommand } from "./exec"
 
 const mockedExeca = vi.mocked(execa)
 
