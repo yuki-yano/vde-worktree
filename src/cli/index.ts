@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { parseArgs } from "citty"
 import type { ArgsDef } from "citty"
 import { execa } from "execa"
+import stringWidth from "string-width"
 import {
   DEFAULT_HOOK_TIMEOUT_MS,
   DEFAULT_LOCK_TIMEOUT_MS,
@@ -932,6 +933,28 @@ const ensureBranchIsNotPrimary = ({
   })
 }
 
+const formatDisplayPath = (absolutePath: string): string => {
+  const homeDirectory = homedir()
+  if (homeDirectory.length === 0) {
+    return absolutePath
+  }
+  if (absolutePath === homeDirectory) {
+    return "~"
+  }
+  if (absolutePath.startsWith(`${homeDirectory}${sep}`)) {
+    return `~${absolutePath.slice(homeDirectory.length)}`
+  }
+  return absolutePath
+}
+
+const padEndByWidth = (value: string, targetWidth: number): string => {
+  const width = stringWidth(value)
+  if (width >= targetWidth) {
+    return value
+  }
+  return `${value}${" ".repeat(targetWidth - width)}`
+}
+
 const containsBranch = ({
   branch,
   worktrees,
@@ -1441,9 +1464,18 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           return EXIT_CODE.OK
         }
 
-        for (const worktree of snapshot.worktrees) {
-          const branch = worktree.branch ?? "(detached)"
-          stdout(`${branch}\t${worktree.path}`)
+        const rows = snapshot.worktrees.map((worktree) => {
+          return {
+            branch: worktree.branch ?? "(detached)",
+            path: formatDisplayPath(worktree.path),
+          }
+        })
+        const branchWidth = rows.reduce((max, row) => {
+          return Math.max(max, stringWidth(row.branch))
+        }, 0)
+
+        for (const row of rows) {
+          stdout(`${padEndByWidth(row.branch, branchWidth)}  ${row.path}`)
         }
         return EXIT_CODE.OK
       }
@@ -1477,7 +1509,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         }
 
         stdout(`branch: ${targetWorktree.branch ?? "(detached)"}`)
-        stdout(`path: ${targetWorktree.path}`)
+        stdout(`path: ${formatDisplayPath(targetWorktree.path)}`)
         stdout(`dirty: ${targetWorktree.dirty ? "true" : "false"}`)
         stdout(`locked: ${targetWorktree.locked.value ? "true" : "false"}`)
         return EXIT_CODE.OK

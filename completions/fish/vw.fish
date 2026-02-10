@@ -6,6 +6,66 @@ function __vw_worktree_branches
     | sort -u
 end
 
+function __vw_current_bin
+  set -l tokens (commandline -opc)
+  if test (count $tokens) -ge 1
+    set -l candidate $tokens[1]
+    if command -sq $candidate
+      echo $candidate
+      return
+    end
+  end
+
+  if command -sq vw
+    echo vw
+    return
+  end
+  if command -sq vde-worktree
+    echo vde-worktree
+    return
+  end
+end
+
+function __vw_worktree_candidates_with_meta
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+  set -l vw_bin (__vw_current_bin)
+  test -n "$vw_bin"; or return 0
+
+  command $vw_bin list --json 2>/dev/null | command node -e '
+const fs = require("fs")
+const home = process.env.HOME || ""
+const toDisplayPath = (path) => {
+  if (typeof path !== "string" || path.length === 0) return ""
+  if (home.length === 0) return path
+  if (path === home) return "~"
+  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`
+  return path
+}
+const toFlag = (value) => {
+  if (value === true) return "yes"
+  if (value === false) return "no"
+  return "unknown"
+}
+let payload
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf8"))
+} catch {
+  process.exit(0)
+}
+const worktrees = Array.isArray(payload.worktrees) ? payload.worktrees : []
+for (const worktree of worktrees) {
+  if (typeof worktree?.branch !== "string" || worktree.branch.length === 0) continue
+  const merged = toFlag(worktree?.merged?.overall)
+  const dirty = worktree?.dirty === true ? "yes" : "no"
+  const locked = worktree?.locked?.value === true ? "yes" : "no"
+  const path = toDisplayPath(worktree?.path)
+  const summary = `merged=${merged} dirty=${dirty} locked=${locked}${path ? ` path=${path}` : ""}`
+  const sanitized = summary.replace(/[\t\r\n]+/g, " ").trim()
+  process.stdout.write(`${worktree.branch}\t${sanitized}\n`)
+}
+' 2>/dev/null
+end
+
 function __vw_local_branches
   command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
   command git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | sort -u
@@ -66,17 +126,17 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -s h -l help -d "Show help"
   complete -c $__vw_bin -s v -l version -d "Show version"
 
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from status" -a "(__vw_worktree_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from path" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from status" -a "(__vw_worktree_candidates_with_meta)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from path" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from switch" -a "(__vw_switch_branches)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from mv" -a "(__vw_local_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from get" -a "(__vw_remote_branches)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_switch_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from exec" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from exec" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from invoke" -a "(__vw_hook_names)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -a "(__vw_worktree_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from unlock" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -a "(__vw_worktree_candidates_with_meta)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unlock" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from help" -a "$__vw_commands"
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -l force-dirty -d "Allow dirty worktree for del"
