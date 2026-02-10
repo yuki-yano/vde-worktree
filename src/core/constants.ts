@@ -37,6 +37,7 @@ export const COMMAND_NAMES = {
   LOCK: "lock",
   UNLOCK: "unlock",
   CD: "cd",
+  COMPLETION: "completion",
 } as const
 
 export const WRITE_COMMANDS = new Set<string>([

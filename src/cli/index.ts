@@ -1,7 +1,9 @@
 import { constants as fsConstants } from "node:fs"
-import { access, cp, mkdir, readdir, rm, symlink } from "node:fs/promises"
+import { access, cp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
-import { dirname, relative, resolve, sep } from "node:path"
+import { homedir } from "node:os"
+import { dirname, join, relative, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 import { parseArgs } from "citty"
 import type { ArgsDef } from "citty"
 import { execa } from "execa"
@@ -85,6 +87,8 @@ type ParsedForceFlags = {
   readonly forceLocked: boolean
 }
 
+type CompletionShell = "zsh" | "fish"
+
 type CommandHelp = {
   readonly name: string
   readonly usage: string
@@ -97,6 +101,11 @@ type CommandHelp = {
 const EXIT_CODE_CANCELLED = 130
 
 const optionNamesAllowOptionLikeValue = new Set(["fzfArg", "fzf-arg"])
+const COMPLETION_SHELLS: readonly CompletionShell[] = ["zsh", "fish"] as const
+const COMPLETION_FILE_BY_SHELL: Readonly<Record<CompletionShell, string>> = {
+  zsh: "zsh/_vw",
+  fish: "fish/vw.fish",
+}
 
 const commandHelpEntries: readonly CommandHelp[] = [
   {
@@ -221,6 +230,16 @@ const commandHelpEntries: readonly CommandHelp[] = [
     summary: "Interactive fzf picker that prints selected worktree absolute path.",
     details: ['Use with shell: cd "$(vw cd)"'],
     options: ["--prompt <text>", "--fzf-arg <arg>"],
+  },
+  {
+    name: "completion",
+    usage: "vw completion <zsh|fish> [--install] [--path <file>]",
+    summary: "Print or install shell completion scripts.",
+    details: [
+      "Without --install, prints completion script to stdout.",
+      "With --install, writes completion file to default shell path or --path.",
+    ],
+    options: ["--install", "--path <file>"],
   },
 ] as const
 
@@ -589,7 +608,7 @@ const buildJsonSuccess = ({
 }: {
   readonly command: string
   readonly status: JsonSuccessStatus
-  readonly repoRoot: string
+  readonly repoRoot: string | null
   readonly details?: Record<string, unknown>
 }): JsonSuccess => {
   return {
@@ -722,6 +741,90 @@ const resolveRemoteAndBranch = (
     remote: remoteBranch.slice(0, separatorIndex),
     branch: remoteBranch.slice(separatorIndex + 1),
   }
+}
+
+const resolveCompletionShell = (value: string): CompletionShell => {
+  if (COMPLETION_SHELLS.includes(value as CompletionShell)) {
+    return value as CompletionShell
+  }
+
+  throw createCliError("INVALID_ARGUMENT", {
+    message: `Unsupported shell for completion: ${value}`,
+    details: {
+      value,
+      supported: COMPLETION_SHELLS,
+    },
+  })
+}
+
+const resolveCompletionSourceCandidates = (shell: CompletionShell): string[] => {
+  const relativeCompletionFile = COMPLETION_FILE_BY_SHELL[shell]
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url))
+  return [
+    resolve(moduleDirectory, "..", "..", "completions", relativeCompletionFile),
+    resolve(moduleDirectory, "..", "completions", relativeCompletionFile),
+    resolve(process.cwd(), "completions", relativeCompletionFile),
+  ]
+}
+
+const loadCompletionScript = async (shell: CompletionShell): Promise<string> => {
+  const candidates = resolveCompletionSourceCandidates(shell)
+  for (const candidate of candidates) {
+    try {
+      return await readFile(candidate, "utf8")
+    } catch {
+      continue
+    }
+  }
+
+  throw createCliError("INTERNAL_ERROR", {
+    message: `Completion template not found for shell: ${shell}`,
+    details: {
+      shell,
+      candidates,
+    },
+  })
+}
+
+const resolveDefaultCompletionInstallPath = (shell: CompletionShell): string => {
+  const homeDirectory = homedir()
+  if (homeDirectory.length === 0) {
+    throw createCliError("INTERNAL_ERROR", {
+      message: "Unable to resolve home directory for completion installation",
+      details: {
+        shell,
+      },
+    })
+  }
+
+  if (shell === "zsh") {
+    return join(homeDirectory, ".zsh", "completions", "_vw")
+  }
+  return join(homeDirectory, ".config", "fish", "completions", "vw.fish")
+}
+
+const resolveCompletionInstallPath = ({
+  shell,
+  requestedPath,
+}: {
+  readonly shell: CompletionShell
+  readonly requestedPath?: string
+}): string => {
+  if (typeof requestedPath === "string" && requestedPath.trim().length > 0) {
+    return resolve(requestedPath)
+  }
+  return resolveDefaultCompletionInstallPath(shell)
+}
+
+const installCompletionScript = async ({
+  content,
+  destinationPath,
+}: {
+  readonly content: string
+  readonly destinationPath: string
+}): Promise<void> => {
+  await mkdir(dirname(destinationPath), { recursive: true })
+  await writeFile(destinationPath, content, "utf8")
 }
 
 const normalizeHookName = (value: string): string => {
@@ -883,6 +986,7 @@ const renderGeneralHelpText = ({ version }: { readonly version: string }): strin
     "Examples:",
     "  vw switch feature/foo",
     '  cd "$(vw cd)"',
+    "  vw completion zsh --install",
     "  vw del feature/foo --force-unmerged --allow-unpushed --allow-unsafe",
   ].join("\n")
 }
@@ -1073,6 +1177,15 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       description: "Enable fallback behavior (disable with --no-fallback)",
       default: true,
     },
+    install: {
+      type: "boolean",
+      description: "Install generated artifacts to default location (used by completion command)",
+    },
+    path: {
+      type: "string",
+      valueHint: "path",
+      description: "Custom file path (used by completion command install)",
+    },
     help: {
       type: "boolean",
       alias: "h",
@@ -1150,6 +1263,68 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
+      const commandArgs = positionals.slice(1)
+      if (command === "completion") {
+        ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
+        const shell = resolveCompletionShell(commandArgs[0] as string)
+        const script = await loadCompletionScript(shell)
+
+        if (parsedArgs.install === true) {
+          const destinationPath = resolveCompletionInstallPath({
+            shell,
+            requestedPath: readStringOption(parsedArgsRecord, "path"),
+          })
+          await installCompletionScript({
+            content: script,
+            destinationPath,
+          })
+
+          if (jsonEnabled) {
+            stdout(
+              JSON.stringify(
+                buildJsonSuccess({
+                  command,
+                  status: "ok",
+                  repoRoot: null,
+                  details: {
+                    shell,
+                    installed: true,
+                    path: destinationPath,
+                  },
+                }),
+              ),
+            )
+            return EXIT_CODE.OK
+          }
+
+          stdout(`installed completion: ${destinationPath}`)
+          if (shell === "zsh") {
+            stdout("zsh note: ensure completion path is in fpath, then run: autoload -Uz compinit && compinit")
+          }
+          return EXIT_CODE.OK
+        }
+
+        if (jsonEnabled) {
+          stdout(
+            JSON.stringify(
+              buildJsonSuccess({
+                command,
+                status: "ok",
+                repoRoot: null,
+                details: {
+                  shell,
+                  installed: false,
+                  script,
+                },
+              }),
+            ),
+          )
+          return EXIT_CODE.OK
+        }
+        stdout(script)
+        return EXIT_CODE.OK
+      }
+
       const allowUnsafe = parsedArgs.allowUnsafe === true
       if (parsedArgs.hooks === false && allowUnsafe !== true) {
         throw createCliError("UNSAFE_FLAG_REQUIRED", {
@@ -1192,7 +1367,6 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         defaultValue: DEFAULT_STALE_LOCK_TTL_SECONDS,
       })
 
-      const commandArgs = positionals.slice(1)
       const runWriteOperation = async <T>(task: () => Promise<T>): Promise<T> => {
         if (WRITE_COMMANDS.has(command) !== true) {
           return task()

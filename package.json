@@ -53,6 +53,7 @@
   "files": [
     "dist",
     "bin",
+    "completions",
     "README.md"
   ],
   "dependencies": {

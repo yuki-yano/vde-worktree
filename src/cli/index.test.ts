@@ -99,7 +99,49 @@ describe("createCli", () => {
     expect(text).toContain("Usage:")
     expect(text).toContain("Commands:")
     expect(text).toContain("switch")
+    expect(text).toContain("completion")
     expect(text).toContain("help <command>")
+  })
+
+  it("prints zsh completion script outside git repository", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "vde-worktree-completion-"))
+    tempDirs.add(cwd)
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd,
+      stdout: (line) => stdout.push(line),
+      stderr: (line) => stderr.push(line),
+    })
+
+    const exitCode = await cli.run(["completion", "zsh"])
+    expect(exitCode).toBe(0)
+
+    const text = expectSingleStdoutLine(stdout)
+    expect(text).toContain("#compdef vw vde-worktree")
+    expect(text).toContain("completion")
+    expect(stderr).toEqual([])
+  })
+
+  it("installs fish completion script to custom path", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "vde-worktree-completion-install-"))
+    tempDirs.add(cwd)
+    const targetPath = join(cwd, "fish", "completions", "vw.fish")
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd,
+      stdout: (line) => stdout.push(line),
+      stderr: (line) => stderr.push(line),
+    })
+
+    const exitCode = await cli.run(["completion", "fish", "--install", "--path", targetPath])
+    expect(exitCode).toBe(0)
+
+    const installed = await readFile(targetPath, "utf8")
+    expect(installed).toContain("complete -c $__vw_bin")
+    expect(expectSingleStdoutLine(stdout)).toContain(targetPath)
+    expect(stderr).toEqual([])
   })
 
   it("prints command-specific help via help subcommand", async () => {
