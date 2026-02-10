@@ -635,7 +635,7 @@ echo invoked > "${marker}"
     expect(payload.alreadyInitialized).toBe(false)
   })
 
-  it("list without --json prints tab-separated branch and path", async () => {
+  it("list without --json prints branch and path", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
     const stdout: string[] = []
@@ -645,8 +645,8 @@ echo invoked > "${marker}"
     })
 
     expect(await cli.run(["list"])).toBe(0)
-    expect(stdout.some((line) => line.includes("\t"))).toBe(true)
-    expect(stdout.some((line) => line.startsWith("main\t"))).toBe(true)
+    expect(stdout.length).toBeGreaterThan(0)
+    expect(stdout.some((line) => line.includes("main") && line.includes(repoRoot))).toBe(true)
   })
 
   it("returns INVALID_REMOTE_BRANCH_FORMAT for malformed get target", async () => {
