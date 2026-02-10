@@ -25,6 +25,14 @@ Japanese documentation: [README.ja.md](./README.ja.md)
 
 ## Install / Build
 
+Global install:
+
+```bash
+npm install -g vde-worktree
+```
+
+Local build:
+
 ```bash
 pnpm install
 pnpm run build
@@ -42,6 +50,38 @@ pnpm run ci
 vw init
 vw switch feature/foo
 cd "$(vw cd)"
+```
+
+`vw cd` prints the selected worktree path. It cannot change the parent shell directory by itself.
+
+## Shell Completion
+
+Generate from command:
+
+```bash
+vw completion zsh
+vw completion fish
+```
+
+Install to default locations:
+
+```bash
+vw completion zsh --install
+vw completion fish --install
+```
+
+Install to custom file path:
+
+```bash
+vw completion zsh --install --path ~/.zsh/completions/_vw
+vw completion fish --install --path ~/.config/fish/completions/vw.fish
+```
+
+For zsh, ensure completion path is loaded:
+
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
 ```
 
 ## Managed Directories
@@ -291,6 +331,18 @@ cd "$(vw cd)"
 What it does:
 - Interactive worktree picker via `fzf`
 - Prints selected absolute path to stdout
+
+### `completion`
+
+```bash
+vw completion zsh
+vw completion fish
+vw completion zsh --install
+```
+
+What it does:
+- Prints completion script for zsh/fish
+- With `--install`, writes completion file to shell default path or `--path`
 
 ## Merge Status (Local + PR)
 

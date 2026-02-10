@@ -25,6 +25,14 @@
 
 ## インストール / ビルド
 
+グローバルインストール:
+
+```bash
+npm install -g vde-worktree
+```
+
+ローカルビルド:
+
 ```bash
 pnpm install
 pnpm run build
@@ -42,6 +50,38 @@ pnpm run ci
 vw init
 vw switch feature/foo
 cd "$(vw cd)"
+```
+
+`vw cd` は選択した worktree の path を出力するコマンドです。親シェルのディレクトリは直接変更できません。
+
+## シェル補完
+
+コマンドから補完スクリプトを出力:
+
+```bash
+vw completion zsh
+vw completion fish
+```
+
+デフォルトの配置先にインストール:
+
+```bash
+vw completion zsh --install
+vw completion fish --install
+```
+
+カスタム配置先にインストール:
+
+```bash
+vw completion zsh --install --path ~/.zsh/completions/_vw
+vw completion fish --install --path ~/.config/fish/completions/vw.fish
+```
+
+zsh は `fpath` に補完ディレクトリを追加して `compinit` を実行してください:
+
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
 ```
 
 ## 管理ディレクトリ
@@ -291,6 +331,18 @@ cd "$(vw cd)"
 機能:
 - `fzf` で worktree を対話選択
 - 選択した絶対 path を stdout に出力
+
+### `completion`
+
+```bash
+vw completion zsh
+vw completion fish
+vw completion zsh --install
+```
+
+機能:
+- zsh / fish 向け補完スクリプトを出力
+- `--install` 指定時はデフォルトまたは `--path` に補完ファイルを書き込む
 
 ## merged 判定（ローカル + PR）
 
