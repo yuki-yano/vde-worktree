@@ -85,14 +85,9 @@ describe("doesGitRefExist", () => {
       cwd: "/repo",
       reject: false,
     })
-    expect(mockedExeca).toHaveBeenNthCalledWith(
-      2,
-      "git",
-      ["show-ref", "--verify", "--quiet", "refs/heads/missing"],
-      {
-        cwd: "/repo",
-        reject: false,
-      },
-    )
+    expect(mockedExeca).toHaveBeenNthCalledWith(2, "git", ["show-ref", "--verify", "--quiet", "refs/heads/missing"], {
+      cwd: "/repo",
+      reject: false,
+    })
   })
 })
