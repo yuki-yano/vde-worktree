@@ -2528,7 +2528,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           prompt,
           fzfExtraArgs,
           cwd: repoRoot,
-          isInteractive: () => runtime.isInteractive,
+          isInteractive: () => runtime.isInteractive || process.stderr.isTTY === true,
         }).catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error)
           if (message.includes("interactive terminal") || message.includes("fzf is required")) {

@@ -341,6 +341,57 @@ describe("createCli", () => {
     expect(candidates).toContain(join(repoRoot, ".worktree", "feature%2Ffoo"))
   })
 
+  it("cd allows command-substitution style execution when stderr is TTY", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const mutableStderr = process.stderr as NodeJS.WriteStream & { isTTY?: boolean }
+    const hadOwnIsTTY = Object.prototype.hasOwnProperty.call(mutableStderr, "isTTY")
+    const previousIsTTY = mutableStderr.isTTY
+
+    Object.defineProperty(mutableStderr, "isTTY", {
+      value: true,
+      configurable: true,
+      writable: true,
+    })
+
+    try {
+      const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(
+        async (input) => {
+          expect(input.isInteractive?.()).toBe(true)
+          return {
+            status: "selected" as const,
+            path: join(repoRoot, ".worktree", "feature%2Ffoo"),
+          }
+        },
+      )
+
+      const cli = createCli({
+        cwd: repoRoot,
+        stdout: (line) => stdout.push(line),
+        selectPathWithFzf,
+        isInteractive: () => false,
+      })
+
+      expect(await cli.run(["init"])).toBe(0)
+      expect(await cli.run(["switch", "feature/foo"])).toBe(0)
+      stdout.length = 0
+
+      expect(await cli.run(["cd"])).toBe(0)
+      expect(stdout).toEqual([join(repoRoot, ".worktree", "feature%2Ffoo")])
+    } finally {
+      if (hadOwnIsTTY) {
+        Object.defineProperty(mutableStderr, "isTTY", {
+          value: previousIsTTY,
+          configurable: true,
+          writable: true,
+        })
+      } else {
+        Reflect.deleteProperty(mutableStderr as unknown as Record<string, unknown>, "isTTY")
+      }
+    }
+  })
+
   it("fails with exit code 4 when --no-hooks is used without --allow-unsafe", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
