@@ -728,7 +728,7 @@ echo invoked > "${marker}"
     expect(payload.alreadyInitialized).toBe(false)
   })
 
-  it("list without --json prints branch and path", async () => {
+  it("list without --json prints branch, flags, and path", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
     const stdout: string[] = []
@@ -737,9 +737,41 @@ echo invoked > "${marker}"
       stdout: (line) => stdout.push(line),
     })
 
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/list"])).toBe(0)
+    stdout.length = 0
+
     expect(await cli.run(["list"])).toBe(0)
     expect(stdout.length).toBeGreaterThan(0)
-    expect(stdout.some((line) => line.includes("main") && line.includes(repoRoot))).toBe(true)
+
+    const text = stdout.join("\n")
+    expect(text).toContain("branch")
+    expect(text).toContain("dirty")
+    expect(text).toContain("merged")
+    expect(text).toContain("locked")
+    expect(text).toContain("path")
+    expect(stdout.some((line) => line.startsWith("┌") || line.startsWith("+"))).toBe(true)
+
+    const mainLine = stdout.find((line) => line.includes("* main"))
+    expect(mainLine).toBeDefined()
+    const mainCells = (mainLine as string)
+      .split(/[│|]/)
+      .map((cell) => cell.trim())
+      .filter((cell) => cell.length > 0)
+    expect(mainCells[0]).toBe("* main")
+    expect(mainCells[1]).toBe("clean")
+    expect(mainCells[2]).toBe("-")
+    expect(mainCells[3]).toBe("-")
+    expect(mainCells[4]).toContain(repoRoot)
+
+    const featureLine = stdout.find((line) => line.includes("feature/list"))
+    expect(featureLine).toBeDefined()
+    const featureCells = (featureLine as string)
+      .split(/[│|]/)
+      .map((cell) => cell.trim())
+      .filter((cell) => cell.length > 0)
+    expect(featureCells[2]).not.toBe("-")
+    expect(["merged", "unmerged", "unknown"]).toContain(featureCells[2])
   })
 
   it("returns INVALID_REMOTE_BRANCH_FORMAT for malformed get target", async () => {

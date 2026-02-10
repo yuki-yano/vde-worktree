@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
 import { parseArgs } from "citty"
 import type { ArgsDef } from "citty"
 import { execa } from "execa"
-import stringWidth from "string-width"
+import { getBorderCharacters, table } from "table"
 import {
   DEFAULT_HOOK_TIMEOUT_MS,
   DEFAULT_LOCK_TIMEOUT_MS,
@@ -947,14 +947,6 @@ const formatDisplayPath = (absolutePath: string): string => {
   return absolutePath
 }
 
-const padEndByWidth = (value: string, targetWidth: number): string => {
-  const width = stringWidth(value)
-  if (width >= targetWidth) {
-    return value
-  }
-  return `${value}${" ".repeat(targetWidth - width)}`
-}
-
 const containsBranch = ({
   branch,
   worktrees,
@@ -1464,18 +1456,39 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           return EXIT_CODE.OK
         }
 
-        const rows = snapshot.worktrees.map((worktree) => {
-          return {
-            branch: worktree.branch ?? "(detached)",
-            path: formatDisplayPath(worktree.path),
-          }
-        })
-        const branchWidth = rows.reduce((max, row) => {
-          return Math.max(max, stringWidth(row.branch))
-        }, 0)
+        const rows: string[][] = [
+          ["branch", "dirty", "merged", "locked", "path"],
+          ...snapshot.worktrees.map((worktree) => {
+            const isBaseBranch =
+              worktree.branch !== null && snapshot.baseBranch !== null && worktree.branch === snapshot.baseBranch
+            const mergedState =
+              isBaseBranch === true
+                ? "-"
+                : worktree.merged.overall === true
+                  ? "merged"
+                  : worktree.merged.overall === false
+                    ? "unmerged"
+                    : "unknown"
+            const isCurrent = worktree.path === repoContext.currentWorktreeRoot
+            return [
+              `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`,
+              worktree.dirty ? "dirty" : "clean",
+              mergedState,
+              worktree.locked.value ? "locked" : "-",
+              formatDisplayPath(worktree.path),
+            ]
+          }),
+        ]
 
-        for (const row of rows) {
-          stdout(`${padEndByWidth(row.branch, branchWidth)}  ${row.path}`)
+        const rendered = table(rows, {
+          border: getBorderCharacters("norc"),
+          drawHorizontalLine: (lineIndex, rowCount) => {
+            return lineIndex === 0 || lineIndex === 1 || lineIndex === rowCount
+          },
+        })
+
+        for (const line of rendered.trimEnd().split("\n")) {
+          stdout(line)
         }
         return EXIT_CODE.OK
       }

@@ -1,6 +1,6 @@
 {
   "name": "vde-worktree",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Git worktree manager with safe defaults for humans and coding agents",
   "type": "module",
   "packageManager": "pnpm@10.28.2",
@@ -60,7 +60,7 @@
     "chalk": "^5.4.1",
     "citty": "^0.2.0",
     "execa": "^9.6.0",
-    "string-width": "^7.2.0"
+    "table": "^6.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
