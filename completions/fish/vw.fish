@@ -1,0 +1,110 @@
+function __vw_worktree_branches
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+  command git worktree list --porcelain 2>/dev/null \
+    | string match -r '^branch refs/heads/.+$' \
+    | string replace 'branch refs/heads/' '' \
+    | sort -u
+end
+
+function __vw_local_branches
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+  command git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | sort -u
+end
+
+function __vw_switch_branches
+  __vw_worktree_branches
+  __vw_local_branches
+end
+
+function __vw_remote_branches
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+  command git for-each-ref --format='%(refname:short)' refs/remotes 2>/dev/null \
+    | string match -rv '.*/HEAD$' \
+    | sort -u
+end
+
+function __vw_hook_names
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+  set -l repo_root (command git rev-parse --show-toplevel 2>/dev/null); or return 0
+  if test -d "$repo_root/.vde/worktree/hooks"
+    command ls -1 "$repo_root/.vde/worktree/hooks" 2>/dev/null | string match -r '^(pre|post)-' | sort -u
+  end
+end
+
+set -l __vw_commands init list status path new switch mv del gone get extract use exec invoke copy link lock unlock cd completion help
+
+for __vw_bin in vw vde-worktree
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a init -d "Initialize directories, hooks, and managed exclude entries"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a list -d "List worktrees with status metadata"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a status -d "Show a single worktree status"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a path -d "Print absolute worktree path for branch"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a new -d "Create branch + worktree under .worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a switch -d "Idempotent branch entrypoint"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a mv -d "Rename current non-primary worktree branch"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a del -d "Delete worktree + branch with safety checks"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a gone -d "Bulk cleanup by safety-filtered candidate selection"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a get -d "Fetch remote branch and attach worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a extract -d "Extract current primary branch into .worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a use -d "Checkout target branch in primary worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a exec -d "Run command in target branch worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a invoke -d "Manually run hook script"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a copy -d "Copy repo-root files/dirs to target worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a link -d "Create symlink from target worktree to repo-root file"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a lock -d "Create or update lock metadata"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a unlock -d "Remove lock metadata"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a cd -d "Interactive fzf picker"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a completion -d "Print or install shell completion scripts"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a help -d "Show help"
+
+  complete -c $__vw_bin -l json -d "Output machine-readable JSON"
+  complete -c $__vw_bin -l verbose -d "Enable verbose logs"
+  complete -c $__vw_bin -l no-hooks -d "Disable hooks for this run (requires --allow-unsafe)"
+  complete -c $__vw_bin -l allow-unsafe -d "Explicit unsafe override in non-TTY mode"
+  complete -c $__vw_bin -l strict-post-hooks -d "Fail when post hooks fail"
+  complete -c $__vw_bin -l hook-timeout-ms -r -d "Override hook timeout"
+  complete -c $__vw_bin -l lock-timeout-ms -r -d "Override lock timeout"
+  complete -c $__vw_bin -s h -l help -d "Show help"
+  complete -c $__vw_bin -s v -l version -d "Show version"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from status" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from path" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from switch" -a "(__vw_switch_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from mv" -a "(__vw_local_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from get" -a "(__vw_remote_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_switch_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from exec" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from invoke" -a "(__vw_hook_names)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unlock" -a "(__vw_worktree_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from help" -a "$__vw_commands"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -l force-dirty -d "Allow dirty worktree for del"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -l allow-unpushed -d "Allow unpushed commits for del"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -l force-unmerged -d "Allow unmerged worktree for del"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -l force-locked -d "Allow deleting locked worktree"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -l force -d "Enable all del force flags"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from gone" -l apply -d "Apply deletion"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from gone" -l dry-run -d "Dry-run mode"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l current -d "Extract current worktree branch"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l from -r -d "Path used by extract --from"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l stash -d "Allow stash when dirty"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-agent -d "Allow non-TTY execution for use"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-unsafe -d "Allow unsafe behavior in non-TTY mode"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from link" -l no-fallback -d "Disable copy fallback when symlink fails"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -l owner -r -d "Lock owner"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -l reason -r -d "Lock reason"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unlock" -l owner -r -d "Unlock owner"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unlock" -l force -d "Force unlock"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from cd" -l prompt -r -d "Custom fzf prompt"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from cd" -l fzf-arg -r -d "Extra argument passed to fzf"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from completion" -a "zsh fish" -d "Shell name"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from completion" -l install -d "Install completion file"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from completion" -l path -r -d "Install destination file path"
+end
