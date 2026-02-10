@@ -652,4 +652,261 @@ echo invoked > "${marker}"
     const head = await runGit(repoRoot, ["branch", "--show-current"])
     expect(head.trim()).toBe("feature/use")
   })
+
+  it("prints general help when command is omitted", async () => {
+    const stdout: string[] = []
+    const cli = createCli({
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run([])).toBe(0)
+    const helpText = expectSingleStdoutLine(stdout)
+    expect(helpText).toContain("Usage:")
+    expect(helpText).toContain("Commands:")
+  })
+
+  it("returns JSON error for unknown help target", async () => {
+    const stdout: string[] = []
+    const cli = createCli({
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["help", "not-found-command", "--json"])).toBe(3)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      status: string
+      command: string
+      code: string
+      repoRoot: string | null
+    }
+    expect(payload.status).toBe("error")
+    expect(payload.command).toBe("help")
+    expect(payload.code).toBe("INVALID_ARGUMENT")
+    expect(payload.repoRoot).toBeNull()
+  })
+
+  it("validates malformed options before command execution", async () => {
+    const stderr: string[] = []
+    const cli = createCli({
+      stderr: (line) => stderr.push(line),
+    })
+
+    const cases: ReadonlyArray<{ args: string[]; expectedMessage: string }> = [
+      { args: ["--unknown"], expectedMessage: "Unknown option: --unknown" },
+      { args: ["list", "--hook-timeout-ms="], expectedMessage: "Missing value for option: --hook-timeout-ms" },
+      { args: ["list", "--hook-timeout-ms"], expectedMessage: "Missing value for option: --hook-timeout-ms" },
+      {
+        args: ["list", "--hook-timeout-ms", "--json"],
+        expectedMessage: "Missing value for option: --hook-timeout-ms",
+      },
+      { args: ["-x"], expectedMessage: "Unknown option: -x" },
+    ]
+
+    for (const testCase of cases) {
+      stderr.length = 0
+      expect(await cli.run(testCase.args)).toBe(3)
+      expect(stderr.some((line) => line.includes(testCase.expectedMessage))).toBe(true)
+    }
+  })
+
+  it("init --json returns initialization metadata", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      status: string
+      initialized: boolean
+      alreadyInitialized: boolean
+    }
+    expect(payload.status).toBe("ok")
+    expect(payload.initialized).toBe(true)
+    expect(payload.alreadyInitialized).toBe(false)
+  })
+
+  it("list without --json prints branch and path", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["list"])).toBe(0)
+    expect(stdout.length).toBeGreaterThan(0)
+    expect(stdout.some((line) => line.includes("main") && line.includes(repoRoot))).toBe(true)
+  })
+
+  it("returns INVALID_REMOTE_BRANCH_FORMAT for malformed get target", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stderr: (line) => stderr.push(line),
+    })
+
+    expect(await cli.run(["get", "invalid-format"])).toBe(3)
+    expect(stderr.some((line) => line.includes("INVALID_REMOTE_BRANCH_FORMAT"))).toBe(true)
+  })
+
+  it("returns INVALID_ARGUMENT for malformed invoke hook name", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stderr: (line) => stderr.push(line),
+    })
+
+    expect(await cli.run(["invoke", "post_invalid"])).toBe(3)
+    expect(stderr.some((line) => line.includes("hookName must be pre-* or post-*"))).toBe(true)
+  })
+
+  it("returns INVALID_ARGUMENT when extract uses --current and --from together", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stderr: (line) => stderr.push(line),
+    })
+
+    expect(await cli.run(["extract", "--current", "--from", "."])).toBe(3)
+    expect(stderr.some((line) => line.includes("extract cannot use --current and --from together"))).toBe(true)
+  })
+
+  it("exec validates arguments after -- and supports --json success payload", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      stderr: (line) => stderr.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/exec-ok"])).toBe(0)
+
+    stderr.length = 0
+    expect(await cli.run(["exec", "feature/exec-ok", "--"])).toBe(3)
+    expect(stderr.some((line) => line.includes("exec requires arguments after --"))).toBe(true)
+
+    stdout.length = 0
+    expect(await cli.run(["exec", "feature/exec-ok", "--json", "--", "node", "-e", "process.exit(0)"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      status: string
+      childExitCode: number
+      branch: string
+    }
+    expect(payload.status).toBe("ok")
+    expect(payload.childExitCode).toBe(0)
+    expect(payload.branch).toBe("feature/exec-ok")
+  })
+
+  it("handles lock/unlock conflicts for invalid metadata and owner mismatch", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/lock-conflict"])).toBe(0)
+
+    const lockPath = join(repoRoot, ".vde", "worktree", "locks", "feature%2Flock-conflict.json")
+    await writeFile(lockPath, "{invalid", "utf8")
+
+    stdout.length = 0
+    expect(await cli.run(["lock", "feature/lock-conflict", "--json"])).toBe(4)
+    expect((JSON.parse(expectSingleStdoutLine(stdout)) as { code: string }).code).toBe("LOCK_CONFLICT")
+
+    stdout.length = 0
+    expect(await cli.run(["unlock", "feature/lock-conflict", "--json"])).toBe(4)
+    expect((JSON.parse(expectSingleStdoutLine(stdout)) as { code: string }).code).toBe("LOCK_CONFLICT")
+
+    stdout.length = 0
+    expect(await cli.run(["unlock", "feature/lock-conflict", "--force", "--json"])).toBe(0)
+    expect((JSON.parse(expectSingleStdoutLine(stdout)) as { locked: { value: boolean } }).locked.value).toBe(false)
+
+    stdout.length = 0
+    expect(await cli.run(["lock", "feature/lock-conflict", "--owner", "alice", "--json"])).toBe(0)
+    stdout.length = 0
+    expect(await cli.run(["lock", "feature/lock-conflict", "--owner", "bob", "--json"])).toBe(4)
+    expect((JSON.parse(expectSingleStdoutLine(stdout)) as { code: string }).code).toBe("LOCK_CONFLICT")
+
+    stdout.length = 0
+    expect(await cli.run(["unlock", "feature/lock-conflict", "--owner", "bob", "--json"])).toBe(4)
+    expect((JSON.parse(expectSingleStdoutLine(stdout)) as { code: string }).code).toBe("LOCK_CONFLICT")
+  })
+
+  it("cd maps dependency errors and parses prompt/fzf args", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(async () => {
+      throw new Error("fzf is required for interactive selection")
+    })
+
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      selectPathWithFzf,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/cd"])).toBe(0)
+    stdout.length = 0
+
+    expect(await cli.run(["cd", "--json", "--prompt=pick> ", "--fzf-arg=--ansi", "--fzf-arg", "--nth=1"])).toBe(5)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as { code: string; message: string }
+    expect(payload.code).toBe("DEPENDENCY_MISSING")
+    expect(payload.message).toContain("fzf is required")
+    const firstCall = selectPathWithFzf.mock.calls[0]?.[0] ?? null
+    expect(firstCall).not.toBeNull()
+    expect((firstCall as SelectPathWithFzfInput).prompt).toBe("pick> ")
+    expect((firstCall as SelectPathWithFzfInput).fzfExtraArgs).toEqual(["--ansi", "--nth=1"])
+  })
+
+  it("cd returns 130 when selection is cancelled", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(async () => ({
+      status: "cancelled",
+    }))
+
+    const cli = createCli({
+      cwd: repoRoot,
+      selectPathWithFzf,
+      isInteractive: () => true,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["cd"])).toBe(130)
+  })
+
+  it("returns UNKNOWN_COMMAND for unsupported command names", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["not-a-command", "--json"])).toBe(3)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as { code: string; command: string }
+    expect(payload.code).toBe("UNKNOWN_COMMAND")
+    expect(payload.command).toBe("not-a-command")
+  })
 })
