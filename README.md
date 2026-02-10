@@ -3,6 +3,7 @@
 `vde-worktree` is a safe Git worktree manager designed for both humans and coding agents.
 
 It installs two command names:
+
 - `vde-worktree`
 - `vw` (alias)
 
@@ -122,6 +123,7 @@ vw init
 ```
 
 What it does:
+
 - Creates `.worktree/` and `.vde/worktree/*`
 - Appends managed entries to `.git/info/exclude`
 - Creates default hook templates
@@ -134,8 +136,10 @@ vw list --json
 ```
 
 What it does:
+
 - Lists all worktrees from Git porcelain output
 - Includes metadata such as branch, path, dirty, lock, merged, and upstream status
+- In interactive terminal, uses Catppuccin-style ANSI colors
 
 ### `status`
 
@@ -146,6 +150,7 @@ vw status --json
 ```
 
 What it does:
+
 - Shows one worktree state
 - Without branch argument, resolves current worktree from current `cwd`
 
@@ -157,6 +162,7 @@ vw path feature/foo --json
 ```
 
 What it does:
+
 - Resolves and returns the absolute worktree path for the target branch
 
 ### `new`
@@ -167,6 +173,7 @@ vw new feature/foo
 ```
 
 What it does:
+
 - Creates a new branch + worktree under `.worktree/`
 - Without argument, generates `wip-xxxxxx`
 
@@ -177,6 +184,7 @@ vw switch feature/foo
 ```
 
 What it does:
+
 - Idempotent branch entrypoint
 - Reuses existing worktree if present, otherwise creates one
 
@@ -187,6 +195,7 @@ vw mv feature/new-name
 ```
 
 What it does:
+
 - Renames current non-primary worktree branch and moves its directory
 - Requires branch checkout (not detached HEAD)
 
@@ -199,10 +208,12 @@ vw del feature/foo --force-unmerged --allow-unpushed --allow-unsafe
 ```
 
 What it does:
+
 - Removes worktree and branch safely
 - By default, rejects dirty, locked, unmerged/unknown, or unpushed/unknown states
 
 Useful force flags:
+
 - `--force-dirty`
 - `--allow-unpushed`
 - `--force-unmerged`
@@ -218,6 +229,7 @@ vw gone --json
 ```
 
 What it does:
+
 - Bulk cleanup candidate finder/remover
 - Default mode is dry-run
 - `--apply` actually deletes eligible branches/worktrees
@@ -229,6 +241,7 @@ vw get origin/feature/foo
 ```
 
 What it does:
+
 - Fetches remote branch
 - Creates tracking local branch when missing
 - Creates/reuses local worktree
@@ -241,11 +254,13 @@ vw extract --current --stash
 ```
 
 What it does:
+
 - Extracts current primary worktree branch into `.worktree/`
 - Switches primary worktree back to base branch
 - `--stash` allows extraction when primary is dirty
 
 Current limitation:
+
 - Implementation currently supports primary worktree extraction flow.
 
 ### `use`
@@ -256,10 +271,12 @@ vw use feature/foo --allow-agent --allow-unsafe
 ```
 
 What it does:
+
 - Checks out the target branch in the primary worktree
 - Intended for human workflows where primary context must be fixed
 
 Safety:
+
 - Rejects dirty primary worktree
 - In non-TTY mode, requires `--allow-agent` and `--allow-unsafe`
 
@@ -271,10 +288,12 @@ vw exec feature/foo --json -- pnpm test
 ```
 
 What it does:
+
 - Executes command inside the target branch worktree path
 - Does not use shell expansion
 
 Exit behavior:
+
 - Child success => `0`
 - Child failure => `21` (`CHILD_PROCESS_FAILED` in JSON mode)
 
@@ -286,6 +305,7 @@ vw invoke pre-new -- --arg1 --arg2
 ```
 
 What it does:
+
 - Manually invokes `pre-*` / `post-*` hook scripts
 - Useful for debugging hook behavior
 
@@ -296,6 +316,7 @@ vw copy .envrc .claude/settings.local.json
 ```
 
 What it does:
+
 - Copies repo-relative files/dirs from repo root into target worktree
 - Primarily intended for hook usage with `WT_WORKTREE_PATH`
 
@@ -307,6 +328,7 @@ vw link .envrc --no-fallback
 ```
 
 What it does:
+
 - Creates symlink in target worktree pointing to repo-root file
 - On Windows, can fallback to copy unless `--no-fallback`
 
@@ -319,6 +341,7 @@ vw unlock feature/foo --force
 ```
 
 What they do:
+
 - `lock` writes lock metadata under `.vde/worktree/locks/`
 - `unlock` clears lock, enforcing owner match unless `--force`
 
@@ -329,7 +352,11 @@ cd "$(vw cd)"
 ```
 
 What it does:
+
 - Interactive worktree picker via `fzf`
+- Picker list shows worktree branch names with minimal states (dirty/merged/lock)
+- Preview pane shows path and worktree states (dirty/locked/merged/upstream)
+- Picker and preview use Catppuccin-style ANSI colors in interactive terminal
 - Prints selected absolute path to stdout
 
 ### `completion`
@@ -341,6 +368,7 @@ vw completion zsh --install
 ```
 
 What it does:
+
 - Prints completion script for zsh/fish
 - With `--install`, writes completion file to shell default path or `--path`
 
@@ -365,12 +393,14 @@ Overall policy:
 With `--json`, stdout always emits exactly one JSON object.
 
 Common success fields:
+
 - `schemaVersion`
 - `command`
 - `status`
 - `repoRoot`
 
 Error shape:
+
 - `status: "error"`
 - `code`
 - `message`

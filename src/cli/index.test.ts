@@ -1,7 +1,8 @@
 import { access, chmod, lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { execa } from "execa"
+import stringWidth from "string-width"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createCli } from "./index"
@@ -14,15 +15,18 @@ const runGit = async (cwd: string, args: readonly string[]): Promise<string> => 
   return result.stdout
 }
 
-const setupRepo = async (): Promise<string> => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "vde-worktree-test-"))
+const setupRepo = async ({ baseDir }: { readonly baseDir?: string } = {}): Promise<string> => {
+  const repoRoot = await mkdtemp(join(baseDir ?? tmpdir(), "vde-worktree-test-"))
   await runGit(repoRoot, ["init", "-b", "main"])
   await runGit(repoRoot, ["config", "user.name", "test-user"])
   await runGit(repoRoot, ["config", "user.email", "test@example.com"])
   await writeFile(join(repoRoot, "README.md"), "# test\n", "utf8")
   await runGit(repoRoot, ["add", "."])
   await runGit(repoRoot, ["commit", "-m", "initial"])
-  return realpath(repoRoot)
+  if (baseDir === undefined) {
+    return realpath(repoRoot)
+  }
+  return repoRoot
 }
 
 const expectSingleStdoutLine = (stdout: readonly string[]): string => {
@@ -315,10 +319,18 @@ describe("createCli", () => {
     tempDirs.add(repoRoot)
     const stdout: string[] = []
 
-    const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(async () => ({
-      status: "selected" as const,
-      path: join(repoRoot, ".worktree", "feature%2Ffoo"),
-    }))
+    const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(
+      async (input) => {
+        const selected =
+          input.candidates.find((candidate) =>
+            candidate.includes(`\t${join(repoRoot, ".worktree", "feature%2Ffoo")}\t`),
+          ) ?? join(repoRoot, ".worktree", "feature%2Ffoo")
+        return {
+          status: "selected" as const,
+          path: selected,
+        }
+      },
+    )
 
     const cli = createCli({
       cwd: repoRoot,
@@ -337,8 +349,30 @@ describe("createCli", () => {
     const firstCall = selectPathWithFzf.mock.calls[0]?.[0] ?? null
     expect(firstCall).not.toBeNull()
     const candidates = (firstCall as SelectPathWithFzfInput).candidates
-    expect(candidates).toContain(repoRoot)
-    expect(candidates).toContain(join(repoRoot, ".worktree", "feature%2Ffoo"))
+    const candidateRows = candidates.map((candidate) => candidate.split("\t"))
+    expect(candidateRows.some((parts) => parts[1] === repoRoot)).toBe(true)
+    expect(candidateRows.some((parts) => parts[1] === join(repoRoot, ".worktree", "feature%2Ffoo"))).toBe(true)
+    const mainRow = candidateRows.find((parts) => parts[1] === repoRoot)
+    const selectedRow = candidateRows.find((parts) => parts[1] === join(repoRoot, ".worktree", "feature%2Ffoo"))
+    const toPlain = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "")
+    const mainFirstColumn = toPlain(mainRow?.[0] ?? "")
+    const selectedFirstColumn = toPlain(selectedRow?.[0] ?? "")
+    const mainStateColumnIndex = mainFirstColumn.search(/\b(CLEAN|DIRTY)\b/)
+    const selectedStateColumnIndex = selectedFirstColumn.search(/\b(CLEAN|DIRTY)\b/)
+    const mainLockColumnIndex = mainFirstColumn.search(/\b(LOCK|OPEN)\b/)
+    const selectedLockColumnIndex = selectedFirstColumn.search(/\b(LOCK|OPEN)\b/)
+    expect(mainStateColumnIndex).toBeGreaterThanOrEqual(0)
+    expect(selectedStateColumnIndex).toBe(mainStateColumnIndex)
+    expect(mainLockColumnIndex).toBeGreaterThanOrEqual(0)
+    expect(selectedLockColumnIndex).toBe(mainLockColumnIndex)
+    expect(stringWidth(selectedFirstColumn)).toBeGreaterThan(stringWidth("* feature/foo"))
+    expect(selectedRow?.[0]).toContain("feature/foo")
+    expect(selectedRow?.[0]).toMatch(/(CLEAN|DIRTY)/)
+    expect(selectedRow?.[0]).toMatch(/(MERGED|UNMERGED|BASE|UNKNOWN)/)
+    expect(selectedRow?.[0]).toContain("|")
+    expect(selectedRow?.[2]).toMatch(/STATUS.*\\n/)
+    expect(selectedRow?.[2]).toMatch(/Dirty.*CLEAN/)
+    expect(selectedRow?.[2]).toMatch(/\\033\[/)
   })
 
   it("cd allows command-substitution style execution when stderr is TTY", async () => {
@@ -390,6 +424,41 @@ describe("createCli", () => {
         Reflect.deleteProperty(mutableStderr as unknown as Record<string, unknown>, "isTTY")
       }
     }
+  })
+
+  it("cd shows home-relative path in picker but returns absolute path", async () => {
+    const repoRoot = await setupRepo({ baseDir: homedir() })
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const selectedPath = join(repoRoot, ".worktree", "feature%2Fhome")
+
+    const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(
+      async (input) => {
+        const selected = input.candidates.find((candidate) => candidate.includes(`\t${selectedPath}\t`)) ?? selectedPath
+        const previewEncoded = selected.split("\t")[2] ?? ""
+        const decodedPreview = previewEncoded.replace(/\\033/g, "\u001b")
+        const plainPreview = decodedPreview.replace(/\u001b\[[0-9;]*m/g, "")
+        expect(plainPreview).toContain("Path   : ~/")
+        return {
+          status: "selected" as const,
+          path: selected,
+        }
+      },
+    )
+
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      selectPathWithFzf,
+      isInteractive: () => true,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/home"])).toBe(0)
+    stdout.length = 0
+
+    expect(await cli.run(["cd"])).toBe(0)
+    expect(stdout).toEqual([selectedPath])
   })
 
   it("fails with exit code 4 when --no-hooks is used without --allow-unsafe", async () => {
@@ -774,6 +843,26 @@ echo invoked > "${marker}"
     expect(["merged", "unmerged", "unknown"]).toContain(featureCells[2])
   })
 
+  it("list applies catppuccin colors in interactive mode", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      isInteractive: () => true,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/list-colored"])).toBe(0)
+    stdout.length = 0
+
+    expect(await cli.run(["list"])).toBe(0)
+    const text = stdout.join("\n")
+    expect(text).toContain("feature/list-colored")
+    expect(text).toMatch(/\u001b\[38;2;/)
+  })
+
   it("returns INVALID_REMOTE_BRANCH_FORMAT for malformed get target", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
@@ -907,7 +996,14 @@ echo invoked > "${marker}"
     const firstCall = selectPathWithFzf.mock.calls[0]?.[0] ?? null
     expect(firstCall).not.toBeNull()
     expect((firstCall as SelectPathWithFzfInput).prompt).toBe("pick> ")
-    expect((firstCall as SelectPathWithFzfInput).fzfExtraArgs).toEqual(["--ansi", "--nth=1"])
+    expect((firstCall as SelectPathWithFzfInput).fzfExtraArgs).toEqual([
+      "--delimiter=\t",
+      "--with-nth=1",
+      "--preview=printf '%b' {3}",
+      "--preview-window=right,60%,wrap",
+      "--ansi",
+      "--nth=1",
+    ])
   })
 
   it("cd returns 130 when selection is cancelled", async () => {

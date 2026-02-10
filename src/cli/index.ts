@@ -4,9 +4,11 @@ import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
+import { Chalk } from "chalk"
 import { parseArgs } from "citty"
 import type { ArgsDef } from "citty"
 import { execa } from "execa"
+import stringWidth from "string-width"
 import { getBorderCharacters, table } from "table"
 import {
   DEFAULT_HOOK_TIMEOUT_MS,
@@ -99,13 +101,210 @@ type CommandHelp = {
   readonly examples?: readonly string[]
 }
 
+type CatppuccinTheme = {
+  readonly header: (value: string) => string
+  readonly branch: (value: string) => string
+  readonly branchCurrent: (value: string) => string
+  readonly branchDetached: (value: string) => string
+  readonly dirty: (value: string) => string
+  readonly clean: (value: string) => string
+  readonly merged: (value: string) => string
+  readonly unmerged: (value: string) => string
+  readonly unknown: (value: string) => string
+  readonly base: (value: string) => string
+  readonly locked: (value: string) => string
+  readonly path: (value: string) => string
+  readonly muted: (value: string) => string
+  readonly value: (value: string) => string
+  readonly previewLabel: (value: string) => string
+  readonly previewSection: (value: string) => string
+}
+
 const EXIT_CODE_CANCELLED = 130
 
 const optionNamesAllowOptionLikeValue = new Set(["fzfArg", "fzf-arg"])
+const CD_FZF_EXTRA_ARGS = [
+  "--delimiter=\t",
+  "--with-nth=1",
+  "--preview=printf '%b' {3}",
+  "--preview-window=right,60%,wrap",
+  "--ansi",
+] as const
 const COMPLETION_SHELLS: readonly CompletionShell[] = ["zsh", "fish"] as const
 const COMPLETION_FILE_BY_SHELL: Readonly<Record<CompletionShell, string>> = {
   zsh: "zsh/_vw",
   fish: "fish/vw.fish",
+}
+
+const CATPPUCCIN_MOCHA = {
+  rosewater: "#f5e0dc",
+  mauve: "#cba6f7",
+  red: "#f38ba8",
+  peach: "#fab387",
+  yellow: "#f9e2af",
+  green: "#a6e3a1",
+  blue: "#89b4fa",
+  lavender: "#b4befe",
+  sapphire: "#74c7ec",
+  text: "#cdd6f4",
+  subtext0: "#a6adc8",
+  overlay0: "#6c7086",
+} as const
+
+const identityColor = (value: string): string => value
+
+const createCatppuccinTheme = ({ enabled }: { readonly enabled: boolean }): CatppuccinTheme => {
+  if (enabled !== true) {
+    return {
+      header: identityColor,
+      branch: identityColor,
+      branchCurrent: identityColor,
+      branchDetached: identityColor,
+      dirty: identityColor,
+      clean: identityColor,
+      merged: identityColor,
+      unmerged: identityColor,
+      unknown: identityColor,
+      base: identityColor,
+      locked: identityColor,
+      path: identityColor,
+      muted: identityColor,
+      value: identityColor,
+      previewLabel: identityColor,
+      previewSection: identityColor,
+    }
+  }
+
+  const chalk = new Chalk({ level: 3 })
+  const color =
+    (hex: string) =>
+    (value: string): string =>
+      chalk.hex(hex)(value)
+
+  return {
+    header: color(CATPPUCCIN_MOCHA.rosewater),
+    branch: color(CATPPUCCIN_MOCHA.lavender),
+    branchCurrent: color(CATPPUCCIN_MOCHA.mauve),
+    branchDetached: color(CATPPUCCIN_MOCHA.peach),
+    dirty: color(CATPPUCCIN_MOCHA.peach),
+    clean: color(CATPPUCCIN_MOCHA.green),
+    merged: color(CATPPUCCIN_MOCHA.green),
+    unmerged: color(CATPPUCCIN_MOCHA.red),
+    unknown: color(CATPPUCCIN_MOCHA.yellow),
+    base: color(CATPPUCCIN_MOCHA.blue),
+    locked: color(CATPPUCCIN_MOCHA.red),
+    path: color(CATPPUCCIN_MOCHA.sapphire),
+    muted: color(CATPPUCCIN_MOCHA.overlay0),
+    value: color(CATPPUCCIN_MOCHA.text),
+    previewLabel: color(CATPPUCCIN_MOCHA.mauve),
+    previewSection: color(CATPPUCCIN_MOCHA.rosewater),
+  }
+}
+
+const shouldUseAnsiColors = ({ interactive }: { readonly interactive: boolean }): boolean => {
+  return interactive === true
+}
+
+const colorizeCellContent = ({
+  cell,
+  color,
+}: {
+  readonly cell: string
+  readonly color: (value: string) => string
+}): string => {
+  const matched = /^(\s*)(.*?)(\s*)$/.exec(cell)
+  if (matched === null) {
+    return cell
+  }
+  const leftPadding = matched[1] ?? ""
+  const content = matched[2] ?? ""
+  const rightPadding = matched[3] ?? ""
+  if (content.length === 0) {
+    return cell
+  }
+  return `${leftPadding}${color(content)}${rightPadding}`
+}
+
+const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonly theme: CatppuccinTheme }): string => {
+  if (line.startsWith("┌") || line.startsWith("├") || line.startsWith("└")) {
+    return theme.muted(line)
+  }
+  if (line.startsWith("│") !== true) {
+    return line
+  }
+
+  const segments = line.split("│")
+  if (segments.length < 3) {
+    return line
+  }
+
+  const cells = segments.slice(1, -1)
+  if (cells.length !== 5) {
+    return line
+  }
+
+  const headers = cells.map((cell) => cell.trim())
+  const isHeaderRow =
+    headers[0] === "branch" &&
+    headers[1] === "dirty" &&
+    headers[2] === "merged" &&
+    headers[3] === "locked" &&
+    headers[4] === "path"
+
+  if (isHeaderRow) {
+    const nextCells = cells.map((cell) => colorizeCellContent({ cell, color: theme.header }))
+    return [segments[0], ...nextCells, segments.at(-1) ?? ""].join("│")
+  }
+
+  const branchCell = cells[0] as string
+  const dirtyCell = cells[1] as string
+  const mergedCell = cells[2] as string
+  const lockedCell = cells[3] as string
+  const pathCell = cells[4] as string
+
+  const branchColor =
+    branchCell.includes("(detached)") === true
+      ? theme.branchDetached
+      : branchCell.trimStart().startsWith("*")
+        ? theme.branchCurrent
+        : theme.branch
+  const dirtyTrimmed = dirtyCell.trim()
+  const dirtyColor = dirtyTrimmed === "dirty" ? theme.dirty : dirtyTrimmed === "clean" ? theme.clean : theme.value
+  const mergedTrimmed = mergedCell.trim()
+  const mergedColor =
+    mergedTrimmed === "merged"
+      ? theme.merged
+      : mergedTrimmed === "unmerged"
+        ? theme.unmerged
+        : mergedTrimmed === "-"
+          ? theme.base
+          : theme.unknown
+  const lockedTrimmed = lockedCell.trim()
+  const lockedColor = lockedTrimmed === "locked" ? theme.locked : theme.muted
+
+  const nextCells = [
+    colorizeCellContent({ cell: branchCell, color: branchColor }),
+    colorizeCellContent({ cell: dirtyCell, color: dirtyColor }),
+    colorizeCellContent({ cell: mergedCell, color: mergedColor }),
+    colorizeCellContent({ cell: lockedCell, color: lockedColor }),
+    colorizeCellContent({ cell: pathCell, color: theme.path }),
+  ]
+
+  return [segments[0], ...nextCells, segments.at(-1) ?? ""].join("│")
+}
+
+const colorizeListTable = ({
+  rendered,
+  theme,
+}: {
+  readonly rendered: string
+  readonly theme: CatppuccinTheme
+}): string => {
+  return rendered
+    .trimEnd()
+    .split("\n")
+    .map((line) => colorizeListTableLine({ line, theme }))
+    .join("\n")
 }
 
 const commandHelpEntries: readonly CommandHelp[] = [
@@ -436,6 +635,22 @@ const collectOptionValues = ({
   }
 
   return values
+}
+
+const mergeFzfArgs = ({
+  defaults,
+  extras,
+}: {
+  readonly defaults: ReadonlyArray<string>
+  readonly extras: ReadonlyArray<string>
+}): string[] => {
+  const merged = [...defaults]
+  for (const arg of extras) {
+    if (merged.includes(arg) !== true) {
+      merged.push(arg)
+    }
+  }
+  return merged
 }
 
 const toNumberOption = ({
@@ -947,6 +1162,247 @@ const formatDisplayPath = (absolutePath: string): string => {
   return absolutePath
 }
 
+const encodeCdPreviewField = (value: string): string => {
+  return value
+    .replace(/\\/g, "\\\\")
+    .split("\u001b")
+    .join("\\033")
+    .replace(/\t/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n/g, "\\n")
+}
+
+const formatMergedDisplayState = ({
+  mergedOverall,
+  isBaseBranch,
+  baseLabel = "base",
+}: {
+  readonly mergedOverall: boolean | null
+  readonly isBaseBranch: boolean
+  readonly baseLabel?: string
+}): string => {
+  if (isBaseBranch) {
+    return baseLabel
+  }
+  if (mergedOverall === true) {
+    return "merged"
+  }
+  if (mergedOverall === false) {
+    return "unmerged"
+  }
+  return "unknown"
+}
+
+const formatMergedColor = ({
+  mergedState,
+  theme,
+}: {
+  readonly mergedState: string
+  readonly theme: CatppuccinTheme
+}): string => {
+  const normalized = mergedState.toLowerCase()
+  if (normalized === "merged") {
+    return theme.merged(mergedState)
+  }
+  if (normalized === "unmerged") {
+    return theme.unmerged(mergedState)
+  }
+  if (normalized === "base") {
+    return theme.base(mergedState)
+  }
+  return theme.unknown(mergedState)
+}
+
+const padToDisplayWidth = ({ value, width }: { readonly value: string; readonly width: number }): string => {
+  const visibleLength = stringWidth(value)
+  if (visibleLength >= width) {
+    return value
+  }
+  return `${value}${" ".repeat(width - visibleLength)}`
+}
+
+const buildCdBranchLabel = ({
+  worktree,
+  currentWorktreeRoot,
+}: {
+  readonly worktree: WorktreeStatus
+  readonly currentWorktreeRoot: string
+}): string => {
+  const isCurrent = worktree.path === currentWorktreeRoot
+  return `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`
+}
+
+const buildCdStateSummary = ({
+  worktree,
+  isBaseBranch,
+  theme,
+}: {
+  readonly worktree: WorktreeStatus
+  readonly isBaseBranch: boolean
+  readonly theme: CatppuccinTheme
+}): string => {
+  const dirtyLabel = worktree.dirty ? "DIRTY" : "CLEAN"
+  const mergedLabel = formatMergedDisplayState({
+    mergedOverall: worktree.merged.overall,
+    isBaseBranch,
+  }).toUpperCase()
+  const lockLabel = worktree.locked.value ? "LOCK" : "OPEN"
+
+  const dirtyBadge = (worktree.dirty ? theme.unmerged : theme.clean)(
+    padToDisplayWidth({
+      value: dirtyLabel,
+      width: 5,
+    }),
+  )
+  const mergedBadge = formatMergedColor({
+    mergedState: padToDisplayWidth({
+      value: mergedLabel,
+      width: 8,
+    }),
+    theme,
+  })
+  const lockBadge = (worktree.locked.value ? theme.locked : theme.muted)(
+    padToDisplayWidth({
+      value: lockLabel,
+      width: 4,
+    }),
+  )
+
+  return `${dirtyBadge} ${theme.muted("|")} ${mergedBadge} ${theme.muted("|")} ${lockBadge}`
+}
+
+const buildCdPreviewText = ({
+  worktree,
+  baseBranch,
+  theme,
+}: {
+  readonly worktree: WorktreeStatus
+  readonly baseBranch: string | null
+  readonly theme: CatppuccinTheme
+}): string => {
+  const isBaseBranch = typeof worktree.branch === "string" && baseBranch !== null && worktree.branch === baseBranch
+  const branchLabel =
+    worktree.branch === null
+      ? theme.branchDetached("(detached)")
+      : isBaseBranch
+        ? theme.base(worktree.branch)
+        : theme.branch(worktree.branch)
+  const pathLabel = theme.path(formatDisplayPath(worktree.path))
+  const dirtyValue = worktree.dirty ? theme.unmerged("[DIRTY]") : theme.merged("[CLEAN]")
+  const lockedValue = worktree.locked.value ? theme.locked("[LOCKED]") : theme.clean("[OPEN]")
+  const mergedState = formatMergedDisplayState({
+    mergedOverall: worktree.merged.overall,
+    isBaseBranch,
+  })
+  const mergedValue = formatMergedColor({
+    mergedState: mergedState.toUpperCase(),
+    theme,
+  })
+  const remoteValue =
+    worktree.upstream.remote === null ? theme.muted("none") : theme.value(worktree.upstream.remote ?? "none")
+  const aheadValue =
+    worktree.upstream.ahead === null
+      ? theme.unknown("UNKNOWN")
+      : worktree.upstream.ahead > 0
+        ? theme.unmerged(String(worktree.upstream.ahead))
+        : theme.merged("0")
+  const behindValue =
+    worktree.upstream.behind === null
+      ? theme.unknown("UNKNOWN")
+      : worktree.upstream.behind > 0
+        ? theme.unknown(String(worktree.upstream.behind))
+        : theme.merged("0")
+  const divider = theme.muted("----------------------------------------")
+  const lines = [
+    theme.previewSection("WORKTREE"),
+    divider,
+    `  ${theme.previewLabel("Branch ")}: ${branchLabel}`,
+    `  ${theme.previewLabel("Path   ")}: ${pathLabel}`,
+    "",
+    theme.previewSection("STATUS"),
+    divider,
+    `  ${theme.previewLabel("Dirty  ")}: ${dirtyValue}`,
+    `  ${theme.previewLabel("Locked ")}: ${lockedValue}`,
+    `  ${theme.previewLabel("Merged ")}: ${mergedValue}`,
+    `  ${theme.previewLabel("Remote ")}: ${remoteValue}`,
+    `  ${theme.previewLabel("Ahead  ")}: ${aheadValue}`,
+    `  ${theme.previewLabel("Behind ")}: ${behindValue}`,
+  ]
+
+  if (worktree.locked.value) {
+    lines.push("")
+    lines.push(theme.previewSection("LOCK"))
+    lines.push(divider)
+    if (typeof worktree.locked.reason === "string" && worktree.locked.reason.length > 0) {
+      lines.push(`  ${theme.previewLabel("Reason ")}: ${theme.value(worktree.locked.reason)}`)
+    }
+    if (typeof worktree.locked.owner === "string" && worktree.locked.owner.length > 0) {
+      lines.push(`  ${theme.previewLabel("Owner  ")}: ${theme.value(worktree.locked.owner)}`)
+    }
+  }
+
+  return lines.join("\n")
+}
+
+const buildCdCandidateLine = ({
+  worktree,
+  baseBranch,
+  theme,
+  currentWorktreeRoot,
+  branchColumnWidth,
+}: {
+  readonly worktree: WorktreeStatus
+  readonly baseBranch: string | null
+  readonly theme: CatppuccinTheme
+  readonly currentWorktreeRoot: string
+  readonly branchColumnWidth: number
+}): string => {
+  const isBaseBranch = typeof worktree.branch === "string" && baseBranch !== null && worktree.branch === baseBranch
+  const branchLabel = buildCdBranchLabel({
+    worktree,
+    currentWorktreeRoot,
+  })
+  const branchLabelPadded = padToDisplayWidth({
+    value: branchLabel,
+    width: branchColumnWidth,
+  })
+  const isCurrent = worktree.path === currentWorktreeRoot
+  const branchDisplay =
+    worktree.branch === null
+      ? theme.branchDetached(branchLabelPadded)
+      : isCurrent
+        ? theme.branchCurrent(branchLabelPadded)
+        : isBaseBranch
+          ? theme.base(branchLabelPadded)
+          : theme.branch(branchLabelPadded)
+  const stateSummary = buildCdStateSummary({
+    worktree,
+    isBaseBranch,
+    theme,
+  })
+
+  return [
+    `${branchDisplay}  ${stateSummary}`,
+    worktree.path,
+    encodeCdPreviewField(
+      buildCdPreviewText({
+        worktree,
+        baseBranch,
+        theme,
+      }),
+    ),
+  ].join("\t")
+}
+
+const resolveCdSelectionPath = (selectedLine: string): string => {
+  const parts = selectedLine.split("\t")
+  const rawPath = parts[1]
+  if (typeof rawPath === "string" && rawPath.length > 0) {
+    return rawPath
+  }
+  return selectedLine
+}
+
 const containsBranch = ({
   branch,
   worktrees,
@@ -1456,6 +1912,9 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           return EXIT_CODE.OK
         }
 
+        const theme = createCatppuccinTheme({
+          enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive }),
+        })
         const rows: string[][] = [
           ["branch", "dirty", "merged", "locked", "path"],
           ...snapshot.worktrees.map((worktree) => {
@@ -1486,8 +1945,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             return lineIndex === 0 || lineIndex === 1 || lineIndex === rowCount
           },
         })
+        const colorized = colorizeListTable({
+          rendered,
+          theme,
+        })
 
-        for (const line of rendered.trimEnd().split("\n")) {
+        for (const line of colorized.split("\n")) {
           stdout(line)
         }
         return EXIT_CODE.OK
@@ -2554,7 +3017,25 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       if (command === "cd") {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
-        const candidates = snapshot.worktrees.map((worktree) => worktree.path)
+        const theme = createCatppuccinTheme({
+          enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive }),
+        })
+        const branchColumnWidth = snapshot.worktrees.reduce((maxWidth, worktree) => {
+          const label = buildCdBranchLabel({
+            worktree,
+            currentWorktreeRoot: repoContext.currentWorktreeRoot,
+          })
+          return Math.max(maxWidth, stringWidth(label))
+        }, 0)
+        const candidates = snapshot.worktrees.map((worktree) =>
+          buildCdCandidateLine({
+            worktree,
+            baseBranch: snapshot.baseBranch,
+            theme,
+            currentWorktreeRoot: repoContext.currentWorktreeRoot,
+            branchColumnWidth,
+          }),
+        )
         if (candidates.length === 0) {
           throw createCliError("WORKTREE_NOT_FOUND", {
             message: "No worktree candidates found",
@@ -2571,7 +3052,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         const selection = await selectPathWithFzf({
           candidates,
           prompt,
-          fzfExtraArgs,
+          fzfExtraArgs: mergeFzfArgs({
+            defaults: CD_FZF_EXTRA_ARGS,
+            extras: fzfExtraArgs,
+          }),
           cwd: repoRoot,
           isInteractive: () => runtime.isInteractive || process.stderr.isTTY === true,
         }).catch((error: unknown) => {
@@ -2587,6 +3071,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         if (selection.status === "cancelled") {
           return EXIT_CODE_CANCELLED
         }
+        const selectedPath = resolveCdSelectionPath(selection.path)
 
         if (runtime.json) {
           stdout(
@@ -2596,14 +3081,14 @@ export const createCli = (options: CLIOptions = {}): CLI => {
                 status: "ok",
                 repoRoot,
                 details: {
-                  path: selection.path,
+                  path: selectedPath,
                 },
               }),
             ),
           )
           return EXIT_CODE.OK
         }
-        stdout(selection.path)
+        stdout(selectedPath)
         return EXIT_CODE.OK
       }
 

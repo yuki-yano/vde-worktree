@@ -41,7 +41,7 @@ export type SelectPathWithFzfInput = {
   readonly runFzf?: (input: RunFzfInput) => Promise<RunFzfResult>
 }
 
-const sanitizeCandidate = (value: string): string => value.replace(/[\t\r\n]+/g, " ").trim()
+const sanitizeCandidate = (value: string): string => value.replace(/[\r\n]+/g, " ").trim()
 
 const buildFzfInput = (candidates: ReadonlyArray<string>): string => {
   return candidates
