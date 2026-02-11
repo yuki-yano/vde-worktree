@@ -2323,8 +2323,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             .filter((worktree) => worktree.path !== repoRoot)
             .filter((worktree) => worktree.dirty === false)
             .filter((worktree) => worktree.locked.value === false)
-            .filter((worktree) => worktree.merged.overall === true)
-            .filter((worktree) => worktree.upstream.ahead === 0)
+            .filter((worktree) => worktree.merged.byAncestry === true)
             .map((worktree) => worktree.branch as string)
 
           if (dryRun) {

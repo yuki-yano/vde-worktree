@@ -616,7 +616,7 @@ echo invoked > "${marker}"
     expect(list.includes("feature/del")).toBe(false)
   })
 
-  it("gone dry-run then apply removes merged candidates", async () => {
+  it("gone dry-run then apply removes ancestry-merged candidates without upstream tracking", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
     const stdout: string[] = []
@@ -631,7 +631,6 @@ echo invoked > "${marker}"
     await writeFile(join(featurePath, "feature.txt"), "x\n", "utf8")
     await runGit(featurePath, ["add", "feature.txt"])
     await runGit(featurePath, ["commit", "-m", "feature commit"])
-    await runGit(featurePath, ["branch", "--set-upstream-to", "main", "feature/gone"])
     await runGit(repoRoot, ["merge", "--no-ff", "feature/gone", "-m", "merge feature/gone"])
 
     stdout.length = 0
