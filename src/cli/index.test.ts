@@ -124,6 +124,13 @@ describe("createCli", () => {
     const text = expectSingleStdoutLine(stdout)
     expect(text).toContain("#compdef vw vde-worktree")
     expect(text).toContain("completion")
+    expect(text).toContain("_vw_complete_switch_branches()")
+    expect(text).toContain('values=("${(@u)values}")')
+    expect(text).not.toContain('values=("${(@u)${(@f)$(_vw_worktree_branches_raw)} ${(@f)$(_vw_local_branches_raw)}}")')
+    expect(text).toContain(`use)
+          _arguments \\
+            "1:branch:_vw_complete_worktree_branches_with_meta" \\`)
+    expect(text).toContain("--allow-shared[Allow checkout when branch is attached by another worktree]")
     expect(stderr).toEqual([])
   })
 
@@ -144,6 +151,12 @@ describe("createCli", () => {
 
     const installed = await readFile(targetPath, "utf8")
     expect(installed).toContain("complete -c $__vw_bin")
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_worktree_candidates_with_meta)"',
+    )
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-shared -d "Allow checkout when branch is attached by another worktree"',
+    )
     expect(expectSingleStdoutLine(stdout)).toContain(targetPath)
     expect(stderr).toEqual([])
   })
@@ -719,6 +732,37 @@ echo invoked > "${marker}"
     expect(await cli.run(["use", "feature/use", "--allow-agent", "--allow-unsafe"])).toBe(0)
     const head = await runGit(repoRoot, ["branch", "--show-current"])
     expect(head.trim()).toBe("feature/use")
+  })
+
+  it("use requires --allow-shared when target branch is attached by another worktree", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: () => {},
+      stderr: (line) => stderr.push(line),
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/use-shared"])).toBe(0)
+    expect(await cli.run(["use", "feature/use-shared", "--allow-agent", "--allow-unsafe"])).toBe(4)
+    expect(stderr.some((line) => line.includes("BRANCH_IN_USE"))).toBe(true)
+    expect(stderr.some((line) => line.includes("--allow-shared"))).toBe(true)
+    expect(stderr.some((line) => line.includes("unsafe"))).toBe(true)
+    expect(stderr.some((line) => line.includes("To continue (unsafe), re-run with:"))).toBe(true)
+    expect(stderr.some((line) => line.includes("\n  vw use feature/use-shared --allow-shared\n"))).toBe(true)
+
+    stderr.length = 0
+    expect(await cli.run(["use", "feature/use-shared", "--allow-shared", "--allow-agent", "--allow-unsafe"])).toBe(0)
+    expect(stderr.some((line) => line.includes("warning:"))).toBe(true)
+    expect(stderr.some((line) => line.includes("--allow-shared"))).toBe(true)
+    expect(stderr.some((line) => line.includes("unsafe"))).toBe(true)
+    expect(stderr.some((line) => line.includes("\n  branch: feature/use-shared\n"))).toBe(true)
+
+    const head = await runGit(repoRoot, ["branch", "--show-current"])
+    expect(head.trim()).toBe("feature/use-shared")
   })
 
   it("prints general help when command is omitted", async () => {
