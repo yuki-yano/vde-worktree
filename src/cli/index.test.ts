@@ -125,13 +125,27 @@ describe("createCli", () => {
     const text = expectSingleStdoutLine(stdout)
     expect(text).toContain("#compdef vw vde-worktree")
     expect(text).toContain("completion")
-    expect(text).toContain("_vw_complete_switch_branches()")
     expect(text).toContain("_vw_complete_use_branches()")
-    expect(text).toContain('values=("${(@u)values}")')
-    expect(text).not.toContain('values=("${(@u)${(@f)$(_vw_worktree_branches_raw)} ${(@f)$(_vw_local_branches_raw)}}")')
+    expect(text).toContain("_vw_complete_managed_worktree_names()")
+    expect(text).not.toContain("_vw_complete_switch_branches()")
+    expect(text).not.toContain("_vw_local_branches_raw()")
+    expect(text).toContain(`switch)
+          _arguments \\
+            "1:branch:_vw_complete_worktree_branches_with_meta"`)
+    expect(text).toContain(`mv)
+          _arguments \\
+            "1:new-branch:"`)
     expect(text).toContain(`use)
           _arguments \\
             "1:branch:_vw_complete_use_branches" \\`)
+    expect(text).toContain(`absorb)
+          _arguments \\
+            "1:branch:_vw_complete_worktree_branches_with_meta" \\`)
+    expect(text).toContain("--from[Source managed worktree name]:worktree-name:_vw_complete_managed_worktree_names")
+    expect(text).toContain(`unabsorb)
+          _arguments \\
+            "1:branch:_vw_complete_worktree_branches_with_meta" \\`)
+    expect(text).toContain("--to[Target managed worktree name]:worktree-name:_vw_complete_managed_worktree_names")
     expect(text).toContain("--allow-shared[Allow checkout when branch is attached by another worktree]")
     expect(stderr).toEqual([])
   })
@@ -153,6 +167,27 @@ describe("createCli", () => {
 
     const installed = await readFile(targetPath, "utf8")
     expect(installed).toContain("complete -c $__vw_bin")
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from switch" -a "(__vw_worktree_candidates_with_meta)"',
+    )
+    expect(installed).not.toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from mv" -a "(__vw_local_branches)"',
+    )
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -a "(__vw_worktree_candidates_with_meta)"',
+    )
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -a "(__vw_worktree_candidates_with_meta)"',
+    )
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -l from -r -a "(__vw_managed_worktree_names_with_meta)" -d "Source managed worktree name"',
+    )
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -l keep-stash -d "Keep stash entry after absorb"',
+    )
+    expect(installed).toContain(
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -l to -r -a "(__vw_managed_worktree_names_with_meta)" -d "Target managed worktree name"',
+    )
     expect(installed).toContain(
       'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_use_candidates_with_meta)"',
     )
@@ -766,6 +801,310 @@ echo invoked > "${marker}"
 
     const head = await runGit(repoRoot, ["branch", "--show-current"])
     expect(head.trim()).toBe("feature/use-shared")
+  })
+
+  it("absorb applies non-primary worktree changes into primary", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb"])).toBe(0)
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb")
+    await writeFile(join(sourcePath, "README.md"), "# absorb\n", "utf8")
+    await writeFile(join(sourcePath, "absorb.txt"), "absorbed\n", "utf8")
+
+    expect(await cli.run(["absorb", "feature/absorb", "--allow-agent", "--allow-unsafe"])).toBe(0)
+    const head = await runGit(repoRoot, ["branch", "--show-current"])
+    expect(head.trim()).toBe("feature/absorb")
+    expect(await readFile(join(repoRoot, "README.md"), "utf8")).toBe("# absorb\n")
+    expect(await readFile(join(repoRoot, "absorb.txt"), "utf8")).toBe("absorbed\n")
+  })
+
+  it("absorb supports --from and --keep-stash", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb-keep"])).toBe(0)
+    stdout.length = 0
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb-keep")
+    const sourceName = "feature/absorb-keep"
+    await writeFile(join(sourcePath, "keep.txt"), "keep\n", "utf8")
+
+    expect(
+      await cli.run([
+        "absorb",
+        "feature/absorb-keep",
+        "--from",
+        sourceName,
+        "--keep-stash",
+        "--allow-agent",
+        "--allow-unsafe",
+        "--json",
+      ]),
+    ).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      branch: string
+      sourcePath: string
+      stashed: boolean
+      stashRef: string | null
+    }
+    expect(payload.branch).toBe("feature/absorb-keep")
+    expect(payload.sourcePath).toBe(sourcePath)
+    expect(payload.stashed).toBe(true)
+    expect(payload.stashRef).not.toBeNull()
+
+    const stashMessage = await runGit(repoRoot, ["stash", "list", "--max-count=1", "--format=%gs"])
+    expect(stashMessage.trim()).toContain("vde-worktree absorb feature/absorb-keep")
+  })
+
+  it("absorb applies intended stash even when pre-hook creates another stash", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb-stash-stable"])).toBe(0)
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb-stash-stable")
+    await writeFile(join(sourcePath, "stable.txt"), "from-source\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-absorb",
+      body: `#!/usr/bin/env bash
+set -eu
+echo hook-stash > "$WT_REPO_ROOT/.hook-pre-absorb.tmp"
+git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-absorb" >/dev/null
+`,
+    })
+
+    expect(await cli.run(["absorb", "feature/absorb-stash-stable", "--allow-agent", "--allow-unsafe"])).toBe(0)
+    expect(await readFile(join(repoRoot, "stable.txt"), "utf8")).toBe("from-source\n")
+  })
+
+  it("absorb rejects --from with .worktree/ prefix", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stderr: (line) => stderr.push(line),
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb-invalid"])).toBe(0)
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb-invalid")
+    await writeFile(join(sourcePath, "invalid.txt"), "invalid\n", "utf8")
+
+    expect(
+      await cli.run([
+        "absorb",
+        "feature/absorb-invalid",
+        "--from",
+        ".worktree/feature/absorb-invalid",
+        "--allow-agent",
+        "--allow-unsafe",
+      ]),
+    ).toBe(3)
+    expect(stderr.some((line) => line.includes("--from expects vw-managed worktree name"))).toBe(true)
+  })
+
+  it("absorb auto-restores source changes when pre-hook fails", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb-hook-fail"])).toBe(0)
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb-hook-fail")
+    await writeFile(join(sourcePath, "restore-source.txt"), "restore\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-absorb",
+      body: `#!/usr/bin/env bash
+set -eu
+exit 1
+`,
+    })
+
+    expect(await cli.run(["absorb", "feature/absorb-hook-fail", "--allow-agent", "--allow-unsafe"])).toBe(10)
+    expect(await readFile(join(sourcePath, "restore-source.txt"), "utf8")).toBe("restore\n")
+    const sourceStatus = await runGit(sourcePath, ["status", "--porcelain"])
+    expect(sourceStatus).toContain("restore-source.txt")
+  })
+
+  it("unabsorb applies primary changes into non-primary worktree", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb"])).toBe(0)
+    expect(await cli.run(["use", "feature/unabsorb", "--allow-shared", "--allow-agent", "--allow-unsafe"])).toBe(0)
+
+    await writeFile(join(repoRoot, "unabsorb.txt"), "unabsorbed\n", "utf8")
+    expect(await cli.run(["unabsorb", "feature/unabsorb", "--allow-agent", "--allow-unsafe"])).toBe(0)
+
+    const targetPath = join(repoRoot, ".worktree", "feature", "unabsorb")
+    expect(await readFile(join(targetPath, "unabsorb.txt"), "utf8")).toBe("unabsorbed\n")
+    const primaryStatus = await runGit(repoRoot, ["status", "--porcelain"])
+    expect(primaryStatus.trim()).toBe("")
+  })
+
+  it("unabsorb supports --to and --keep-stash", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb-keep"])).toBe(0)
+    expect(await cli.run(["use", "feature/unabsorb-keep", "--allow-shared", "--allow-agent", "--allow-unsafe"])).toBe(0)
+
+    await writeFile(join(repoRoot, "unabsorb-keep.txt"), "keep\n", "utf8")
+    stdout.length = 0
+
+    expect(
+      await cli.run([
+        "unabsorb",
+        "feature/unabsorb-keep",
+        "--to",
+        "feature/unabsorb-keep",
+        "--keep-stash",
+        "--allow-agent",
+        "--allow-unsafe",
+        "--json",
+      ]),
+    ).toBe(0)
+
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      branch: string
+      path: string
+      stashed: boolean
+      stashRef: string | null
+    }
+    expect(payload.branch).toBe("feature/unabsorb-keep")
+    expect(payload.path).toBe(join(repoRoot, ".worktree", "feature", "unabsorb-keep"))
+    expect(payload.stashed).toBe(true)
+    expect(payload.stashRef).not.toBeNull()
+
+    const stashMessage = await runGit(repoRoot, ["stash", "list", "--max-count=1", "--format=%gs"])
+    expect(stashMessage.trim()).toContain("vde-worktree unabsorb feature/unabsorb-keep")
+  })
+
+  it("unabsorb applies intended stash even when pre-hook creates another stash", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb-stash-stable"])).toBe(0)
+    expect(
+      await cli.run(["use", "feature/unabsorb-stash-stable", "--allow-shared", "--allow-agent", "--allow-unsafe"]),
+    ).toBe(0)
+    await writeFile(join(repoRoot, "stable-unabsorb.txt"), "from-primary\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-unabsorb",
+      body: `#!/usr/bin/env bash
+set -eu
+echo hook-stash > "$WT_REPO_ROOT/.hook-pre-unabsorb.tmp"
+git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-unabsorb" >/dev/null
+`,
+    })
+
+    expect(await cli.run(["unabsorb", "feature/unabsorb-stash-stable", "--allow-agent", "--allow-unsafe"])).toBe(0)
+    const targetPath = join(repoRoot, ".worktree", "feature", "unabsorb-stash-stable")
+    expect(await readFile(join(targetPath, "stable-unabsorb.txt"), "utf8")).toBe("from-primary\n")
+  })
+
+  it("unabsorb rejects --to with .worktree/ prefix", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stderr: (line) => stderr.push(line),
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb-invalid"])).toBe(0)
+    expect(
+      await cli.run(["use", "feature/unabsorb-invalid", "--allow-shared", "--allow-agent", "--allow-unsafe"]),
+    ).toBe(0)
+
+    await writeFile(join(repoRoot, "invalid-to.txt"), "invalid\n", "utf8")
+    expect(
+      await cli.run([
+        "unabsorb",
+        "feature/unabsorb-invalid",
+        "--to",
+        ".worktree/feature/unabsorb-invalid",
+        "--allow-agent",
+        "--allow-unsafe",
+      ]),
+    ).toBe(3)
+    expect(stderr.some((line) => line.includes("--to expects vw-managed worktree name"))).toBe(true)
+  })
+
+  it("unabsorb auto-restores primary changes when pre-hook fails", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb-hook-fail"])).toBe(0)
+    expect(
+      await cli.run(["use", "feature/unabsorb-hook-fail", "--allow-shared", "--allow-agent", "--allow-unsafe"]),
+    ).toBe(0)
+    await writeFile(join(repoRoot, "restore-primary.txt"), "restore\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-unabsorb",
+      body: `#!/usr/bin/env bash
+set -eu
+exit 1
+`,
+    })
+
+    expect(await cli.run(["unabsorb", "feature/unabsorb-hook-fail", "--allow-agent", "--allow-unsafe"])).toBe(10)
+    expect(await readFile(join(repoRoot, "restore-primary.txt"), "utf8")).toBe("restore\n")
+    const primaryStatus = await runGit(repoRoot, ["status", "--porcelain"])
+    expect(primaryStatus).toContain("restore-primary.txt")
   })
 
   it("prints general help when command is omitted", async () => {

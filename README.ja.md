@@ -263,6 +263,46 @@ vw extract --current --stash
 
 - 実装は primary worktree の抽出フローが中心
 
+### `absorb`
+
+```bash
+vw absorb feature/foo --allow-agent --allow-unsafe
+vw absorb feature/foo --from feature/foo --keep-stash --allow-agent --allow-unsafe
+```
+
+機能:
+
+- 非 primary worktree の変更（未コミット含む）を primary worktree に移す
+- source worktree を stash し、primary で checkout 後に stash を apply する
+- `--from` は vw 管理 worktree 名のみ指定可能（`.worktree/` プレフィックスは不可）
+
+安全条件:
+
+- primary が dirty なら拒否
+- 非TTYでは `--allow-agent` と `--allow-unsafe` の両方が必要
+- `--keep-stash` を付けると apply 後も stash を残す
+
+### `unabsorb`
+
+```bash
+vw unabsorb feature/foo --allow-agent --allow-unsafe
+vw unabsorb feature/foo --to feature/foo --keep-stash --allow-agent --allow-unsafe
+```
+
+機能:
+
+- primary worktree の変更（未コミット含む）を非 primary worktree に戻す
+- primary の変更を stash し、target worktree に stash を apply する
+- `--to` は vw 管理 worktree 名のみ指定可能（`.worktree/` プレフィックスは不可）
+
+安全条件:
+
+- primary worktree が対象 branch 上である必要がある
+- primary が clean なら拒否
+- target worktree が dirty なら拒否
+- 非TTYでは `--allow-agent` と `--allow-unsafe` の両方が必要
+- `--keep-stash` を付けると apply 後も stash を残す
+
 ### `use`
 
 ```bash

@@ -263,6 +263,46 @@ Current limitation:
 
 - Implementation currently supports primary worktree extraction flow.
 
+### `absorb`
+
+```bash
+vw absorb feature/foo --allow-agent --allow-unsafe
+vw absorb feature/foo --from feature/foo --keep-stash --allow-agent --allow-unsafe
+```
+
+What it does:
+
+- Moves changes from non-primary worktree to primary worktree, including uncommitted files
+- Stashes source worktree changes, checks out branch in primary, then applies stash
+- `--from` accepts vw-managed worktree name only (`.worktree/` prefix is rejected)
+
+Safety:
+
+- Rejects dirty primary worktree
+- In non-TTY mode, requires `--allow-agent` and `--allow-unsafe`
+- `--keep-stash` keeps the stash entry after apply for rollback/debugging
+
+### `unabsorb`
+
+```bash
+vw unabsorb feature/foo --allow-agent --allow-unsafe
+vw unabsorb feature/foo --to feature/foo --keep-stash --allow-agent --allow-unsafe
+```
+
+What it does:
+
+- Pushes changes from primary worktree to non-primary worktree, including uncommitted files
+- Stashes primary worktree changes, applies stash in target worktree
+- `--to` accepts vw-managed worktree name only (`.worktree/` prefix is rejected)
+
+Safety:
+
+- Requires primary worktree to be on target branch
+- Rejects clean primary worktree
+- Rejects dirty target worktree
+- In non-TTY mode, requires `--allow-agent` and `--allow-unsafe`
+- `--keep-stash` keeps the stash entry after apply for rollback/debugging
+
 ### `use`
 
 ```bash
