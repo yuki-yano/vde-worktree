@@ -868,6 +868,33 @@ echo invoked > "${marker}"
     expect(stashMessage.trim()).toContain("vde-worktree absorb feature/absorb-keep")
   })
 
+  it("absorb applies intended stash even when pre-hook creates another stash", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb-stash-stable"])).toBe(0)
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb-stash-stable")
+    await writeFile(join(sourcePath, "stable.txt"), "from-source\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-absorb",
+      body: `#!/usr/bin/env bash
+set -eu
+echo hook-stash > "$WT_REPO_ROOT/.hook-pre-absorb.tmp"
+git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-absorb" >/dev/null
+`,
+    })
+
+    expect(await cli.run(["absorb", "feature/absorb-stash-stable", "--allow-agent", "--allow-unsafe"])).toBe(0)
+    expect(await readFile(join(repoRoot, "stable.txt"), "utf8")).toBe("from-source\n")
+  })
+
   it("absorb rejects --from with .worktree/ prefix", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
@@ -960,6 +987,36 @@ echo invoked > "${marker}"
 
     const stashMessage = await runGit(repoRoot, ["stash", "list", "--max-count=1", "--format=%gs"])
     expect(stashMessage.trim()).toContain("vde-worktree unabsorb feature/unabsorb-keep")
+  })
+
+  it("unabsorb applies intended stash even when pre-hook creates another stash", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb-stash-stable"])).toBe(0)
+    expect(
+      await cli.run(["use", "feature/unabsorb-stash-stable", "--allow-shared", "--allow-agent", "--allow-unsafe"]),
+    ).toBe(0)
+    await writeFile(join(repoRoot, "stable-unabsorb.txt"), "from-primary\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-unabsorb",
+      body: `#!/usr/bin/env bash
+set -eu
+echo hook-stash > "$WT_REPO_ROOT/.hook-pre-unabsorb.tmp"
+git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-unabsorb" >/dev/null
+`,
+    })
+
+    expect(await cli.run(["unabsorb", "feature/unabsorb-stash-stable", "--allow-agent", "--allow-unsafe"])).toBe(0)
+    const targetPath = join(repoRoot, ".worktree", "feature", "unabsorb-stash-stable")
+    expect(await readFile(join(targetPath, "stable-unabsorb.txt"), "utf8")).toBe("from-primary\n")
   })
 
   it("unabsorb rejects --to with .worktree/ prefix", async () => {

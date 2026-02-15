@@ -1300,14 +1300,74 @@ const resolveManagedNonPrimaryWorktreeByBranch = ({
       },
     })
   }
-  const candidate = managedCandidates[0]
-  if (candidate === undefined) {
-    throw createCliError("WORKTREE_NOT_FOUND", {
-      message: `No managed ${role} worktree found for branch: ${branch}`,
-      details: { branch, role },
-    })
+  return managedCandidates[0]!
+}
+
+const createStashEntry = async ({
+  cwd,
+  message,
+}: {
+  readonly cwd: string
+  readonly message: string
+}): Promise<string> => {
+  await runGitCommand({
+    cwd,
+    args: ["stash", "push", "-u", "-m", message],
+  })
+  const stashTop = await runGitCommand({
+    cwd,
+    args: ["rev-parse", "--verify", "-q", "stash@{0}"],
+    reject: false,
+  })
+  const stashOid = stashTop.stdout.trim()
+  if (stashTop.exitCode === 0 && stashOid.length > 0) {
+    return stashOid
   }
-  return candidate
+  throw createCliError("INTERNAL_ERROR", {
+    message: "Failed to resolve created stash entry",
+    details: { cwd, message },
+  })
+}
+
+const resolveStashRefByOid = async ({
+  cwd,
+  stashOid,
+}: {
+  readonly cwd: string
+  readonly stashOid: string
+}): Promise<string | null> => {
+  const stashList = await runGitCommand({
+    cwd,
+    args: ["stash", "list", "--format=%gd%x09%H"],
+  })
+  const lines = stashList.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  for (const line of lines) {
+    const [ref, oid] = line.split("\t")
+    if (typeof ref === "string" && typeof oid === "string" && ref.length > 0 && oid === stashOid) {
+      return ref
+    }
+  }
+  return null
+}
+
+const dropStashByOid = async ({
+  cwd,
+  stashOid,
+}: {
+  readonly cwd: string
+  readonly stashOid: string
+}): Promise<void> => {
+  const stashRef = await resolveStashRefByOid({ cwd, stashOid })
+  if (stashRef === null) {
+    return
+  }
+  await runGitCommand({
+    cwd,
+    args: ["stash", "drop", stashRef],
+  })
 }
 
 const formatDisplayPath = (absolutePath: string): string => {
@@ -1803,7 +1863,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
     from: {
       type: "string",
       valueHint: "value",
-      description: "Value used by extract --from or absorb --from",
+      description: "For extract: filesystem path. For absorb: managed worktree name without .worktree/ prefix.",
     },
     to: {
       type: "string",
@@ -2729,17 +2789,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             })
           }
 
-          let stashRef: string | null = null
+          let stashOid: string | null = null
           if (dirty && parsedArgs.stash === true) {
-            await runGitCommand({
+            stashOid = await createStashEntry({
               cwd: repoRoot,
-              args: ["stash", "push", "-u", "-m", `vde-worktree extract ${branch}`],
+              message: `vde-worktree extract ${branch}`,
             })
-            const stashTop = await runGitCommand({
-              cwd: repoRoot,
-              args: ["stash", "list", "--max-count=1", "--format=%gd"],
-            })
-            stashRef = stashTop.stdout.trim().length > 0 ? stashTop.stdout.trim() : null
           }
 
           const hookContext = createHookContext({
@@ -2760,21 +2815,21 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             args: ["worktree", "add", targetPath, branch],
           })
 
-          if (stashRef !== null) {
+          if (stashOid !== null) {
             const applyResult = await runGitCommand({
               cwd: targetPath,
-              args: ["stash", "apply", stashRef],
+              args: ["stash", "apply", stashOid],
               reject: false,
             })
             if (applyResult.exitCode !== 0) {
               throw createCliError("STASH_APPLY_FAILED", {
                 message: "Failed to apply stash to extracted worktree",
-                details: { stashRef, branch, path: targetPath },
+                details: { stashOid, branch, path: targetPath },
               })
             }
-            await runGitCommand({
+            await dropStashByOid({
               cwd: repoRoot,
-              args: ["stash", "drop", stashRef],
+              stashOid,
             })
           }
 
@@ -2849,17 +2904,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             reject: false,
           })
           const sourceDirty = sourceStatus.stdout.trim().length > 0
-          let stashRef: string | null = null
+          let stashOid: string | null = null
           if (sourceDirty) {
-            await runGitCommand({
+            stashOid = await createStashEntry({
               cwd: sourceWorktree.path,
-              args: ["stash", "push", "-u", "-m", `vde-worktree absorb ${branch}`],
+              message: `vde-worktree absorb ${branch}`,
             })
-            const stashTop = await runGitCommand({
-              cwd: sourceWorktree.path,
-              args: ["stash", "list", "--max-count=1", "--format=%gd"],
-            })
-            stashRef = stashTop.stdout.trim().length > 0 ? stashTop.stdout.trim() : null
           }
 
           const hookContext = createHookContext({
@@ -2879,33 +2929,37 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             args: ["checkout", "--ignore-other-worktrees", branch],
           })
 
-          if (stashRef !== null) {
+          if (stashOid !== null) {
             const applyResult = await runGitCommand({
               cwd: repoRoot,
-              args: ["stash", "apply", stashRef],
+              args: ["stash", "apply", stashOid],
               reject: false,
             })
             if (applyResult.exitCode !== 0) {
               throw createCliError("STASH_APPLY_FAILED", {
                 message: "Failed to apply stash to primary worktree",
-                details: { stashRef, branch, sourcePath: sourceWorktree.path, path: repoRoot },
+                details: { stashOid, branch, sourcePath: sourceWorktree.path, path: repoRoot },
               })
             }
             if (!keepStash) {
-              await runGitCommand({
+              await dropStashByOid({
                 cwd: repoRoot,
-                args: ["stash", "drop", stashRef],
+                stashOid,
               })
             }
           }
 
           await runPostHook({ name: "absorb", context: hookContext })
+          const stashOutputRef =
+            keepStash && stashOid !== null
+              ? ((await resolveStashRefByOid({ cwd: repoRoot, stashOid })) ?? stashOid)
+              : null
           return {
             branch,
             path: repoRoot,
             sourcePath: sourceWorktree.path,
             stashed: sourceDirty,
-            stashRef: keepStash ? stashRef : null,
+            stashRef: stashOutputRef,
           }
         })
 
@@ -2991,15 +3045,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             })
           }
 
-          await runGitCommand({
+          const stashOid = await createStashEntry({
             cwd: repoRoot,
-            args: ["stash", "push", "-u", "-m", `vde-worktree unabsorb ${branch}`],
+            message: `vde-worktree unabsorb ${branch}`,
           })
-          const stashTop = await runGitCommand({
-            cwd: repoRoot,
-            args: ["stash", "list", "--max-count=1", "--format=%gd"],
-          })
-          const stashRef = stashTop.stdout.trim().length > 0 ? stashTop.stdout.trim() : null
 
           const hookContext = createHookContext({
             runtime,
@@ -3015,33 +3064,34 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           })
           await runPreHook({ name: "unabsorb", context: hookContext })
 
-          if (stashRef !== null) {
-            const applyResult = await runGitCommand({
-              cwd: targetWorktree.path,
-              args: ["stash", "apply", stashRef],
-              reject: false,
+          const applyResult = await runGitCommand({
+            cwd: targetWorktree.path,
+            args: ["stash", "apply", stashOid],
+            reject: false,
+          })
+          if (applyResult.exitCode !== 0) {
+            throw createCliError("STASH_APPLY_FAILED", {
+              message: "Failed to apply stash to target worktree",
+              details: { stashOid, branch, sourcePath: repoRoot, targetPath: targetWorktree.path },
             })
-            if (applyResult.exitCode !== 0) {
-              throw createCliError("STASH_APPLY_FAILED", {
-                message: "Failed to apply stash to target worktree",
-                details: { stashRef, branch, sourcePath: repoRoot, targetPath: targetWorktree.path },
-              })
-            }
-            if (!keepStash) {
-              await runGitCommand({
-                cwd: repoRoot,
-                args: ["stash", "drop", stashRef],
-              })
-            }
+          }
+          if (!keepStash) {
+            await dropStashByOid({
+              cwd: repoRoot,
+              stashOid,
+            })
           }
 
           await runPostHook({ name: "unabsorb", context: hookContext })
+          const stashOutputRef = keepStash
+            ? ((await resolveStashRefByOid({ cwd: repoRoot, stashOid })) ?? stashOid)
+            : null
           return {
             branch,
             path: targetWorktree.path,
             sourcePath: repoRoot,
-            stashed: stashRef !== null,
-            stashRef: keepStash ? stashRef : null,
+            stashed: true,
+            stashRef: stashOutputRef,
           }
         })
 
