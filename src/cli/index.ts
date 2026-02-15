@@ -3065,7 +3065,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const theme = createCatppuccinTheme({
-          enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive }),
+          enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive || process.stderr.isTTY === true }),
         })
         const branchColumnWidth = snapshot.worktrees.reduce((maxWidth, worktree) => {
           const label = buildCdBranchLabel({

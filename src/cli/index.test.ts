@@ -408,6 +408,7 @@ describe("createCli", () => {
       const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(
         async (input) => {
           expect(input.isInteractive?.()).toBe(true)
+          expect(input.candidates.some((candidate) => candidate.includes("\u001b["))).toBe(true)
           return {
             status: "selected" as const,
             path: join(repoRoot, ".worktree", "feature", "foo"),
