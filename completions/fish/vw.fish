@@ -88,21 +88,50 @@ for (const worktree of worktrees) {
 ' 2>/dev/null
 end
 
+function __vw_managed_worktree_names_with_meta
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+  set -l vw_bin (__vw_current_bin)
+  test -n "$vw_bin"; or return 0
+
+  command $vw_bin list --json 2>/dev/null | command node -e '
+const fs = require("fs")
+const path = require("path")
+const toFlag = (value) => {
+  if (value === true) return "yes"
+  if (value === false) return "no"
+  return "unknown"
+}
+let payload
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf8"))
+} catch {
+  process.exit(0)
+}
+const repoRoot = typeof payload?.repoRoot === "string" ? payload.repoRoot : ""
+if (repoRoot.length === 0) process.exit(0)
+const worktreeRoot = path.join(repoRoot, ".worktree")
+const worktrees = Array.isArray(payload.worktrees) ? payload.worktrees : []
+for (const worktree of worktrees) {
+  if (typeof worktree?.path !== "string" || worktree.path.length === 0) continue
+  const rel = path.relative(worktreeRoot, worktree.path)
+  if (!rel || rel === "." || rel === ".." || rel.startsWith(`..${path.sep}`)) continue
+  const name = rel.split(path.sep).join("/")
+  const branch = typeof worktree?.branch === "string" && worktree.branch.length > 0 ? worktree.branch : "(detached)"
+  const merged = toFlag(worktree?.merged?.overall)
+  const dirty = worktree?.dirty === true ? "yes" : "no"
+  const locked = worktree?.locked?.value === true ? "yes" : "no"
+  const summary = `branch=${branch} merged=${merged} dirty=${dirty} locked=${locked}`
+  const sanitized = summary.replace(/[\t\r\n]+/g, " ").trim()
+  process.stdout.write(`${name}\t${sanitized}\n`)
+}
+' 2>/dev/null
+end
+
 function __vw_use_candidates_with_meta
   begin
     __vw_worktree_branches
     __vw_default_branch
   end | sort -u
-end
-
-function __vw_local_branches
-  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
-  command git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | sort -u
-end
-
-function __vw_switch_branches
-  __vw_worktree_branches
-  __vw_local_branches
 end
 
 function __vw_remote_branches
@@ -120,7 +149,7 @@ function __vw_hook_names
   end
 end
 
-set -l __vw_commands init list status path new switch mv del gone get extract use exec invoke copy link lock unlock cd completion help
+set -l __vw_commands init list status path new switch mv del gone get extract absorb unabsorb use exec invoke copy link lock unlock cd completion help
 
 for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a init -d "Initialize directories, hooks, and managed exclude entries"
@@ -134,6 +163,8 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a gone -d "Bulk cleanup by safety-filtered candidate selection"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a get -d "Fetch remote branch and attach worktree"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a extract -d "Extract current primary branch into .worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a absorb -d "Bring non-primary worktree changes into primary worktree"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a unabsorb -d "Push primary worktree changes into non-primary worktree"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a use -d "Checkout target branch in primary worktree"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a exec -d "Run command in target branch worktree"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a invoke -d "Manually run hook script"
@@ -157,10 +188,11 @@ for __vw_bin in vw vde-worktree
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from status" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from path" -a "(__vw_worktree_candidates_with_meta)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from switch" -a "(__vw_switch_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from mv" -a "(__vw_local_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from switch" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from get" -a "(__vw_remote_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -a "(__vw_worktree_candidates_with_meta)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_use_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from exec" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from invoke" -a "(__vw_hook_names)"
@@ -180,6 +212,16 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l current -d "Extract current worktree branch"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l from -r -d "Path used by extract --from"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l stash -d "Allow stash when dirty"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -l from -r -a "(__vw_managed_worktree_names_with_meta)" -d "Source managed worktree name"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -l keep-stash -d "Keep stash entry after absorb"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -l allow-agent -d "Allow non-TTY execution for absorb"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from absorb" -l allow-unsafe -d "Allow unsafe behavior in non-TTY mode"
+
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -l to -r -a "(__vw_managed_worktree_names_with_meta)" -d "Target managed worktree name"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -l keep-stash -d "Keep stash entry after unabsorb"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -l allow-agent -d "Allow non-TTY execution for unabsorb"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from unabsorb" -l allow-unsafe -d "Allow unsafe behavior in non-TTY mode"
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-agent -d "Allow non-TTY execution for use"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-shared -d "Allow checkout when branch is attached by another worktree"

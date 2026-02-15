@@ -24,6 +24,7 @@ import { initializeRepository, isInitialized } from "../core/init"
 import {
   branchToWorktreePath,
   ensurePathInsideRepo,
+  getWorktreeRootPath,
   resolvePathFromCwd,
   resolveRepoContext,
   resolveRepoRelativePath,
@@ -381,6 +382,26 @@ const commandHelpEntries: readonly CommandHelp[] = [
     summary: "Extract current primary branch into .worktree and switch primary back to base.",
     details: ["Current implementation targets primary worktree extraction flow."],
     options: ["--current", "--stash", "--from <path>"],
+  },
+  {
+    name: "absorb",
+    usage: "vw absorb <branch> [--from <worktree-name>] [--keep-stash] [--allow-agent --allow-unsafe]",
+    summary: "Bring non-primary worktree changes (including uncommitted) into primary worktree.",
+    details: [
+      "Stashes source worktree changes, checks out target branch in primary, then applies stash.",
+      "Non-TTY execution requires --allow-agent and --allow-unsafe.",
+    ],
+    options: ["--from <worktree-name>", "--keep-stash", "--allow-agent", "--allow-unsafe"],
+  },
+  {
+    name: "unabsorb",
+    usage: "vw unabsorb <branch> [--to <worktree-name>] [--keep-stash] [--allow-agent --allow-unsafe]",
+    summary: "Push primary worktree changes (including uncommitted) into non-primary worktree.",
+    details: [
+      "Stashes primary worktree changes, applies them in target non-primary worktree, then optionally drops stash.",
+      "Non-TTY execution requires --allow-agent and --allow-unsafe.",
+    ],
+    options: ["--to <worktree-name>", "--keep-stash", "--allow-agent", "--allow-unsafe"],
   },
   {
     name: "use",
@@ -1153,6 +1174,142 @@ const ensureBranchIsNotPrimary = ({
   })
 }
 
+const toManagedWorktreeName = ({
+  repoRoot,
+  worktreePath,
+}: {
+  readonly repoRoot: string
+  readonly worktreePath: string
+}): string | null => {
+  const worktreeRoot = getWorktreeRootPath(repoRoot)
+  const relativePath = relative(worktreeRoot, worktreePath)
+  if (
+    relativePath.length === 0 ||
+    relativePath === "." ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`)
+  ) {
+    return null
+  }
+  return relativePath.split(sep).join("/")
+}
+
+const resolveManagedWorktreePathFromName = ({
+  repoRoot,
+  optionName,
+  worktreeName,
+}: {
+  readonly repoRoot: string
+  readonly optionName: "--from" | "--to"
+  readonly worktreeName: string
+}): string => {
+  const normalized = worktreeName.trim()
+  if (normalized.length === 0) {
+    throw createCliError("INVALID_ARGUMENT", {
+      message: `${optionName} requires non-empty worktree name`,
+      details: { optionName, worktreeName },
+    })
+  }
+  if (normalized === ".worktree" || normalized.startsWith(".worktree/") || normalized.startsWith(".worktree\\")) {
+    throw createCliError("INVALID_ARGUMENT", {
+      message: `${optionName} expects vw-managed worktree name (without .worktree/ prefix)`,
+      details: { optionName, worktreeName },
+    })
+  }
+
+  const worktreeRoot = getWorktreeRootPath(repoRoot)
+  let resolvedPath: string
+  try {
+    resolvedPath = resolveRepoRelativePath({
+      repoRoot: worktreeRoot,
+      relativePath: normalized,
+    })
+  } catch (error) {
+    throw createCliError("INVALID_ARGUMENT", {
+      message: `${optionName} expects vw-managed worktree name`,
+      details: { optionName, worktreeName },
+      cause: error,
+    })
+  }
+
+  if (resolvedPath === worktreeRoot) {
+    throw createCliError("INVALID_ARGUMENT", {
+      message: `${optionName} expects vw-managed worktree name`,
+      details: { optionName, worktreeName },
+    })
+  }
+
+  return resolvedPath
+}
+
+const resolveManagedNonPrimaryWorktreeByBranch = ({
+  repoRoot,
+  branch,
+  worktrees,
+  optionName,
+  worktreeName,
+  role,
+}: {
+  readonly repoRoot: string
+  readonly branch: string
+  readonly worktrees: readonly WorktreeStatus[]
+  readonly optionName: "--from" | "--to"
+  readonly worktreeName?: string
+  readonly role: "source" | "target"
+}): WorktreeStatus => {
+  const managedCandidates = worktrees.filter((worktree) => {
+    return (
+      worktree.branch === branch &&
+      worktree.path !== repoRoot &&
+      toManagedWorktreeName({ repoRoot, worktreePath: worktree.path }) !== null
+    )
+  })
+
+  if (typeof worktreeName === "string") {
+    const resolvedPath = resolveManagedWorktreePathFromName({
+      repoRoot,
+      optionName,
+      worktreeName,
+    })
+    const selected = managedCandidates.find((worktree) => worktree.path === resolvedPath)
+    if (selected === undefined) {
+      throw createCliError("WORKTREE_NOT_FOUND", {
+        message: `${role} worktree not found for branch '${branch}' and name '${worktreeName}'`,
+        details: { branch, worktreeName, optionName, role },
+      })
+    }
+    return selected
+  }
+
+  if (managedCandidates.length === 0) {
+    throw createCliError("WORKTREE_NOT_FOUND", {
+      message: `No managed ${role} worktree found for branch: ${branch}`,
+      details: { branch, role },
+    })
+  }
+  if (managedCandidates.length > 1) {
+    throw createCliError("INVALID_ARGUMENT", {
+      message: `Multiple managed ${role} worktrees found; use ${optionName} <worktree-name>`,
+      details: {
+        branch,
+        role,
+        optionName,
+        candidates: managedCandidates.map((worktree) => {
+          return toManagedWorktreeName({ repoRoot, worktreePath: worktree.path }) ?? worktree.path
+        }),
+      },
+    })
+  }
+  const candidate = managedCandidates[0]
+  if (candidate === undefined) {
+    throw createCliError("WORKTREE_NOT_FOUND", {
+      message: `No managed ${role} worktree found for branch: ${branch}`,
+      details: { branch, role },
+    })
+  }
+  return candidate
+}
+
 const formatDisplayPath = (absolutePath: string): string => {
   const homeDirectory = homedir()
   if (homeDirectory.length === 0) {
@@ -1645,12 +1802,21 @@ export const createCli = (options: CLIOptions = {}): CLI => {
     },
     from: {
       type: "string",
-      valueHint: "path",
-      description: "Path used by extract --from",
+      valueHint: "value",
+      description: "Value used by extract --from or absorb --from",
+    },
+    to: {
+      type: "string",
+      valueHint: "worktree-name",
+      description: "Worktree name used by unabsorb --to",
     },
     stash: {
       type: "boolean",
       description: "Allow stash for extract",
+    },
+    keepStash: {
+      type: "boolean",
+      description: "Keep stash entry after absorb/unabsorb",
     },
     fallback: {
       type: "boolean",
@@ -2625,6 +2791,266 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               buildJsonSuccess({
                 command,
                 status: "created",
+                repoRoot,
+                details: result,
+              }),
+            ),
+          )
+          return EXIT_CODE.OK
+        }
+
+        stdout(result.path)
+        return EXIT_CODE.OK
+      }
+
+      if (command === "absorb") {
+        ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
+        const branch = commandArgs[0] as string
+        const fromWorktreeName = typeof parsedArgs.from === "string" ? parsedArgs.from : undefined
+        const keepStash = parsedArgs.keepStash === true
+        if (runtime.isInteractive !== true) {
+          if (parsedArgs.allowAgent !== true) {
+            throw createCliError("UNSAFE_FLAG_REQUIRED", {
+              message: "UNSAFE_FLAG_REQUIRED: absorb in non-TTY requires --allow-agent",
+            })
+          }
+          ensureUnsafeForNonTty({
+            runtime,
+            reason: "absorb in non-TTY mode requires --allow-unsafe",
+          })
+        }
+
+        const result = await runWriteOperation(async () => {
+          const primaryStatus = await runGitCommand({
+            cwd: repoRoot,
+            args: ["status", "--porcelain"],
+            reject: false,
+          })
+          if (primaryStatus.stdout.trim().length > 0) {
+            throw createCliError("DIRTY_WORKTREE", {
+              message: "absorb requires clean primary worktree",
+              details: { repoRoot },
+            })
+          }
+
+          const snapshot = await collectWorktreeSnapshot(repoRoot)
+          const sourceWorktree = resolveManagedNonPrimaryWorktreeByBranch({
+            repoRoot,
+            branch,
+            worktrees: snapshot.worktrees,
+            optionName: "--from",
+            worktreeName: fromWorktreeName,
+            role: "source",
+          })
+
+          const sourceStatus = await runGitCommand({
+            cwd: sourceWorktree.path,
+            args: ["status", "--porcelain"],
+            reject: false,
+          })
+          const sourceDirty = sourceStatus.stdout.trim().length > 0
+          let stashRef: string | null = null
+          if (sourceDirty) {
+            await runGitCommand({
+              cwd: sourceWorktree.path,
+              args: ["stash", "push", "-u", "-m", `vde-worktree absorb ${branch}`],
+            })
+            const stashTop = await runGitCommand({
+              cwd: sourceWorktree.path,
+              args: ["stash", "list", "--max-count=1", "--format=%gd"],
+            })
+            stashRef = stashTop.stdout.trim().length > 0 ? stashTop.stdout.trim() : null
+          }
+
+          const hookContext = createHookContext({
+            runtime,
+            repoRoot,
+            action: "absorb",
+            branch,
+            worktreePath: repoRoot,
+            stderr,
+            extraEnv: {
+              WT_SOURCE_WORKTREE_PATH: sourceWorktree.path,
+            },
+          })
+          await runPreHook({ name: "absorb", context: hookContext })
+          await runGitCommand({
+            cwd: repoRoot,
+            args: ["checkout", "--ignore-other-worktrees", branch],
+          })
+
+          if (stashRef !== null) {
+            const applyResult = await runGitCommand({
+              cwd: repoRoot,
+              args: ["stash", "apply", stashRef],
+              reject: false,
+            })
+            if (applyResult.exitCode !== 0) {
+              throw createCliError("STASH_APPLY_FAILED", {
+                message: "Failed to apply stash to primary worktree",
+                details: { stashRef, branch, sourcePath: sourceWorktree.path, path: repoRoot },
+              })
+            }
+            if (!keepStash) {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["stash", "drop", stashRef],
+              })
+            }
+          }
+
+          await runPostHook({ name: "absorb", context: hookContext })
+          return {
+            branch,
+            path: repoRoot,
+            sourcePath: sourceWorktree.path,
+            stashed: sourceDirty,
+            stashRef: keepStash ? stashRef : null,
+          }
+        })
+
+        if (runtime.json) {
+          stdout(
+            JSON.stringify(
+              buildJsonSuccess({
+                command,
+                status: "ok",
+                repoRoot,
+                details: result,
+              }),
+            ),
+          )
+          return EXIT_CODE.OK
+        }
+
+        stdout(result.path)
+        return EXIT_CODE.OK
+      }
+
+      if (command === "unabsorb") {
+        ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
+        const branch = commandArgs[0] as string
+        const targetWorktreeName = typeof parsedArgs.to === "string" ? parsedArgs.to : undefined
+        const keepStash = parsedArgs.keepStash === true
+        if (runtime.isInteractive !== true) {
+          if (parsedArgs.allowAgent !== true) {
+            throw createCliError("UNSAFE_FLAG_REQUIRED", {
+              message: "UNSAFE_FLAG_REQUIRED: unabsorb in non-TTY requires --allow-agent",
+            })
+          }
+          ensureUnsafeForNonTty({
+            runtime,
+            reason: "unabsorb in non-TTY mode requires --allow-unsafe",
+          })
+        }
+
+        const result = await runWriteOperation(async () => {
+          const currentBranchResult = await runGitCommand({
+            cwd: repoRoot,
+            args: ["branch", "--show-current"],
+            reject: false,
+          })
+          const currentBranch = currentBranchResult.stdout.trim()
+          if (currentBranch !== branch) {
+            throw createCliError("INVALID_ARGUMENT", {
+              message: "unabsorb requires primary worktree to be on the target branch",
+              details: { branch, currentBranch },
+            })
+          }
+
+          const primaryStatus = await runGitCommand({
+            cwd: repoRoot,
+            args: ["status", "--porcelain"],
+            reject: false,
+          })
+          if (primaryStatus.stdout.trim().length === 0) {
+            throw createCliError("DIRTY_WORKTREE", {
+              message: "unabsorb requires dirty primary worktree",
+              details: { repoRoot },
+            })
+          }
+
+          const snapshot = await collectWorktreeSnapshot(repoRoot)
+          const targetWorktree = resolveManagedNonPrimaryWorktreeByBranch({
+            repoRoot,
+            branch,
+            worktrees: snapshot.worktrees,
+            optionName: "--to",
+            worktreeName: targetWorktreeName,
+            role: "target",
+          })
+          const targetStatus = await runGitCommand({
+            cwd: targetWorktree.path,
+            args: ["status", "--porcelain"],
+            reject: false,
+          })
+          if (targetStatus.stdout.trim().length > 0) {
+            throw createCliError("DIRTY_WORKTREE", {
+              message: "unabsorb requires clean target worktree",
+              details: { branch, path: targetWorktree.path },
+            })
+          }
+
+          await runGitCommand({
+            cwd: repoRoot,
+            args: ["stash", "push", "-u", "-m", `vde-worktree unabsorb ${branch}`],
+          })
+          const stashTop = await runGitCommand({
+            cwd: repoRoot,
+            args: ["stash", "list", "--max-count=1", "--format=%gd"],
+          })
+          const stashRef = stashTop.stdout.trim().length > 0 ? stashTop.stdout.trim() : null
+
+          const hookContext = createHookContext({
+            runtime,
+            repoRoot,
+            action: "unabsorb",
+            branch,
+            worktreePath: targetWorktree.path,
+            stderr,
+            extraEnv: {
+              WT_SOURCE_WORKTREE_PATH: repoRoot,
+              WT_TARGET_WORKTREE_PATH: targetWorktree.path,
+            },
+          })
+          await runPreHook({ name: "unabsorb", context: hookContext })
+
+          if (stashRef !== null) {
+            const applyResult = await runGitCommand({
+              cwd: targetWorktree.path,
+              args: ["stash", "apply", stashRef],
+              reject: false,
+            })
+            if (applyResult.exitCode !== 0) {
+              throw createCliError("STASH_APPLY_FAILED", {
+                message: "Failed to apply stash to target worktree",
+                details: { stashRef, branch, sourcePath: repoRoot, targetPath: targetWorktree.path },
+              })
+            }
+            if (!keepStash) {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["stash", "drop", stashRef],
+              })
+            }
+          }
+
+          await runPostHook({ name: "unabsorb", context: hookContext })
+          return {
+            branch,
+            path: targetWorktree.path,
+            sourcePath: repoRoot,
+            stashed: stashRef !== null,
+            stashRef: keepStash ? stashRef : null,
+          }
+        })
+
+        if (runtime.json) {
+          stdout(
+            JSON.stringify(
+              buildJsonSuccess({
+                command,
+                status: "ok",
                 repoRoot,
                 details: result,
               }),
