@@ -110,8 +110,8 @@ describe("paths", () => {
     expect(getLogsDirectoryPath("/repo")).toBe("/repo/.vde/worktree/logs")
     expect(getLocksDirectoryPath("/repo")).toBe("/repo/.vde/worktree/locks")
     expect(getStateDirectoryPath("/repo")).toBe("/repo/.vde/worktree/state")
-    expect(branchToWorktreeId("feature/a b")).toBe("feature%2Fa%20b")
-    expect(branchToWorktreePath("/repo", "feature/a b")).toBe("/repo/.worktree/feature%2Fa%20b")
+    expect(branchToWorktreeId("feature/a b")).toBe("feature-a-b--13250f2ab119")
+    expect(branchToWorktreePath("/repo", "feature/a b")).toBe("/repo/.worktree/feature/a b")
   })
 
   it("ensures path is inside repository", () => {

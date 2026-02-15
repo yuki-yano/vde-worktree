@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { execa } from "execa"
 import stringWidth from "string-width"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { branchToWorktreeId } from "../core/paths"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createCli } from "./index"
 
@@ -257,8 +258,8 @@ describe("createCli", () => {
     expect(await cli.run(["switch", "feature/foo"])).toBe(0)
     expect(await cli.run(["switch", "feature/foo"])).toBe(0)
 
-    const encodedPath = join(repoRoot, ".worktree", "feature%2Ffoo")
-    expect(stdout).toEqual([encodedPath, encodedPath])
+    const featurePath = join(repoRoot, ".worktree", "feature", "foo")
+    expect(stdout).toEqual([featurePath, featurePath])
     expect(stderr).toEqual([])
 
     const worktreeList = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
@@ -285,7 +286,7 @@ describe("createCli", () => {
 
     expect(payload.status).toBe("ok")
     expect(payload.branch).toBe("feature/foo")
-    expect(payload.path).toBe(join(repoRoot, ".worktree", "feature%2Ffoo"))
+    expect(payload.path).toBe(join(repoRoot, ".worktree", "feature", "foo"))
   })
 
   it("status --json without branch shows current worktree", async () => {
@@ -336,8 +337,8 @@ describe("createCli", () => {
       async (input) => {
         const selected =
           input.candidates.find((candidate) =>
-            candidate.includes(`\t${join(repoRoot, ".worktree", "feature%2Ffoo")}\t`),
-          ) ?? join(repoRoot, ".worktree", "feature%2Ffoo")
+            candidate.includes(`\t${join(repoRoot, ".worktree", "feature", "foo")}\t`),
+          ) ?? join(repoRoot, ".worktree", "feature", "foo")
         return {
           status: "selected" as const,
           path: selected,
@@ -357,16 +358,16 @@ describe("createCli", () => {
     stdout.length = 0
 
     expect(await cli.run(["cd"])).toBe(0)
-    expect(stdout).toEqual([join(repoRoot, ".worktree", "feature%2Ffoo")])
+    expect(stdout).toEqual([join(repoRoot, ".worktree", "feature", "foo")])
     expect(selectPathWithFzf).toHaveBeenCalledTimes(1)
     const firstCall = selectPathWithFzf.mock.calls[0]?.[0] ?? null
     expect(firstCall).not.toBeNull()
     const candidates = (firstCall as SelectPathWithFzfInput).candidates
     const candidateRows = candidates.map((candidate) => candidate.split("\t"))
     expect(candidateRows.some((parts) => parts[1] === repoRoot)).toBe(true)
-    expect(candidateRows.some((parts) => parts[1] === join(repoRoot, ".worktree", "feature%2Ffoo"))).toBe(true)
+    expect(candidateRows.some((parts) => parts[1] === join(repoRoot, ".worktree", "feature", "foo"))).toBe(true)
     const mainRow = candidateRows.find((parts) => parts[1] === repoRoot)
-    const selectedRow = candidateRows.find((parts) => parts[1] === join(repoRoot, ".worktree", "feature%2Ffoo"))
+    const selectedRow = candidateRows.find((parts) => parts[1] === join(repoRoot, ".worktree", "feature", "foo"))
     const toPlain = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "")
     const mainFirstColumn = toPlain(mainRow?.[0] ?? "")
     const selectedFirstColumn = toPlain(selectedRow?.[0] ?? "")
@@ -408,7 +409,7 @@ describe("createCli", () => {
           expect(input.isInteractive?.()).toBe(true)
           return {
             status: "selected" as const,
-            path: join(repoRoot, ".worktree", "feature%2Ffoo"),
+            path: join(repoRoot, ".worktree", "feature", "foo"),
           }
         },
       )
@@ -425,7 +426,7 @@ describe("createCli", () => {
       stdout.length = 0
 
       expect(await cli.run(["cd"])).toBe(0)
-      expect(stdout).toEqual([join(repoRoot, ".worktree", "feature%2Ffoo")])
+      expect(stdout).toEqual([join(repoRoot, ".worktree", "feature", "foo")])
     } finally {
       if (hadOwnIsTTY) {
         Object.defineProperty(mutableStderr, "isTTY", {
@@ -443,7 +444,7 @@ describe("createCli", () => {
     const repoRoot = await setupRepo({ baseDir: homedir() })
     tempDirs.add(repoRoot)
     const stdout: string[] = []
-    const selectedPath = join(repoRoot, ".worktree", "feature%2Fhome")
+    const selectedPath = join(repoRoot, ".worktree", "feature", "home")
 
     const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(
       async (input) => {
@@ -573,7 +574,7 @@ echo invoked > "${marker}"
 
     expect(await cli.run(["init"])).toBe(0)
     expect(await cli.run(["switch", "feature/files"])).toBe(0)
-    const targetPath = join(repoRoot, ".worktree", "feature%2Ffiles")
+    const targetPath = join(repoRoot, ".worktree", "feature", "files")
 
     envBackup.set("WT_WORKTREE_PATH", process.env.WT_WORKTREE_PATH)
     process.env.WT_WORKTREE_PATH = targetPath
@@ -594,7 +595,7 @@ echo invoked > "${marker}"
     expect(await rootCli.run(["init"])).toBe(0)
     expect(await rootCli.run(["switch", "feature/mv"])).toBe(0)
 
-    const currentPath = join(repoRoot, ".worktree", "feature%2Fmv")
+    const currentPath = join(repoRoot, ".worktree", "feature", "mv")
     const stdout: string[] = []
     const cli = createCli({
       cwd: currentPath,
@@ -602,7 +603,7 @@ echo invoked > "${marker}"
     })
     expect(await cli.run(["mv", "feature/moved"])).toBe(0)
 
-    const newPath = join(repoRoot, ".worktree", "feature%2Fmoved")
+    const newPath = join(repoRoot, ".worktree", "feature", "moved")
     expect(stdout).toEqual([newPath])
     const worktreeList = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
     expect(worktreeList.includes(`worktree ${newPath}`)).toBe(true)
@@ -640,7 +641,7 @@ echo invoked > "${marker}"
 
     expect(await cli.run(["init"])).toBe(0)
     expect(await cli.run(["switch", "feature/gone"])).toBe(0)
-    const featurePath = join(repoRoot, ".worktree", "feature%2Fgone")
+    const featurePath = join(repoRoot, ".worktree", "feature", "gone")
     await writeFile(join(featurePath, "feature.txt"), "x\n", "utf8")
     await runGit(featurePath, ["add", "feature.txt"])
     await runGit(featurePath, ["commit", "-m", "feature commit"])
@@ -688,7 +689,7 @@ echo invoked > "${marker}"
     })
     expect(await cli.run(["init"])).toBe(0)
     expect(await cli.run(["get", "origin/feature/get"])).toBe(0)
-    expect(stdout).toEqual([join(repoRoot, ".worktree", "feature%2Fget")])
+    expect(stdout).toEqual([join(repoRoot, ".worktree", "feature", "get")])
   })
 
   it("extract moves current primary branch into .worktree", async () => {
@@ -706,7 +707,7 @@ echo invoked > "${marker}"
     })
     expect(await cli.run(["init"])).toBe(0)
     expect(await cli.run(["extract", "--current"])).toBe(0)
-    expect(stdout).toEqual([join(repoRoot, ".worktree", "feature%2Fextract")])
+    expect(stdout).toEqual([join(repoRoot, ".worktree", "feature", "extract")])
 
     const head = await runGit(repoRoot, ["branch", "--show-current"])
     expect(head.trim()).toBe("main")
@@ -987,7 +988,7 @@ echo invoked > "${marker}"
     expect(await cli.run(["init"])).toBe(0)
     expect(await cli.run(["switch", "feature/lock-conflict"])).toBe(0)
 
-    const lockPath = join(repoRoot, ".vde", "worktree", "locks", "feature%2Flock-conflict.json")
+    const lockPath = join(repoRoot, ".vde", "worktree", "locks", `${branchToWorktreeId("feature/lock-conflict")}.json`)
     await writeFile(lockPath, "{invalid", "utf8")
 
     stdout.length = 0

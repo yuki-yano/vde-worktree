@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { getLocksDirectoryPath } from "./paths"
+import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
 import { deleteWorktreeLock, readWorktreeLock, upsertWorktreeLock } from "./worktree-lock"
 
 const tempDirs = new Set<string>()
@@ -44,7 +44,7 @@ describe("worktree lock", () => {
     expect(result.exists).toBe(false)
     expect(result.valid).toBe(true)
     expect(result.record).toBeNull()
-    expect(result.path).toContain(".vde/worktree/locks/feature%2Fa.json")
+    expect(result.path).toContain(`.vde/worktree/locks/${branchToWorktreeId("feature/a")}.json`)
   })
 
   it("upserts lock and preserves createdAt on update", async () => {
@@ -82,7 +82,7 @@ describe("worktree lock", () => {
 
   it("marks malformed JSON metadata as invalid", async () => {
     const repoRoot = await createRepoRoot()
-    const path = join(getLocksDirectoryPath(repoRoot), "feature%2Fa.json")
+    const path = join(getLocksDirectoryPath(repoRoot), `${branchToWorktreeId("feature/a")}.json`)
 
     await writeFile(path, "{not-json", "utf8")
     const malformed = await readWorktreeLock({
@@ -98,7 +98,7 @@ describe("worktree lock", () => {
       `${JSON.stringify({
         schemaVersion: 1,
         branch: "feature/a",
-        worktreeId: "feature%2Fa",
+        worktreeId: branchToWorktreeId("feature/a"),
         reason: "",
         owner: "codex",
         host: "localhost",
@@ -119,7 +119,7 @@ describe("worktree lock", () => {
 
   it("marks lock metadata as invalid when file cannot be read as text", async () => {
     const repoRoot = await createRepoRoot()
-    const path = join(getLocksDirectoryPath(repoRoot), "feature%2Fa.json")
+    const path = join(getLocksDirectoryPath(repoRoot), `${branchToWorktreeId("feature/a")}.json`)
     await mkdir(path, { recursive: true })
 
     const result = await readWorktreeLock({
@@ -139,7 +139,7 @@ describe("worktree lock", () => {
       reason: "delete me",
       owner: "codex",
     })
-    const lockPath = join(getLocksDirectoryPath(repoRoot), "feature%2Fa.json")
+    const lockPath = join(getLocksDirectoryPath(repoRoot), `${branchToWorktreeId("feature/a")}.json`)
 
     expect(lock.branch).toBe("feature/a")
     expect(await fileExists(lockPath)).toBe(true)

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path"
 import { runGitCommand } from "../git/exec"
 import { createCliError } from "./errors"
@@ -9,6 +10,8 @@ export type RepoContext = {
 }
 
 const GIT_DIR_NAME = ".git"
+const WORKTREE_ID_HASH_LENGTH = 12
+const WORKTREE_ID_SLUG_MAX_LENGTH = 48
 
 const resolveRepoRootFromCommonDir = ({
   currentWorktreeRoot,
@@ -83,11 +86,23 @@ export const getStateDirectoryPath = (repoRoot: string): string => {
 }
 
 export const branchToWorktreeId = (branch: string): string => {
-  return encodeURIComponent(branch)
+  const slug =
+    branch
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, WORKTREE_ID_SLUG_MAX_LENGTH) || "branch"
+  const hash = createHash("sha256").update(branch).digest("hex").slice(0, WORKTREE_ID_HASH_LENGTH)
+  return `${slug}--${hash}`
 }
 
 export const branchToWorktreePath = (repoRoot: string, branch: string): string => {
-  return join(getWorktreeRootPath(repoRoot), branchToWorktreeId(branch))
+  const worktreeRoot = getWorktreeRootPath(repoRoot)
+  const targetPath = join(worktreeRoot, ...branch.split("/"))
+  return ensurePathInsideRepo({
+    repoRoot: worktreeRoot,
+    path: targetPath,
+  })
 }
 
 export const ensurePathInsideRepo = ({

@@ -808,6 +808,7 @@ const ensureTargetPathWritable = async (targetPath: string): Promise<void> => {
   try {
     await access(targetPath, fsConstants.F_OK)
   } catch {
+    await mkdir(dirname(targetPath), { recursive: true })
     return
   }
 

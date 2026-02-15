@@ -78,7 +78,7 @@ describe("collectWorktreeSnapshot", () => {
   it("uses explicit base branch and resolves lock/merged/upstream states", async () => {
     const repoRoot = await createRepoRoot()
     const branch = "feature/a"
-    const worktreePath = join(repoRoot, ".worktree", "feature%2Fa")
+    const worktreePath = join(repoRoot, ".worktree", "feature", "a")
     const lockPath = join(getLocksDirectoryPath(repoRoot), `${branchToWorktreeId(branch)}.json`)
 
     await writeFile(
@@ -161,7 +161,7 @@ describe("collectWorktreeSnapshot", () => {
   it("falls back to main/master detection and handles detached worktree", async () => {
     const repoRoot = await createRepoRoot()
     const detachedPath = join(repoRoot, ".worktree", "detached")
-    const featurePath = join(repoRoot, ".worktree", "feature%2Fb")
+    const featurePath = join(repoRoot, ".worktree", "feature", "b")
 
     mockedListGitWorktrees.mockResolvedValueOnce([
       {
@@ -237,7 +237,7 @@ describe("collectWorktreeSnapshot", () => {
   it("marks lock metadata as invalid and handles unparsable upstream distance", async () => {
     const repoRoot = await createRepoRoot()
     const branch = "feature/c"
-    const worktreePath = join(repoRoot, ".worktree", "feature%2Fc")
+    const worktreePath = join(repoRoot, ".worktree", "feature", "c")
     const lockPath = join(getLocksDirectoryPath(repoRoot), `${branchToWorktreeId(branch)}.json`)
 
     await mkdir(lockPath, { recursive: true })
