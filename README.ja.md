@@ -267,6 +267,7 @@ vw extract --current --stash
 
 ```bash
 vw use feature/foo
+vw use feature/foo --allow-shared
 vw use feature/foo --allow-agent --allow-unsafe
 ```
 
@@ -278,6 +279,7 @@ vw use feature/foo --allow-agent --allow-unsafe
 安全条件:
 
 - primary が dirty なら拒否
+- 対象 branch が他 worktree で使用中なら `--allow-shared` が必要（指定時は警告を表示）
 - 非TTYでは `--allow-agent` と `--allow-unsafe` の両方が必要
 
 ### `exec`

@@ -384,9 +384,13 @@ const commandHelpEntries: readonly CommandHelp[] = [
   },
   {
     name: "use",
-    usage: "vw use <branch> [--allow-agent --allow-unsafe]",
+    usage: "vw use <branch> [--allow-shared] [--allow-agent --allow-unsafe]",
     summary: "Checkout target branch in primary worktree.",
-    details: ["Non-TTY execution requires --allow-agent and --allow-unsafe."],
+    details: [
+      "If target branch is attached by another worktree, --allow-shared is required.",
+      "Non-TTY execution requires --allow-agent and --allow-unsafe.",
+    ],
+    options: ["--allow-shared", "--allow-agent", "--allow-unsafe"],
   },
   {
     name: "exec",
@@ -1592,6 +1596,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       type: "boolean",
       description: "Allow non-TTY execution for use command",
     },
+    allowShared: {
+      type: "boolean",
+      description: "Allow use checkout when target branch is attached by another worktree",
+    },
     reason: {
       type: "string",
       valueHint: "text",
@@ -2631,6 +2639,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       if (command === "use") {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
+        const allowShared = parsedArgs.allowShared === true
         if (runtime.isInteractive !== true) {
           if (parsedArgs.allowAgent !== true) {
             throw createCliError("UNSAFE_FLAG_REQUIRED", {
@@ -2656,6 +2665,44 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             })
           }
 
+          const snapshot = await collectWorktreeSnapshot(repoRoot)
+          const branchCheckedOutInOtherWorktree = snapshot.worktrees.find((worktree) => {
+            return worktree.branch === branch && worktree.path !== repoRoot
+          })
+          if (branchCheckedOutInOtherWorktree !== undefined && allowShared !== true) {
+            throw createCliError("BRANCH_IN_USE", {
+              message: [
+                `branch '${branch}' is already checked out in another worktree.`,
+                `  path: ${branchCheckedOutInOtherWorktree.path}`,
+                "",
+                "To continue (unsafe), re-run with:",
+                `  vw use ${branch} --allow-shared`,
+                "",
+                "Risk:",
+                "  multiple worktrees will share the same branch.",
+              ].join("\n"),
+              details: {
+                branch,
+                path: branchCheckedOutInOtherWorktree.path,
+                hint: "re-run with --allow-shared to continue",
+                risk: "unsafe: multiple worktrees will share the same branch",
+              },
+            })
+          }
+          if (branchCheckedOutInOtherWorktree !== undefined && allowShared === true) {
+            stderr(
+              [
+                "warning: --allow-shared enabled.",
+                `  branch: ${branch}`,
+                `  path: ${branchCheckedOutInOtherWorktree.path}`,
+                "  risk (unsafe): multiple worktrees will share the same branch.",
+              ].join("\n"),
+            )
+          }
+          const checkoutArgs = branchCheckedOutInOtherWorktree
+            ? ["checkout", "--ignore-other-worktrees", branch]
+            : ["checkout", branch]
+
           const hookContext = createHookContext({
             runtime,
             repoRoot,
@@ -2667,7 +2714,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           await runPreHook({ name: "use", context: hookContext })
           await runGitCommand({
             cwd: repoRoot,
-            args: ["checkout", branch],
+            args: checkoutArgs,
           })
           await runPostHook({ name: "use", context: hookContext })
           return {

@@ -267,6 +267,7 @@ Current limitation:
 
 ```bash
 vw use feature/foo
+vw use feature/foo --allow-shared
 vw use feature/foo --allow-agent --allow-unsafe
 ```
 
@@ -278,6 +279,7 @@ What it does:
 Safety:
 
 - Rejects dirty primary worktree
+- If target branch is attached by another worktree, requires `--allow-shared` and prints a warning
 - In non-TTY mode, requires `--allow-agent` and `--allow-unsafe`
 
 ### `exec`
