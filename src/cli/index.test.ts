@@ -667,7 +667,7 @@ echo invoked > "${marker}"
     expect(list.includes("feature/del")).toBe(false)
   })
 
-  it("gone dry-run then apply removes ancestry-merged candidates without upstream tracking", async () => {
+  it("gone dry-run then apply removes overall-merged candidates without upstream tracking", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
     const stdout: string[] = []

@@ -5,6 +5,7 @@ import { doesGitRefExist, runGitCommand } from "../git/exec"
 import { resolveMergedByPr } from "../integrations/gh"
 import { type GitWorktree, listGitWorktrees } from "../git/worktree"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
+import { upsertWorktreeMergeLifecycle } from "./worktree-merge-lifecycle"
 
 type LockPayload = {
   readonly schemaVersion: 1
@@ -151,11 +152,13 @@ const resolveLockState = async ({
 const resolveMergedState = async ({
   repoRoot,
   branch,
+  head,
   baseBranch,
   enableGh,
 }: {
   readonly repoRoot: string
   readonly branch: string | null
+  readonly head: string
   readonly baseBranch: string | null
   readonly enableGh: boolean
 }): Promise<WorktreeMergedState> => {
@@ -185,12 +188,28 @@ const resolveMergedState = async ({
     enabled: enableGh,
   })
 
+  let byLifecycle: boolean | null = null
+  if (baseBranch !== null) {
+    const lifecycle = await upsertWorktreeMergeLifecycle({
+      repoRoot,
+      branch,
+      baseBranch,
+      createdHead: head,
+    })
+    if (byAncestry === true) {
+      byLifecycle = lifecycle.createdHead !== head
+    } else if (byAncestry === false) {
+      byLifecycle = false
+    }
+  }
+
   return {
     byAncestry,
     byPR,
     overall: resolveMergedOverall({
       byAncestry,
       byPR,
+      byLifecycle,
     }),
   }
 }
@@ -198,21 +217,20 @@ const resolveMergedState = async ({
 export const resolveMergedOverall = ({
   byAncestry,
   byPR,
+  byLifecycle,
 }: {
   readonly byAncestry: boolean | null
   readonly byPR: boolean | null
+  readonly byLifecycle: boolean | null
 }): boolean | null => {
-  if (byAncestry === true || byPR === true) {
+  if (byPR === true || byLifecycle === true) {
     return true
   }
-  if (byAncestry === false && byPR === false) {
+  if (byAncestry === false) {
     return false
   }
-  if (byAncestry !== null) {
-    return byAncestry
-  }
-  if (byPR !== null) {
-    return byPR
+  if (byPR === false || byLifecycle === false) {
+    return false
   }
   return null
 }
@@ -269,7 +287,7 @@ const enrichWorktree = async ({
   const [dirty, locked, merged, upstream] = await Promise.all([
     resolveDirty(worktree.path),
     resolveLockState({ repoRoot, branch: worktree.branch }),
-    resolveMergedState({ repoRoot, branch: worktree.branch, baseBranch, enableGh }),
+    resolveMergedState({ repoRoot, branch: worktree.branch, head: worktree.head, baseBranch, enableGh }),
     resolveUpstreamState(worktree.path),
   ])
 
