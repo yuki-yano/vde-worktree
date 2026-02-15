@@ -923,6 +923,34 @@ git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-absorb" >/dev/null
     expect(stderr.some((line) => line.includes("--from expects vw-managed worktree name"))).toBe(true)
   })
 
+  it("absorb auto-restores source changes when pre-hook fails", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/absorb-hook-fail"])).toBe(0)
+    const sourcePath = join(repoRoot, ".worktree", "feature", "absorb-hook-fail")
+    await writeFile(join(sourcePath, "restore-source.txt"), "restore\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-absorb",
+      body: `#!/usr/bin/env bash
+set -eu
+exit 1
+`,
+    })
+
+    expect(await cli.run(["absorb", "feature/absorb-hook-fail", "--allow-agent", "--allow-unsafe"])).toBe(10)
+    expect(await readFile(join(sourcePath, "restore-source.txt"), "utf8")).toBe("restore\n")
+    const sourceStatus = await runGit(sourcePath, ["status", "--porcelain"])
+    expect(sourceStatus).toContain("restore-source.txt")
+  })
+
   it("unabsorb applies primary changes into non-primary worktree", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
@@ -1047,6 +1075,36 @@ git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-unabsorb" >/dev/null
       ]),
     ).toBe(3)
     expect(stderr.some((line) => line.includes("--to expects vw-managed worktree name"))).toBe(true)
+  })
+
+  it("unabsorb auto-restores primary changes when pre-hook fails", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const cli = createCli({
+      cwd: repoRoot,
+      isInteractive: () => false,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/unabsorb-hook-fail"])).toBe(0)
+    expect(
+      await cli.run(["use", "feature/unabsorb-hook-fail", "--allow-shared", "--allow-agent", "--allow-unsafe"]),
+    ).toBe(0)
+    await writeFile(join(repoRoot, "restore-primary.txt"), "restore\n", "utf8")
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-unabsorb",
+      body: `#!/usr/bin/env bash
+set -eu
+exit 1
+`,
+    })
+
+    expect(await cli.run(["unabsorb", "feature/unabsorb-hook-fail", "--allow-agent", "--allow-unsafe"])).toBe(10)
+    expect(await readFile(join(repoRoot, "restore-primary.txt"), "utf8")).toBe("restore\n")
+    const primaryStatus = await runGit(repoRoot, ["status", "--porcelain"])
+    expect(primaryStatus).toContain("restore-primary.txt")
   })
 
   it("prints general help when command is omitted", async () => {

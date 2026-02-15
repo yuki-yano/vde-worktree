@@ -1329,6 +1329,64 @@ const createStashEntry = async ({
   })
 }
 
+const restoreStashedChanges = async ({
+  cwd,
+  stashOid,
+}: {
+  readonly cwd: string
+  readonly stashOid: string
+}): Promise<void> => {
+  const applyResult = await runGitCommand({
+    cwd,
+    args: ["stash", "apply", stashOid],
+    reject: false,
+  })
+  if (applyResult.exitCode !== 0) {
+    throw createCliError("STASH_APPLY_FAILED", {
+      message: "Failed to auto-restore stashed changes after pre-hook failure",
+      details: { cwd, stashOid },
+    })
+  }
+  await dropStashByOid({ cwd, stashOid })
+}
+
+const runPreHookWithAutoRestore = async ({
+  name,
+  context,
+  restore,
+}: {
+  readonly name: string
+  readonly context: HookExecutionContext
+  readonly restore?: (() => Promise<void>) | undefined
+}): Promise<void> => {
+  try {
+    await runPreHook({ name, context })
+  } catch (error) {
+    if (restore !== undefined) {
+      try {
+        await restore()
+      } catch (restoreError) {
+        const hookError = ensureCliError(error)
+        const restoreCliError = ensureCliError(restoreError)
+        throw createCliError(hookError.code, {
+          message: `${hookError.message} (auto-restore failed)`,
+          details: {
+            ...hookError.details,
+            autoRestoreFailed: true,
+            autoRestoreError: {
+              code: restoreCliError.code,
+              message: restoreCliError.message,
+              details: restoreCliError.details,
+            },
+          },
+          cause: error,
+        })
+      }
+    }
+    throw error
+  }
+}
+
 const resolveStashRefByOid = async ({
   cwd,
   stashOid,
@@ -2805,7 +2863,19 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             worktreePath: targetPath,
             stderr,
           })
-          await runPreHook({ name: "extract", context: hookContext })
+          await runPreHookWithAutoRestore({
+            name: "extract",
+            context: hookContext,
+            restore:
+              stashOid !== null
+                ? async (): Promise<void> => {
+                    await restoreStashedChanges({
+                      cwd: repoRoot,
+                      stashOid,
+                    })
+                  }
+                : undefined,
+          })
           await runGitCommand({
             cwd: repoRoot,
             args: ["checkout", baseBranch],
@@ -2923,7 +2993,19 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               WT_SOURCE_WORKTREE_PATH: sourceWorktree.path,
             },
           })
-          await runPreHook({ name: "absorb", context: hookContext })
+          await runPreHookWithAutoRestore({
+            name: "absorb",
+            context: hookContext,
+            restore:
+              stashOid !== null
+                ? async (): Promise<void> => {
+                    await restoreStashedChanges({
+                      cwd: sourceWorktree.path,
+                      stashOid,
+                    })
+                  }
+                : undefined,
+          })
           await runGitCommand({
             cwd: repoRoot,
             args: ["checkout", "--ignore-other-worktrees", branch],
@@ -3062,7 +3144,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               WT_TARGET_WORKTREE_PATH: targetWorktree.path,
             },
           })
-          await runPreHook({ name: "unabsorb", context: hookContext })
+          await runPreHookWithAutoRestore({
+            name: "unabsorb",
+            context: hookContext,
+            restore: async (): Promise<void> => {
+              await restoreStashedChanges({
+                cwd: repoRoot,
+                stashOid,
+              })
+            },
+          })
 
           const applyResult = await runGitCommand({
             cwd: targetWorktree.path,
