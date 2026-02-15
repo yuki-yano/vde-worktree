@@ -6,6 +6,28 @@ function __vw_worktree_branches
     | sort -u
 end
 
+function __vw_default_branch
+  command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
+
+  set -l configured (command git config --get vde-worktree.baseBranch 2>/dev/null)
+  if test -n "$configured"
+    echo $configured
+    return
+  end
+
+  command git show-ref --verify --quiet refs/heads/main >/dev/null 2>/dev/null
+  and begin
+    echo main
+    return
+  end
+
+  command git show-ref --verify --quiet refs/heads/master >/dev/null 2>/dev/null
+  and begin
+    echo master
+    return
+  end
+end
+
 function __vw_current_bin
   set -l tokens (commandline -opc)
   if test (count $tokens) -ge 1
@@ -64,6 +86,13 @@ for (const worktree of worktrees) {
   process.stdout.write(`${worktree.branch}\t${sanitized}\n`)
 }
 ' 2>/dev/null
+end
+
+function __vw_use_candidates_with_meta
+  begin
+    __vw_worktree_branches
+    __vw_default_branch
+  end | sort -u
 end
 
 function __vw_local_branches
@@ -132,7 +161,7 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -n "__fish_seen_subcommand_from mv" -a "(__vw_local_branches)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from get" -a "(__vw_remote_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_worktree_candidates_with_meta)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_use_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from exec" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from invoke" -a "(__vw_hook_names)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -a "(__vw_worktree_candidates_with_meta)"

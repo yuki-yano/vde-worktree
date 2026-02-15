@@ -126,11 +126,12 @@ describe("createCli", () => {
     expect(text).toContain("#compdef vw vde-worktree")
     expect(text).toContain("completion")
     expect(text).toContain("_vw_complete_switch_branches()")
+    expect(text).toContain("_vw_complete_use_branches()")
     expect(text).toContain('values=("${(@u)values}")')
     expect(text).not.toContain('values=("${(@u)${(@f)$(_vw_worktree_branches_raw)} ${(@f)$(_vw_local_branches_raw)}}")')
     expect(text).toContain(`use)
           _arguments \\
-            "1:branch:_vw_complete_worktree_branches_with_meta" \\`)
+            "1:branch:_vw_complete_use_branches" \\`)
     expect(text).toContain("--allow-shared[Allow checkout when branch is attached by another worktree]")
     expect(stderr).toEqual([])
   })
@@ -153,7 +154,7 @@ describe("createCli", () => {
     const installed = await readFile(targetPath, "utf8")
     expect(installed).toContain("complete -c $__vw_bin")
     expect(installed).toContain(
-      'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_worktree_candidates_with_meta)"',
+      'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_use_candidates_with_meta)"',
     )
     expect(installed).toContain(
       'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-shared -d "Allow checkout when branch is attached by another worktree"',
