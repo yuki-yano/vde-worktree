@@ -17,15 +17,16 @@ type ExecaLikeError = Error & {
   readonly code?: string
 }
 
-type ResolveMergedByPrInput = {
+type ResolveMergedByPrBatchInput = {
   readonly repoRoot: string
-  readonly branch: string
   readonly baseBranch: string | null
+  readonly branches: readonly (string | null)[]
   readonly enabled?: boolean
   readonly runGh?: GhCommandRunner
 }
 
 type PrSummary = {
+  readonly headRefName?: string | null
   readonly mergedAt?: string | null
 }
 
@@ -41,38 +42,86 @@ const defaultRunGh: GhCommandRunner = async ({ cwd, args }) => {
   }
 }
 
-const parseMergedResult = (raw: string): boolean | null => {
+const toTargetBranches = ({
+  branches,
+  baseBranch,
+}: {
+  readonly branches: readonly (string | null)[]
+  readonly baseBranch: string
+}): string[] => {
+  const uniqueBranches = new Set<string>()
+  for (const branch of branches) {
+    if (typeof branch !== "string" || branch.length === 0) {
+      continue
+    }
+    if (branch === baseBranch) {
+      continue
+    }
+    uniqueBranches.add(branch)
+  }
+  return [...uniqueBranches]
+}
+
+const buildUnknownBranchMap = (branches: readonly string[]): Map<string, null> => {
+  return new Map(branches.map((branch) => [branch, null]))
+}
+
+const parseMergedBranches = ({
+  raw,
+  targetBranches,
+}: {
+  readonly raw: string
+  readonly targetBranches: ReadonlySet<string>
+}): Set<string> | null => {
   try {
     const parsed = JSON.parse(raw) as unknown
     if (Array.isArray(parsed) !== true) {
       return null
     }
     const records = parsed as PrSummary[]
-    if (records.length === 0) {
-      return false
+    const mergedBranches = new Set<string>()
+
+    for (const record of records) {
+      if (typeof record?.headRefName !== "string" || record.headRefName.length === 0) {
+        continue
+      }
+      if (targetBranches.has(record.headRefName) !== true) {
+        continue
+      }
+      if (typeof record.mergedAt !== "string" || record.mergedAt.length === 0) {
+        continue
+      }
+      mergedBranches.add(record.headRefName)
     }
 
-    return records.some((record) => typeof record?.mergedAt === "string" && record.mergedAt.length > 0)
+    return mergedBranches
   } catch {
     return null
   }
 }
 
-export const resolveMergedByPr = async ({
+export const resolveMergedByPrBatch = async ({
   repoRoot,
-  branch,
   baseBranch,
+  branches,
   enabled = true,
   runGh = defaultRunGh,
-}: ResolveMergedByPrInput): Promise<boolean | null> => {
+}: ResolveMergedByPrBatchInput): Promise<ReadonlyMap<string, boolean | null>> => {
   if (enabled !== true) {
-    return null
+    return new Map()
   }
   if (baseBranch === null) {
-    return null
+    return new Map()
+  }
+
+  const targetBranches = toTargetBranches({ branches, baseBranch })
+  if (targetBranches.length === 0) {
+    return new Map()
   }
 
   try {
+    const targetBranchSet = new Set(targetBranches)
+    const searchQuery = targetBranches.map((branch) => `head:${branch}`).join(" OR ")
     const result = await runGh({
       cwd: repoRoot,
       args: [
@@ -80,26 +129,38 @@ export const resolveMergedByPr = async ({
         "list",
         "--state",
         "merged",
-        "--head",
-        branch,
         "--base",
         baseBranch,
+        "--search",
+        searchQuery,
         "--limit",
-        "1",
+        "1000",
         "--json",
-        "mergedAt",
+        "headRefName,mergedAt",
       ],
     })
     if (result.exitCode !== 0) {
-      return null
+      return buildUnknownBranchMap(targetBranches)
     }
 
-    return parseMergedResult(result.stdout)
+    const mergedBranches = parseMergedBranches({
+      raw: result.stdout,
+      targetBranches: targetBranchSet,
+    })
+    if (mergedBranches === null) {
+      return buildUnknownBranchMap(targetBranches)
+    }
+
+    return new Map(
+      targetBranches.map((branch) => {
+        return [branch, mergedBranches.has(branch)]
+      }),
+    )
   } catch (error) {
     const execaError = error as ExecaLikeError
     if (execaError.code === "ENOENT") {
-      return null
+      return buildUnknownBranchMap(targetBranches)
     }
-    return null
+    return buildUnknownBranchMap(targetBranches)
   }
 }

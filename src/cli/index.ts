@@ -36,7 +36,11 @@ import {
   upsertWorktreeMergeLifecycle,
 } from "../core/worktree-merge-lifecycle"
 import { deleteWorktreeLock, readWorktreeLock, upsertWorktreeLock } from "../core/worktree-lock"
-import { collectWorktreeSnapshot, type WorktreeSnapshot, type WorktreeStatus } from "../core/worktree-state"
+import {
+  collectWorktreeSnapshot as collectWorktreeSnapshotBase,
+  type WorktreeSnapshot,
+  type WorktreeStatus,
+} from "../core/worktree-state"
 import { doesGitRefExist, runGitCommand } from "../git/exec"
 import { selectPathWithFzf as defaultSelectPathWithFzf } from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
@@ -72,6 +76,7 @@ type CommonRuntime = {
   readonly command: string
   readonly json: boolean
   readonly hooksEnabled: boolean
+  readonly ghEnabled: boolean
   readonly strictPostHooks: boolean
   readonly hookTimeoutMs: number
   readonly lockTimeoutMs: number
@@ -1749,6 +1754,7 @@ const renderGeneralHelpText = ({ version }: { readonly version: string }): strin
     "  --json                  Output machine-readable JSON.",
     "  --verbose               Enable verbose logs.",
     "  --no-hooks              Disable hooks for this run (requires --allow-unsafe).",
+    "  --no-gh                 Disable GitHub CLI based PR merge checks for this run.",
     "  --allow-unsafe          Explicitly allow unsafe behavior in non-TTY mode.",
     "  --hook-timeout-ms <ms>  Override hook timeout.",
     "  --lock-timeout-ms <ms>  Override repository lock timeout.",
@@ -1874,6 +1880,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
     hooks: {
       type: "boolean",
       description: "Enable hooks (disable with --no-hooks)",
+      default: true,
+    },
+    gh: {
+      type: "boolean",
+      description: "Enable GitHub CLI based PR merge checks (disable with --no-gh)",
       default: true,
     },
     allowUnsafe: {
@@ -2135,6 +2146,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         command,
         json: jsonEnabled,
         hooksEnabled: parsedArgs.hooks !== false && configuredHooksEnabled !== false,
+        ghEnabled: parsedArgs.gh !== false,
         strictPostHooks: parsedArgs.strictPostHooks === true,
         hookTimeoutMs: readNumberFromEnvOrDefault({
           rawValue:
@@ -2156,6 +2168,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         rawValue: configuredStaleTTL,
         defaultValue: DEFAULT_STALE_LOCK_TTL_SECONDS,
       })
+
+      const collectWorktreeSnapshot = async (_ignoredRepoRoot: string): Promise<WorktreeSnapshot> => {
+        return collectWorktreeSnapshotBase(repoRoot, { noGh: runtime.ghEnabled !== true })
+      }
 
       const runWriteOperation = async <T>(task: () => Promise<T>): Promise<T> => {
         if (WRITE_COMMANDS.has(command) !== true) {

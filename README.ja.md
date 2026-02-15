@@ -111,6 +111,7 @@ autoload -Uz compinit && compinit
 - `--verbose`: 詳細ログ
 - `--no-hooks`: 今回のみ hook 無効化（`--allow-unsafe` 必須）
 - `--allow-unsafe`: unsafe 操作の明示同意
+- `--no-gh`: 今回の実行で `gh` による PR merged 判定を無効化
 - `--hook-timeout-ms <ms>`: hook timeout 上書き
 - `--lock-timeout-ms <ms>`: repo lock timeout 上書き
 
@@ -133,12 +134,14 @@ vw init
 ```bash
 vw list
 vw list --json
+vw list --no-gh
 ```
 
 機能:
 
 - Git の porcelain 情報から worktree 一覧を取得
 - branch/path/dirty/lock/merged/upstream を表示
+- `--no-gh` 指定時は PR merged 判定をスキップ（`merged.byPR` は `null`）
 - 対話ターミナルでは Catppuccin 風の ANSI 色で表示
 
 ### `status`
@@ -434,6 +437,7 @@ vw completion zsh --install
 - `gh auth` 未設定
 - API 失敗
 - `git config vde-worktree.enableGh false`
+- `--no-gh` を指定して実行
 
 ## JSON 契約
 

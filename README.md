@@ -111,6 +111,7 @@ After `vw init`, the tool manages:
 - `--verbose`: verbose logging
 - `--no-hooks`: disable hooks for this run (requires `--allow-unsafe`)
 - `--allow-unsafe`: explicit unsafe override
+- `--no-gh`: disable GitHub CLI based PR merge checks for this run
 - `--hook-timeout-ms <ms>`: hook timeout override
 - `--lock-timeout-ms <ms>`: repository lock timeout override
 
@@ -133,12 +134,14 @@ What it does:
 ```bash
 vw list
 vw list --json
+vw list --no-gh
 ```
 
 What it does:
 
 - Lists all worktrees from Git porcelain output
 - Includes metadata such as branch, path, dirty, lock, merged, and upstream status
+- With `--no-gh`, skips PR-based merge checks (`merged.byPR` becomes `null`)
 - In interactive terminal, uses Catppuccin-style ANSI colors
 
 ### `status`
@@ -428,7 +431,7 @@ Overall policy:
 - `byPR === false` => `overall = false`
 - `byPR === null` => fallback to `byAncestry`
 
-`byPR` becomes `null` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, or `vde-worktree.enableGh=false`).
+`byPR` becomes `null` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, `vde-worktree.enableGh=false`, or `--no-gh`).
 
 ## JSON Contract
 

@@ -54,7 +54,7 @@ describe("createCli", () => {
   const envBackup = new Map<string, string | undefined>()
 
   afterEach(async () => {
-    for (const key of ["WT_WORKTREE_PATH"]) {
+    for (const key of ["WT_WORKTREE_PATH", "PATH"]) {
       if (envBackup.has(key)) {
         const value = envBackup.get(key)
         if (value === undefined) {
@@ -106,6 +106,7 @@ describe("createCli", () => {
     expect(text).toContain("switch")
     expect(text).toContain("completion")
     expect(text).toContain("help <command>")
+    expect(text).toContain("--no-gh")
   })
 
   it("prints zsh completion script outside git repository", async () => {
@@ -1226,6 +1227,46 @@ exit 1
       .filter((cell) => cell.length > 0)
     expect(featureCells[2]).not.toBe("-")
     expect(["merged", "unmerged", "unknown"]).toContain(featureCells[2])
+  })
+
+  it("list --no-gh skips gh command invocation", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/no-gh"])).toBe(0)
+
+    const shimDir = await mkdtemp(join(tmpdir(), "vde-worktree-gh-shim-"))
+    tempDirs.add(shimDir)
+    const ghPath = join(shimDir, "gh")
+    const ghLogPath = join(shimDir, "gh.log")
+    await writeFile(
+      ghPath,
+      `#!/bin/sh
+echo "$*" >> "${ghLogPath}"
+echo '[]'
+`,
+      "utf8",
+    )
+    await chmod(ghPath, 0o755)
+
+    envBackup.set("PATH", process.env.PATH)
+    process.env.PATH = `${shimDir}:${process.env.PATH ?? ""}`
+
+    stdout.length = 0
+    expect(await cli.run(["list", "--json"])).toBe(0)
+    expect(await readFile(ghLogPath, "utf8")).toContain("pr list")
+
+    await rm(ghLogPath, { force: true })
+
+    stdout.length = 0
+    expect(await cli.run(["list", "--json", "--no-gh"])).toBe(0)
+    await expect(access(ghLogPath)).rejects.toThrow()
   })
 
   it("list applies catppuccin colors in interactive mode", async () => {
