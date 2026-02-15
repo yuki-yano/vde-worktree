@@ -132,7 +132,7 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -n "__fish_seen_subcommand_from mv" -a "(__vw_local_branches)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from del" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from get" -a "(__vw_remote_branches)"
-  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_switch_branches)"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from exec" -a "(__vw_worktree_candidates_with_meta)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from invoke" -a "(__vw_hook_names)"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from lock" -a "(__vw_worktree_candidates_with_meta)"
@@ -153,6 +153,7 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l stash -d "Allow stash when dirty"
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-agent -d "Allow non-TTY execution for use"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-shared -d "Allow checkout when branch is attached by another worktree"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-unsafe -d "Allow unsafe behavior in non-TTY mode"
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from link" -l no-fallback -d "Disable copy fallback when symlink fails"

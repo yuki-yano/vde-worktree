@@ -118,7 +118,11 @@ _vw_complete_local_branches() {
 
 _vw_complete_switch_branches() {
   local -a values
-  values=("${(@u)${(@f)$(_vw_worktree_branches_raw)} ${(@f)$(_vw_local_branches_raw)}}")
+  values=(
+    "${(@f)$(_vw_worktree_branches_raw)}"
+    "${(@f)$(_vw_local_branches_raw)}"
+  )
+  values=("${(@u)values}")
   _vw_describe_values "branch" "${values[@]}"
 }
 
@@ -231,7 +235,8 @@ _vw() {
           ;;
         use)
           _arguments \
-            "1:branch:_vw_complete_switch_branches" \
+            "1:branch:_vw_complete_worktree_branches_with_meta" \
+            "--allow-shared[Allow checkout when branch is attached by another worktree]" \
             "--allow-agent[Allow non-TTY execution for use]" \
             "--allow-unsafe[Allow unsafe behavior in non-TTY mode]"
           ;;
