@@ -20,6 +20,7 @@ type ExecaLikeError = Error & {
 type ResolveMergedByPrInput = {
   readonly repoRoot: string
   readonly branch: string
+  readonly baseBranch: string | null
   readonly enabled?: boolean
   readonly runGh?: GhCommandRunner
 }
@@ -60,17 +61,34 @@ const parseMergedResult = (raw: string): boolean | null => {
 export const resolveMergedByPr = async ({
   repoRoot,
   branch,
+  baseBranch,
   enabled = true,
   runGh = defaultRunGh,
 }: ResolveMergedByPrInput): Promise<boolean | null> => {
   if (enabled !== true) {
     return null
   }
+  if (baseBranch === null) {
+    return null
+  }
 
   try {
     const result = await runGh({
       cwd: repoRoot,
-      args: ["pr", "list", "--state", "merged", "--head", branch, "--limit", "1", "--json", "mergedAt"],
+      args: [
+        "pr",
+        "list",
+        "--state",
+        "merged",
+        "--head",
+        branch,
+        "--base",
+        baseBranch,
+        "--limit",
+        "1",
+        "--json",
+        "mergedAt",
+      ],
     })
     if (result.exitCode !== 0) {
       return null

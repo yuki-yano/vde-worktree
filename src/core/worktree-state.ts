@@ -181,6 +181,7 @@ const resolveMergedState = async ({
   const byPR = await resolveMergedByPr({
     repoRoot,
     branch,
+    baseBranch,
     enabled: enableGh,
   })
 
@@ -201,13 +202,19 @@ export const resolveMergedOverall = ({
   readonly byAncestry: boolean | null
   readonly byPR: boolean | null
 }): boolean | null => {
-  if (byPR === true) {
+  if (byAncestry === true || byPR === true) {
     return true
   }
-  if (byPR === false) {
+  if (byAncestry === false && byPR === false) {
     return false
   }
-  return byAncestry
+  if (byAncestry !== null) {
+    return byAncestry
+  }
+  if (byPR !== null) {
+    return byPR
+  }
+  return null
 }
 
 const resolveUpstreamState = async (worktreePath: string): Promise<WorktreeUpstreamState> => {

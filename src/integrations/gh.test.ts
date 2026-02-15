@@ -12,6 +12,7 @@ describe("resolveMergedByPr", () => {
     const result = await resolveMergedByPr({
       repoRoot: "/repo",
       branch: "feature/foo",
+      baseBranch: "main",
       enabled: false,
       runGh,
     })
@@ -20,24 +21,63 @@ describe("resolveMergedByPr", () => {
     expect(runGh).not.toHaveBeenCalled()
   })
 
-  it("returns true when merged PR exists", async () => {
+  it("returns null when base branch is unknown", async () => {
+    const runGh = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: '[{"mergedAt":"2026-02-10T00:00:00Z"}]',
+      stderr: "",
+    }))
+
     const result = await resolveMergedByPr({
       repoRoot: "/repo",
       branch: "feature/foo",
-      runGh: async () => ({
-        exitCode: 0,
-        stdout: '[{"mergedAt":"2026-02-10T00:00:00Z"}]',
-        stderr: "",
-      }),
+      baseBranch: null,
+      runGh,
+    })
+
+    expect(result).toBeNull()
+    expect(runGh).not.toHaveBeenCalled()
+  })
+
+  it("returns true when merged PR exists", async () => {
+    const runGh = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: '[{"mergedAt":"2026-02-10T00:00:00Z"}]',
+      stderr: "",
+    }))
+
+    const result = await resolveMergedByPr({
+      repoRoot: "/repo",
+      branch: "feature/foo",
+      baseBranch: "main",
+      runGh,
     })
 
     expect(result).toBe(true)
+    expect(runGh).toHaveBeenCalledWith({
+      cwd: "/repo",
+      args: [
+        "pr",
+        "list",
+        "--state",
+        "merged",
+        "--head",
+        "feature/foo",
+        "--base",
+        "main",
+        "--limit",
+        "1",
+        "--json",
+        "mergedAt",
+      ],
+    })
   })
 
   it("returns false when no merged PR exists", async () => {
     const result = await resolveMergedByPr({
       repoRoot: "/repo",
       branch: "feature/foo",
+      baseBranch: "main",
       runGh: async () => ({
         exitCode: 0,
         stdout: "[]",
@@ -52,6 +92,7 @@ describe("resolveMergedByPr", () => {
     const result = await resolveMergedByPr({
       repoRoot: "/repo",
       branch: "feature/foo",
+      baseBranch: "main",
       runGh: async () => ({
         exitCode: 1,
         stdout: "",
@@ -66,6 +107,7 @@ describe("resolveMergedByPr", () => {
     const result = await resolveMergedByPr({
       repoRoot: "/repo",
       branch: "feature/foo",
+      baseBranch: "main",
       runGh: async () => ({
         exitCode: 0,
         stdout: "invalid-json",

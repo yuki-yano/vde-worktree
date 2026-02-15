@@ -131,6 +131,7 @@ describe("collectWorktreeSnapshot", () => {
     expect(mockedResolveMergedByPr).toHaveBeenCalledWith({
       repoRoot,
       branch: "feature/a",
+      baseBranch: "trunk",
       enabled: false,
     })
     expect(snapshot.worktrees).toEqual([
@@ -211,6 +212,7 @@ describe("collectWorktreeSnapshot", () => {
     expect(mockedResolveMergedByPr).toHaveBeenCalledWith({
       repoRoot,
       branch: "feature/b",
+      baseBranch: "master",
       enabled: true,
     })
 
