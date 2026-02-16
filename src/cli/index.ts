@@ -250,7 +250,7 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
   }
 
   const cells = segments.slice(1, -1)
-  if (cells.length !== 5) {
+  if (cells.length !== 7) {
     return line
   }
 
@@ -260,7 +260,9 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
     headers[1] === "dirty" &&
     headers[2] === "merged" &&
     headers[3] === "locked" &&
-    headers[4] === "path"
+    headers[4] === "ahead" &&
+    headers[5] === "behind" &&
+    headers[6] === "path"
 
   if (isHeaderRow) {
     const nextCells = cells.map((cell) => colorizeCellContent({ cell, color: theme.header }))
@@ -271,7 +273,9 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
   const dirtyCell = cells[1] as string
   const mergedCell = cells[2] as string
   const lockedCell = cells[3] as string
-  const pathCell = cells[4] as string
+  const aheadCell = cells[4] as string
+  const behindCell = cells[5] as string
+  const pathCell = cells[6] as string
 
   const branchColor =
     branchCell.includes("(detached)") === true
@@ -292,12 +296,38 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
           : theme.unknown
   const lockedTrimmed = lockedCell.trim()
   const lockedColor = lockedTrimmed === "locked" ? theme.locked : theme.muted
+  const aheadTrimmed = aheadCell.trim()
+  const aheadValue = Number.parseInt(aheadTrimmed, 10)
+  const aheadColor =
+    aheadTrimmed === "-"
+      ? theme.muted
+      : Number.isNaN(aheadValue)
+        ? theme.value
+        : aheadValue > 0
+          ? theme.unmerged
+          : aheadValue === 0
+            ? theme.merged
+            : theme.unknown
+  const behindTrimmed = behindCell.trim()
+  const behindValue = Number.parseInt(behindTrimmed, 10)
+  const behindColor =
+    behindTrimmed === "-"
+      ? theme.muted
+      : Number.isNaN(behindValue)
+        ? theme.value
+        : behindValue > 0
+          ? theme.unknown
+          : behindValue === 0
+            ? theme.merged
+            : theme.unknown
 
   const nextCells = [
     colorizeCellContent({ cell: branchCell, color: branchColor }),
     colorizeCellContent({ cell: dirtyCell, color: dirtyColor }),
     colorizeCellContent({ cell: mergedCell, color: mergedColor }),
     colorizeCellContent({ cell: lockedCell, color: lockedColor }),
+    colorizeCellContent({ cell: aheadCell, color: aheadColor }),
+    colorizeCellContent({ cell: behindCell, color: behindColor }),
     colorizeCellContent({ cell: pathCell, color: theme.path }),
   ]
 
@@ -332,7 +362,10 @@ const commandHelpEntries: readonly CommandHelp[] = [
     name: "list",
     usage: "vw list [--json]",
     summary: "List worktrees with status metadata.",
-    details: ["Includes branch, path, dirty, lock, merged, and upstream fields."],
+    details: [
+      "Table output includes branch, path, dirty, lock, merged, and ahead/behind vs base branch.",
+      "JSON output includes upstream metadata fields.",
+    ],
   },
   {
     name: "status",
@@ -1524,6 +1557,50 @@ const formatMergedColor = ({
   return theme.unknown(mergedState)
 }
 
+const formatListUpstreamCount = (value: number | null): string => {
+  if (value === null) {
+    return "-"
+  }
+  return String(value)
+}
+
+const resolveAheadBehindAgainstBaseBranch = async ({
+  repoRoot,
+  baseBranch,
+  worktree,
+}: {
+  readonly repoRoot: string
+  readonly baseBranch: string | null
+  readonly worktree: WorktreeStatus
+}): Promise<{
+  readonly ahead: number | null
+  readonly behind: number | null
+}> => {
+  if (baseBranch === null) {
+    return { ahead: null, behind: null }
+  }
+
+  const targetRef = worktree.branch ?? worktree.head
+  const distance = await runGitCommand({
+    cwd: repoRoot,
+    args: ["rev-list", "--left-right", "--count", `${baseBranch}...${targetRef}`],
+    reject: false,
+  })
+
+  if (distance.exitCode !== 0) {
+    return { ahead: null, behind: null }
+  }
+
+  const [behindRaw, aheadRaw] = distance.stdout.trim().split(/\s+/)
+  const behind = Number.parseInt(behindRaw ?? "", 10)
+  const ahead = Number.parseInt(aheadRaw ?? "", 10)
+
+  return {
+    ahead: Number.isNaN(ahead) ? null : ahead,
+    behind: Number.isNaN(behind) ? null : behind,
+  }
+}
+
 const padToDisplayWidth = ({ value, width }: { readonly value: string; readonly width: number }): string => {
   const visibleLength = stringWidth(value)
   if (visibleLength >= width) {
@@ -2251,27 +2328,36 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive }),
         })
         const rows: string[][] = [
-          ["branch", "dirty", "merged", "locked", "path"],
-          ...snapshot.worktrees.map((worktree) => {
-            const isBaseBranch =
-              worktree.branch !== null && snapshot.baseBranch !== null && worktree.branch === snapshot.baseBranch
-            const mergedState =
-              isBaseBranch === true
-                ? "-"
-                : worktree.merged.overall === true
-                  ? "merged"
-                  : worktree.merged.overall === false
-                    ? "unmerged"
-                    : "unknown"
-            const isCurrent = worktree.path === repoContext.currentWorktreeRoot
-            return [
-              `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`,
-              worktree.dirty ? "dirty" : "clean",
-              mergedState,
-              worktree.locked.value ? "locked" : "-",
-              formatDisplayPath(worktree.path),
-            ]
-          }),
+          ["branch", "dirty", "merged", "locked", "ahead", "behind", "path"],
+          ...(await Promise.all(
+            snapshot.worktrees.map(async (worktree) => {
+              const distanceFromBase = await resolveAheadBehindAgainstBaseBranch({
+                repoRoot,
+                baseBranch: snapshot.baseBranch,
+                worktree,
+              })
+              const isBaseBranch =
+                worktree.branch !== null && snapshot.baseBranch !== null && worktree.branch === snapshot.baseBranch
+              const mergedState =
+                isBaseBranch === true
+                  ? "-"
+                  : worktree.merged.overall === true
+                    ? "merged"
+                    : worktree.merged.overall === false
+                      ? "unmerged"
+                      : "unknown"
+              const isCurrent = worktree.path === repoContext.currentWorktreeRoot
+              return [
+                `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`,
+                worktree.dirty ? "dirty" : "clean",
+                mergedState,
+                worktree.locked.value ? "locked" : "-",
+                formatListUpstreamCount(distanceFromBase.ahead),
+                formatListUpstreamCount(distanceFromBase.behind),
+                formatDisplayPath(worktree.path),
+              ]
+            }),
+          )),
         ]
 
         const rendered = table(rows, {

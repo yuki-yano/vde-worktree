@@ -1194,6 +1194,10 @@ exit 1
 
     expect(await cli.run(["init"])).toBe(0)
     expect(await cli.run(["switch", "feature/list"])).toBe(0)
+    const featurePath = join(repoRoot, ".worktree", "feature", "list")
+    await writeFile(join(featurePath, "feature-list.txt"), "list\n", "utf8")
+    await runGit(featurePath, ["add", "feature-list.txt"])
+    await runGit(featurePath, ["commit", "-m", "feature list commit"])
     stdout.length = 0
 
     expect(await cli.run(["list"])).toBe(0)
@@ -1204,6 +1208,8 @@ exit 1
     expect(text).toContain("dirty")
     expect(text).toContain("merged")
     expect(text).toContain("locked")
+    expect(text).toContain("ahead")
+    expect(text).toContain("behind")
     expect(text).toContain("path")
     expect(stdout.some((line) => line.startsWith("┌") || line.startsWith("+"))).toBe(true)
 
@@ -1217,7 +1223,9 @@ exit 1
     expect(mainCells[1]).toBe("clean")
     expect(mainCells[2]).toBe("-")
     expect(mainCells[3]).toBe("-")
-    expect(mainCells[4]).toContain(repoRoot)
+    expect(mainCells[4]).toBe("0")
+    expect(mainCells[5]).toBe("0")
+    expect(mainCells[6]).toContain(repoRoot)
 
     const featureLine = stdout.find((line) => line.includes("feature/list"))
     expect(featureLine).toBeDefined()
@@ -1227,6 +1235,8 @@ exit 1
       .filter((cell) => cell.length > 0)
     expect(featureCells[2]).not.toBe("-")
     expect(["merged", "unmerged", "unknown"]).toContain(featureCells[2])
+    expect(featureCells[4]).toBe("1")
+    expect(featureCells[5]).toBe("0")
   })
 
   it("list --no-gh skips gh command invocation", async () => {
