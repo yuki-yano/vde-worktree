@@ -141,6 +141,10 @@ const CD_FZF_EXTRA_ARGS = [
   "--preview-window=right,60%,wrap",
   "--ansi",
 ] as const
+const LIST_TABLE_COLUMN_COUNT = 8
+const LIST_TABLE_PATH_COLUMN_INDEX = 7
+const LIST_TABLE_PATH_MIN_WIDTH = 12
+const LIST_TABLE_CELL_HORIZONTAL_PADDING = 2
 const COMPLETION_SHELLS: readonly CompletionShell[] = ["zsh", "fish"] as const
 const COMPLETION_FILE_BY_SHELL: Readonly<Record<CompletionShell, string>> = {
   zsh: "zsh/_vw",
@@ -376,12 +380,14 @@ const commandHelpEntries: readonly CommandHelp[] = [
   },
   {
     name: "list",
-    usage: "vw list [--json]",
+    usage: "vw list [--json] [--full-path]",
     summary: "List worktrees with status metadata.",
     details: [
       "Table output includes branch, path, dirty, lock, merged, PR state, and ahead/behind vs base branch.",
+      "By default, long path values are truncated to fit terminal width.",
       "JSON output includes PR and upstream metadata fields.",
     ],
+    options: ["--full-path"],
   },
   {
     name: "status",
@@ -1581,6 +1587,47 @@ const formatListUpstreamCount = (value: number | null): string => {
   return String(value)
 }
 
+const resolveListColumnContentWidth = ({
+  rows,
+  columnIndex,
+}: {
+  readonly rows: readonly (readonly string[])[]
+  readonly columnIndex: number
+}): number => {
+  return rows.reduce((width, row) => {
+    const cell = row[columnIndex] ?? ""
+    return Math.max(width, stringWidth(cell))
+  }, 0)
+}
+
+const resolveListPathColumnWidth = ({
+  rows,
+  disablePathTruncation,
+}: {
+  readonly rows: readonly (readonly string[])[]
+  readonly disablePathTruncation: boolean
+}): number | null => {
+  if (disablePathTruncation) {
+    return null
+  }
+  if (process.stdout.isTTY !== true) {
+    return null
+  }
+  const terminalColumns = process.stdout.columns
+  if (typeof terminalColumns !== "number" || Number.isFinite(terminalColumns) !== true || terminalColumns <= 0) {
+    return null
+  }
+
+  const measuredNonPathWidth = Array.from({ length: LIST_TABLE_PATH_COLUMN_INDEX })
+    .map((_, index) => resolveListColumnContentWidth({ rows, columnIndex: index }))
+    .reduce((sum, width) => sum + width, 0)
+  const borderWidth = LIST_TABLE_COLUMN_COUNT + 1
+  const paddingWidth = LIST_TABLE_COLUMN_COUNT * LIST_TABLE_CELL_HORIZONTAL_PADDING
+  const availablePathWidth = Math.floor(terminalColumns) - borderWidth - paddingWidth - measuredNonPathWidth
+
+  return Math.max(LIST_TABLE_PATH_MIN_WIDTH, availablePathWidth)
+}
+
 const resolveAheadBehindAgainstBaseBranch = async ({
   repoRoot,
   baseBranch,
@@ -1849,6 +1896,7 @@ const renderGeneralHelpText = ({ version }: { readonly version: string }): strin
     "  --verbose               Enable verbose logs.",
     "  --no-hooks              Disable hooks for this run (requires --allow-unsafe).",
     "  --no-gh                 Disable GitHub CLI based PR status checks for this run.",
+    "  --full-path             Disable list table path truncation.",
     "  --allow-unsafe          Explicitly allow unsafe behavior in non-TTY mode.",
     "  --hook-timeout-ms <ms>  Override hook timeout.",
     "  --lock-timeout-ms <ms>  Override repository lock timeout.",
@@ -1980,6 +2028,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       type: "boolean",
       description: "Enable GitHub CLI based PR status checks (disable with --no-gh)",
       default: true,
+    },
+    fullPath: {
+      type: "boolean",
+      description: "Disable list table path truncation",
     },
     allowUnsafe: {
       type: "boolean",
@@ -2382,11 +2434,25 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           )),
         ]
 
+        const pathColumnWidth = resolveListPathColumnWidth({
+          rows,
+          disablePathTruncation: parsedArgs.fullPath === true,
+        })
+        const columnsConfig =
+          pathColumnWidth === null
+            ? undefined
+            : {
+                [LIST_TABLE_PATH_COLUMN_INDEX]: {
+                  width: pathColumnWidth,
+                  truncate: pathColumnWidth,
+                },
+              }
         const rendered = table(rows, {
           border: getBorderCharacters("norc"),
           drawHorizontalLine: (lineIndex, rowCount) => {
             return lineIndex === 0 || lineIndex === 1 || lineIndex === rowCount
           },
+          columns: columnsConfig,
         })
         const colorized = colorizeListTable({
           rendered,

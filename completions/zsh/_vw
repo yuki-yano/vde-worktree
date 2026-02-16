@@ -263,6 +263,8 @@ _vw() {
     "--json[Output machine-readable JSON]"
     "--verbose[Enable verbose logs]"
     "--no-hooks[Disable hooks for this run]"
+    "--no-gh[Disable GitHub CLI based PR status checks for this run]"
+    "--full-path[Disable list table path truncation]"
     "--allow-unsafe[Allow unsafe behavior in non-TTY mode]"
     "--strict-post-hooks[Fail when post hooks fail]"
     "--hook-timeout-ms[Override hook timeout]:ms:"
@@ -284,6 +286,10 @@ _vw() {
     arguments)
       local current_command="${line[1]:-${words[2]}}"
       case "${current_command}" in
+        list)
+          _arguments \
+            "--full-path[Disable list table path truncation]"
+          ;;
         status)
           _arguments \
             "1:branch:_vw_complete_worktree_branches_with_meta"

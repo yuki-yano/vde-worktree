@@ -135,12 +135,15 @@ What it does:
 vw list
 vw list --json
 vw list --no-gh
+vw list --full-path
 ```
 
 What it does:
 
 - Lists all worktrees from Git porcelain output
 - Includes metadata such as branch, path, dirty, lock, merged, PR status, and upstream status
+- In table output, long `path` values are truncated with `…` to fit terminal width by default
+- Use `--full-path` to disable path truncation in table output
 - With `--no-gh`, skips PR status checks (`pr.status` becomes `unknown`, `merged.byPR` becomes `null`)
 - In interactive terminal, uses Catppuccin-style ANSI colors
 

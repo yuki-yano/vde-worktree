@@ -107,6 +107,7 @@ describe("createCli", () => {
     expect(text).toContain("completion")
     expect(text).toContain("help <command>")
     expect(text).toContain("--no-gh")
+    expect(text).toContain("--full-path")
   })
 
   it("prints zsh completion script outside git repository", async () => {
@@ -1280,6 +1281,70 @@ echo '[]'
     stdout.length = 0
     expect(await cli.run(["list", "--json", "--no-gh"])).toBe(0)
     await expect(access(ghLogPath)).rejects.toThrow()
+  })
+
+  it("list truncates long path in narrow tty and --full-path disables truncation", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/truncate-path"])).toBe(0)
+
+    const mutableStdout = process.stdout as NodeJS.WriteStream & { isTTY?: boolean; columns?: number }
+    const hadOwnIsTTY = Object.prototype.hasOwnProperty.call(mutableStdout, "isTTY")
+    const previousIsTTY = mutableStdout.isTTY
+    const hadOwnColumns = Object.prototype.hasOwnProperty.call(mutableStdout, "columns")
+    const previousColumns = mutableStdout.columns
+
+    Object.defineProperty(mutableStdout, "isTTY", {
+      value: true,
+      configurable: true,
+      writable: true,
+    })
+    Object.defineProperty(mutableStdout, "columns", {
+      value: 90,
+      configurable: true,
+      writable: true,
+    })
+
+    try {
+      stdout.length = 0
+      expect(await cli.run(["list"])).toBe(0)
+      const truncatedText = stdout.join("\n")
+      expect(truncatedText).toContain("feature/truncate-path")
+      expect(truncatedText).toContain("…")
+
+      stdout.length = 0
+      expect(await cli.run(["list", "--full-path"])).toBe(0)
+      const fullPathText = stdout.join("\n")
+      expect(fullPathText).toContain(join(repoRoot, ".worktree", "feature", "truncate-path"))
+      expect(fullPathText).not.toContain("…")
+    } finally {
+      if (hadOwnIsTTY) {
+        Object.defineProperty(mutableStdout, "isTTY", {
+          value: previousIsTTY,
+          configurable: true,
+          writable: true,
+        })
+      } else {
+        Reflect.deleteProperty(mutableStdout as unknown as Record<string, unknown>, "isTTY")
+      }
+
+      if (hadOwnColumns) {
+        Object.defineProperty(mutableStdout, "columns", {
+          value: previousColumns,
+          configurable: true,
+          writable: true,
+        })
+      } else {
+        Reflect.deleteProperty(mutableStdout as unknown as Record<string, unknown>, "columns")
+      }
+    }
   })
 
   it("list applies catppuccin colors in interactive mode", async () => {

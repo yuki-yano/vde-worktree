@@ -135,12 +135,15 @@ vw init
 vw list
 vw list --json
 vw list --no-gh
+vw list --full-path
 ```
 
 機能:
 
 - Git の porcelain 情報から worktree 一覧を取得
 - branch/path/dirty/lock/merged/PR/upstream を表示
+- テーブル表示では長い `path` は端末幅に合わせて `…` で省略
+- `--full-path` でテーブル表示の path 省略を無効化
 - `--no-gh` 指定時は PR 状態判定をスキップ（`pr.status` は `unknown`、`merged.byPR` は `null`）
 - 対話ターミナルでは Catppuccin 風の ANSI 色で表示
 
