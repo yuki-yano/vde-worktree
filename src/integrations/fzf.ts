@@ -3,6 +3,8 @@ import { execa } from "execa"
 const FZF_BINARY = "fzf"
 const FZF_CHECK_TIMEOUT_MS = 5_000
 const RESERVED_FZF_ARGS = new Set(["prompt", "layout", "height", "border"])
+const ANSI_ESCAPE_SEQUENCE_PATTERN = String.raw`\u001B\[[0-?]*[ -/]*[@-~]`
+const ANSI_ESCAPE_SEQUENCE_REGEX = new RegExp(ANSI_ESCAPE_SEQUENCE_PATTERN, "g")
 
 type ExecaLikeError = Error & {
   readonly code?: string
@@ -42,6 +44,8 @@ export type SelectPathWithFzfInput = {
 }
 
 const sanitizeCandidate = (value: string): string => value.replace(/[\r\n]+/g, " ").trim()
+const stripAnsi = (value: string): string => value.replace(ANSI_ESCAPE_SEQUENCE_REGEX, "")
+const stripTrailingNewlines = (value: string): string => value.replace(/[\r\n]+$/g, "")
 
 const buildFzfInput = (candidates: ReadonlyArray<string>): string => {
   return candidates
@@ -148,7 +152,7 @@ export const selectPathWithFzf = async ({
     throw new Error("All candidates are empty after sanitization")
   }
 
-  const candidateSet = new Set(input.split("\n"))
+  const candidateSet = new Set(input.split("\n").map((candidate) => stripAnsi(candidate)))
 
   try {
     const result = await runFzf({
@@ -158,7 +162,7 @@ export const selectPathWithFzf = async ({
       env,
     })
 
-    const selectedPath = result.stdout.trim()
+    const selectedPath = stripAnsi(stripTrailingNewlines(result.stdout))
     if (selectedPath.length === 0) {
       return { status: "cancelled" }
     }

@@ -35,6 +35,23 @@ describe("selectPathWithFzf", () => {
     expect(result).toEqual({ status: "cancelled" })
   })
 
+  it("matches selected line when fzf strips ANSI sequences", async () => {
+    const candidate = "\u001b[35m  feature/demo\u001b[39m\t/repo/.worktree/demo\tpreview"
+    const result = await selectPathWithFzf({
+      candidates: [candidate],
+      isInteractive: () => true,
+      checkFzfAvailability: async () => true,
+      runFzf: async () => {
+        return { stdout: "  feature/demo\t/repo/.worktree/demo\tpreview\n" }
+      },
+    })
+
+    expect(result).toEqual({
+      status: "selected",
+      path: "  feature/demo\t/repo/.worktree/demo\tpreview",
+    })
+  })
+
   it("throws when terminal is not interactive", async () => {
     await expect(
       selectPathWithFzf({
