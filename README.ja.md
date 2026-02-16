@@ -427,9 +427,14 @@ vw completion zsh --install
 
 `overall` ポリシー:
 
-- `byPR === true` -> `overall = true`
-- `byPR === false` -> `overall = false`
-- `byPR === null` -> `byAncestry` にフォールバック
+- `byPR === true` -> `overall = true`（squash/rebase merge を含む）
+- `byAncestry === false` -> `overall = false`
+- `byAncestry === true` の場合は、分岐の証跡があるときだけ merged 扱い
+  - `.vde/worktree/state/branches/*.json` の lifecycle 記録
+  - lifecycle がない場合の `git reflog` フォールバック
+- 分岐証跡が `baseBranch` に取り込まれていれば `overall = true`
+- `byPR === false` または lifecycle が明示的に未取り込みなら `overall = false`
+- それ以外は `overall = null`
 
 `byPR` が `null` になる例:
 

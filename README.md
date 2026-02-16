@@ -427,9 +427,14 @@ Each worktree reports:
 
 Overall policy:
 
-- `byPR === true` => `overall = true`
-- `byPR === false` => `overall = false`
-- `byPR === null` => fallback to `byAncestry`
+- `byPR === true` => `overall = true` (includes squash/rebase merges)
+- `byAncestry === false` => `overall = false`
+- when `byAncestry === true`, require divergence evidence before treating as merged
+  - lifecycle evidence from `.vde/worktree/state/branches/*.json`
+  - reflog fallback (`git reflog`) when lifecycle evidence is missing
+- if divergence evidence is contained in `baseBranch`, `overall = true`
+- `byPR === false` or explicit lifecycle "not merged" evidence => `overall = false`
+- otherwise `overall = null`
 
 `byPR` becomes `null` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, `vde-worktree.enableGh=false`, or `--no-gh`).
 

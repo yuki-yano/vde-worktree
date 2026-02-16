@@ -149,6 +149,75 @@ const resolveLockState = async ({
   }
 }
 
+const WORK_REFLOG_MESSAGE_PATTERN = /^(commit(?: \([^)]*\))?|cherry-pick|revert|rebase \(pick\)|merge):/
+
+const resolveLifecycleFromReflog = async ({
+  repoRoot,
+  branch,
+  baseBranch,
+}: {
+  readonly repoRoot: string
+  readonly branch: string
+  readonly baseBranch: string
+}): Promise<{ merged: boolean | null; divergedHead: string | null }> => {
+  const reflog = await runGitCommand({
+    cwd: repoRoot,
+    args: ["reflog", "show", "--format=%H%x09%gs", branch],
+    reject: false,
+  })
+  if (reflog.exitCode !== 0) {
+    return {
+      merged: null,
+      divergedHead: null,
+    }
+  }
+
+  let latestWorkHead: string | null = null
+  for (const line of reflog.stdout.split("\n")) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) {
+      continue
+    }
+
+    const separatorIndex = trimmed.indexOf("\t")
+    if (separatorIndex <= 0) {
+      continue
+    }
+
+    const head = trimmed.slice(0, separatorIndex).trim()
+    const message = trimmed.slice(separatorIndex + 1).trim()
+    if (head.length === 0 || WORK_REFLOG_MESSAGE_PATTERN.test(message) !== true) {
+      continue
+    }
+    if (latestWorkHead === null) {
+      latestWorkHead = head
+    }
+
+    const result = await runGitCommand({
+      cwd: repoRoot,
+      args: ["merge-base", "--is-ancestor", head, baseBranch],
+      reject: false,
+    })
+    if (result.exitCode === 0) {
+      return {
+        merged: true,
+        divergedHead: head,
+      }
+    }
+    if (result.exitCode !== 1) {
+      return {
+        merged: null,
+        divergedHead: latestWorkHead,
+      }
+    }
+  }
+
+  return {
+    merged: false,
+    divergedHead: latestWorkHead,
+  }
+}
+
 const resolveMergedState = async ({
   repoRoot,
   branch,
@@ -189,12 +258,44 @@ const resolveMergedState = async ({
       repoRoot,
       branch,
       baseBranch,
-      createdHead: head,
+      observedDivergedHead: byAncestry === false ? head : null,
     })
-    if (byAncestry === true) {
-      byLifecycle = lifecycle.createdHead !== head
-    } else if (byAncestry === false) {
+    if (byAncestry === false) {
       byLifecycle = false
+    } else if (byAncestry === true) {
+      if (lifecycle.everDiverged !== true || lifecycle.lastDivergedHead === null) {
+        if (byPR === true) {
+          byLifecycle = null
+        } else {
+          const probe = await resolveLifecycleFromReflog({
+            repoRoot,
+            branch,
+            baseBranch,
+          })
+          byLifecycle = probe.merged
+          if (probe.divergedHead !== null) {
+            await upsertWorktreeMergeLifecycle({
+              repoRoot,
+              branch,
+              baseBranch,
+              observedDivergedHead: probe.divergedHead,
+            })
+          }
+        }
+      } else {
+        const lifecycleResult = await runGitCommand({
+          cwd: repoRoot,
+          args: ["merge-base", "--is-ancestor", lifecycle.lastDivergedHead, baseBranch],
+          reject: false,
+        })
+        if (lifecycleResult.exitCode === 0) {
+          byLifecycle = true
+        } else if (lifecycleResult.exitCode === 1) {
+          byLifecycle = false
+        } else {
+          byLifecycle = null
+        }
+      }
     }
   }
 

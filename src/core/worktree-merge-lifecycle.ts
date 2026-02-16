@@ -4,11 +4,12 @@ import { dirname, join } from "node:path"
 import { branchToWorktreeId, getStateDirectoryPath } from "./paths"
 
 export type WorktreeMergeLifecycleRecord = {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly branch: string
   readonly worktreeId: string
   readonly baseBranch: string
-  readonly createdHead: string
+  readonly everDiverged: boolean
+  readonly lastDivergedHead: string | null
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -34,13 +35,17 @@ const hasStateDirectory = async (repoRoot: string): Promise<boolean> => {
 const parseLifecycle = (content: string): ParsedLifecycle => {
   try {
     const parsed = JSON.parse(content) as Partial<WorktreeMergeLifecycleRecord>
+    const isLastDivergedHeadValid =
+      parsed.lastDivergedHead === null ||
+      (typeof parsed.lastDivergedHead === "string" && parsed.lastDivergedHead.length > 0)
+
     if (
-      parsed.schemaVersion !== 1 ||
+      parsed.schemaVersion !== 2 ||
       typeof parsed.branch !== "string" ||
       typeof parsed.worktreeId !== "string" ||
       typeof parsed.baseBranch !== "string" ||
-      typeof parsed.createdHead !== "string" ||
-      parsed.createdHead.length === 0 ||
+      typeof parsed.everDiverged !== "boolean" ||
+      isLastDivergedHeadValid !== true ||
       typeof parsed.createdAt !== "string" ||
       typeof parsed.updatedAt !== "string"
     ) {
@@ -116,38 +121,50 @@ export const upsertWorktreeMergeLifecycle = async ({
   repoRoot,
   branch,
   baseBranch,
-  createdHead,
+  observedDivergedHead,
 }: {
   readonly repoRoot: string
   readonly branch: string
   readonly baseBranch: string
-  readonly createdHead: string
+  readonly observedDivergedHead: string | null
 }): Promise<WorktreeMergeLifecycleRecord> => {
+  const normalizedObservedHead =
+    typeof observedDivergedHead === "string" && observedDivergedHead.length > 0 ? observedDivergedHead : null
+
   if ((await hasStateDirectory(repoRoot)) !== true) {
     const now = new Date().toISOString()
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       branch,
       worktreeId: branchToWorktreeId(branch),
       baseBranch,
-      createdHead,
+      everDiverged: normalizedObservedHead !== null,
+      lastDivergedHead: normalizedObservedHead,
       createdAt: now,
       updatedAt: now,
     }
   }
 
   const current = await readWorktreeMergeLifecycle({ repoRoot, branch })
-  if (current.valid && current.record !== null && current.record.baseBranch === baseBranch) {
+  if (
+    current.valid &&
+    current.record !== null &&
+    current.record.baseBranch === baseBranch &&
+    normalizedObservedHead === null
+  ) {
     return current.record
   }
 
   const now = new Date().toISOString()
+  const everDiverged = current.record?.everDiverged === true || normalizedObservedHead !== null
+  const lastDivergedHead = normalizedObservedHead ?? current.record?.lastDivergedHead ?? null
   const next: WorktreeMergeLifecycleRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     branch,
     worktreeId: branchToWorktreeId(branch),
     baseBranch,
-    createdHead: current.record?.createdHead ?? createdHead,
+    everDiverged,
+    lastDivergedHead,
     createdAt: current.record?.createdAt ?? now,
     updatedAt: now,
   }
@@ -163,22 +180,26 @@ export const moveWorktreeMergeLifecycle = async ({
   fromBranch,
   toBranch,
   baseBranch,
-  createdHead,
+  observedDivergedHead,
 }: {
   readonly repoRoot: string
   readonly fromBranch: string
   readonly toBranch: string
   readonly baseBranch: string
-  readonly createdHead: string
+  readonly observedDivergedHead: string | null
 }): Promise<WorktreeMergeLifecycleRecord> => {
+  const normalizedObservedHead =
+    typeof observedDivergedHead === "string" && observedDivergedHead.length > 0 ? observedDivergedHead : null
+
   if ((await hasStateDirectory(repoRoot)) !== true) {
     const now = new Date().toISOString()
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       branch: toBranch,
       worktreeId: branchToWorktreeId(toBranch),
       baseBranch,
-      createdHead,
+      everDiverged: normalizedObservedHead !== null,
+      lastDivergedHead: normalizedObservedHead,
       createdAt: now,
       updatedAt: now,
     }
@@ -187,12 +208,15 @@ export const moveWorktreeMergeLifecycle = async ({
   const source = await readWorktreeMergeLifecycle({ repoRoot, branch: fromBranch })
   const targetPath = lifecycleFilePath(repoRoot, toBranch)
   const now = new Date().toISOString()
+  const everDiverged = source.record?.everDiverged === true || normalizedObservedHead !== null
+  const lastDivergedHead = normalizedObservedHead ?? source.record?.lastDivergedHead ?? null
   const next: WorktreeMergeLifecycleRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     branch: toBranch,
     worktreeId: branchToWorktreeId(toBranch),
     baseBranch,
-    createdHead: source.record?.createdHead ?? createdHead,
+    everDiverged,
+    lastDivergedHead,
     createdAt: source.record?.createdAt ?? now,
     updatedAt: now,
   }

@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import {
   deleteWorktreeMergeLifecycle,
@@ -8,7 +8,7 @@ import {
   readWorktreeMergeLifecycle,
   upsertWorktreeMergeLifecycle,
 } from "./worktree-merge-lifecycle"
-import { getStateDirectoryPath } from "./paths"
+import { branchToWorktreeId, getStateDirectoryPath } from "./paths"
 
 const tempDirs = new Set<string>()
 
@@ -29,18 +29,19 @@ afterEach(async () => {
 })
 
 describe("worktree merge lifecycle", () => {
-  it("creates lifecycle record with created head", async () => {
+  it("creates lifecycle record without divergence evidence", async () => {
     const repoRoot = await createRepoRoot()
     const record = await upsertWorktreeMergeLifecycle({
       repoRoot,
       branch: "feature/a",
       baseBranch: "main",
-      createdHead: "abc123",
+      observedDivergedHead: null,
     })
 
     expect(record.branch).toBe("feature/a")
     expect(record.baseBranch).toBe("main")
-    expect(record.createdHead).toBe("abc123")
+    expect(record.everDiverged).toBe(false)
+    expect(record.lastDivergedHead).toBeNull()
 
     const read = await readWorktreeMergeLifecycle({
       repoRoot,
@@ -48,26 +49,69 @@ describe("worktree merge lifecycle", () => {
     })
     expect(read.exists).toBe(true)
     expect(read.valid).toBe(true)
-    expect(read.record?.createdHead).toBe("abc123")
+    expect(read.record?.everDiverged).toBe(false)
+    expect(read.record?.lastDivergedHead).toBeNull()
   })
 
-  it("keeps created head when base branch changes", async () => {
+  it("records latest divergence head and keeps evidence across non-diverged updates", async () => {
     const repoRoot = await createRepoRoot()
     const first = await upsertWorktreeMergeLifecycle({
       repoRoot,
       branch: "feature/a",
       baseBranch: "main",
-      createdHead: "abc123",
+      observedDivergedHead: "abc123",
     })
     const second = await upsertWorktreeMergeLifecycle({
       repoRoot,
       branch: "feature/a",
       baseBranch: "trunk",
-      createdHead: "def456",
+      observedDivergedHead: null,
+    })
+    const third = await upsertWorktreeMergeLifecycle({
+      repoRoot,
+      branch: "feature/a",
+      baseBranch: "trunk",
+      observedDivergedHead: "def456",
     })
 
-    expect(second.createdHead).toBe(first.createdHead)
+    expect(second.createdAt).toBe(first.createdAt)
+    expect(second.everDiverged).toBe(true)
+    expect(second.lastDivergedHead).toBe("abc123")
     expect(second.baseBranch).toBe("trunk")
+    expect(third.everDiverged).toBe(true)
+    expect(third.lastDivergedHead).toBe("def456")
+  })
+
+  it("ignores legacy schema records and rewrites with schema version 2", async () => {
+    const repoRoot = await createRepoRoot()
+    const branch = "feature/legacy"
+    const filePath = join(getStateDirectoryPath(repoRoot), "branches", `${branchToWorktreeId(branch)}.json`)
+
+    await mkdir(dirname(filePath), { recursive: true })
+    await writeFile(
+      filePath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        branch,
+        worktreeId: branchToWorktreeId(branch),
+        baseBranch: "main",
+        createdHead: "legacy-head",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })}\n`,
+      "utf8",
+    )
+
+    const record = await upsertWorktreeMergeLifecycle({
+      repoRoot,
+      branch,
+      baseBranch: "main",
+      observedDivergedHead: null,
+    })
+
+    expect(record.schemaVersion).toBe(2)
+    expect(record.everDiverged).toBe(false)
+    expect(record.lastDivergedHead).toBeNull()
   })
 
   it("moves lifecycle record on branch rename", async () => {
@@ -76,7 +120,7 @@ describe("worktree merge lifecycle", () => {
       repoRoot,
       branch: "feature/old",
       baseBranch: "main",
-      createdHead: "abc123",
+      observedDivergedHead: "abc123",
     })
 
     const moved = await moveWorktreeMergeLifecycle({
@@ -84,11 +128,12 @@ describe("worktree merge lifecycle", () => {
       fromBranch: "feature/old",
       toBranch: "feature/new",
       baseBranch: "main",
-      createdHead: "zzz999",
+      observedDivergedHead: null,
     })
 
     expect(moved.branch).toBe("feature/new")
-    expect(moved.createdHead).toBe("abc123")
+    expect(moved.lastDivergedHead).toBe("abc123")
+    expect(moved.everDiverged).toBe(true)
     const oldRecord = await readWorktreeMergeLifecycle({
       repoRoot,
       branch: "feature/old",
@@ -98,7 +143,7 @@ describe("worktree merge lifecycle", () => {
       branch: "feature/new",
     })
     expect(oldRecord.exists).toBe(false)
-    expect(newRecord.record?.createdHead).toBe("abc123")
+    expect(newRecord.record?.lastDivergedHead).toBe("abc123")
   })
 
   it("deletes lifecycle record", async () => {
@@ -107,7 +152,7 @@ describe("worktree merge lifecycle", () => {
       repoRoot,
       branch: "feature/a",
       baseBranch: "main",
-      createdHead: "abc123",
+      observedDivergedHead: "abc123",
     })
 
     const before = await readWorktreeMergeLifecycle({

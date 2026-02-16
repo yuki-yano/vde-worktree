@@ -25,7 +25,7 @@ vi.mock("../integrations/gh", () => {
 import { doesGitRefExist, runGitCommand } from "../git/exec"
 import { listGitWorktrees, type GitWorktree } from "../git/worktree"
 import { resolveMergedByPrBatch } from "../integrations/gh"
-import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
+import { branchToWorktreeId, getLocksDirectoryPath, getStateDirectoryPath } from "./paths"
 import { collectWorktreeSnapshot } from "./worktree-state"
 
 const mockedRunGitCommand = vi.mocked(runGitCommand)
@@ -342,5 +342,116 @@ describe("collectWorktreeSnapshot", () => {
       enabled: false,
     })
     expect(snapshot.worktrees[0]?.merged.byPR).toBeNull()
+  })
+
+  it("keeps branch unmerged after rebase when no divergence has been observed", async () => {
+    const repoRoot = await createRepoRoot()
+    await mkdir(getStateDirectoryPath(repoRoot), { recursive: true })
+    const branch = "feature/rebase"
+    const worktreePath = join(repoRoot, ".worktree", "feature", "rebase")
+
+    mockedListGitWorktrees
+      .mockResolvedValueOnce([
+        {
+          path: worktreePath,
+          head: "h1",
+          branch,
+        } satisfies GitWorktree,
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: worktreePath,
+          head: "h2",
+          branch,
+        } satisfies GitWorktree,
+      ])
+
+    mockedResolveMergedByPrBatch
+      .mockResolvedValueOnce(new Map([["feature/rebase", null]]))
+      .mockResolvedValueOnce(new Map([["feature/rebase", null]]))
+    mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
+      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
+        return gitResult({ stdout: "main\n" })
+      }
+      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
+        return gitResult({ stdout: "false\n" })
+      }
+      if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor feature/rebase main") {
+        return gitResult({ exitCode: 0 })
+      }
+      if (cwd === repoRoot && args.join(" ") === "reflog show --format=%H%x09%gs feature/rebase") {
+        return gitResult({ stdout: "" })
+      }
+      if (cwd === worktreePath && args.join(" ") === "status --porcelain") {
+        return gitResult({ stdout: "" })
+      }
+      if (cwd === worktreePath && args.join(" ") === "rev-parse --abbrev-ref --symbolic-full-name @{upstream}") {
+        return gitResult({ exitCode: 1 })
+      }
+      throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
+    })
+
+    const beforeRebaseSnapshot = await collectWorktreeSnapshot(repoRoot)
+    const afterRebaseSnapshot = await collectWorktreeSnapshot(repoRoot)
+
+    expect(beforeRebaseSnapshot.worktrees[0]?.merged.overall).toBe(false)
+    expect(afterRebaseSnapshot.worktrees[0]?.merged.overall).toBe(false)
+  })
+
+  it("marks lifecycle merged when previously diverged head is contained in base", async () => {
+    const repoRoot = await createRepoRoot()
+    await mkdir(getStateDirectoryPath(repoRoot), { recursive: true })
+    const branch = "feature/integrated"
+    const worktreePath = join(repoRoot, ".worktree", "feature", "integrated")
+
+    mockedListGitWorktrees
+      .mockResolvedValueOnce([
+        {
+          path: worktreePath,
+          head: "diverge123",
+          branch,
+        } satisfies GitWorktree,
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: worktreePath,
+          head: "diverge123",
+          branch,
+        } satisfies GitWorktree,
+      ])
+
+    mockedResolveMergedByPrBatch
+      .mockResolvedValueOnce(new Map([["feature/integrated", null]]))
+      .mockResolvedValueOnce(new Map([["feature/integrated", null]]))
+
+    let branchAncestryChecks = 0
+    mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
+      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
+        return gitResult({ stdout: "main\n" })
+      }
+      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
+        return gitResult({ stdout: "false\n" })
+      }
+      if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor feature/integrated main") {
+        branchAncestryChecks += 1
+        return gitResult({ exitCode: branchAncestryChecks === 1 ? 1 : 0 })
+      }
+      if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor diverge123 main") {
+        return gitResult({ exitCode: 0 })
+      }
+      if (cwd === worktreePath && args.join(" ") === "status --porcelain") {
+        return gitResult({ stdout: "" })
+      }
+      if (cwd === worktreePath && args.join(" ") === "rev-parse --abbrev-ref --symbolic-full-name @{upstream}") {
+        return gitResult({ exitCode: 1 })
+      }
+      throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
+    })
+
+    const beforeMergeSnapshot = await collectWorktreeSnapshot(repoRoot)
+    const afterMergeSnapshot = await collectWorktreeSnapshot(repoRoot)
+
+    expect(beforeMergeSnapshot.worktrees[0]?.merged.overall).toBe(false)
+    expect(afterMergeSnapshot.worktrees[0]?.merged.overall).toBe(true)
   })
 })

@@ -868,27 +868,6 @@ const resolveBaseBranch = async (repoRoot: string): Promise<string> => {
   })
 }
 
-const resolveBranchHead = async ({
-  repoRoot,
-  branch,
-}: {
-  readonly repoRoot: string
-  readonly branch: string
-}): Promise<string> => {
-  const resolved = await runGitCommand({
-    cwd: repoRoot,
-    args: ["rev-parse", "--verify", branch],
-    reject: false,
-  })
-  if (resolved.exitCode !== 0 || resolved.stdout.trim().length === 0) {
-    throw createCliError("INVALID_ARGUMENT", {
-      message: `Failed to resolve branch head: ${branch}`,
-      details: { branch },
-    })
-  }
-  return resolved.stdout.trim()
-}
-
 const ensureTargetPathWritable = async (targetPath: string): Promise<void> => {
   try {
     await access(targetPath, fsConstants.F_OK)
@@ -2474,12 +2453,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             cwd: repoRoot,
             args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
           })
-          const branchHead = await resolveBranchHead({ repoRoot, branch })
           await upsertWorktreeMergeLifecycle({
             repoRoot,
             branch,
             baseBranch,
-            createdHead: branchHead,
+            observedDivergedHead: null,
           })
           await runPostHook({ name: "new", context: hookContext })
 
@@ -2512,12 +2490,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           const existing = snapshot.worktrees.find((worktree) => worktree.branch === branch)
           if (existing !== undefined) {
             if (snapshot.baseBranch !== null) {
-              const branchHead = await resolveBranchHead({ repoRoot, branch })
               await upsertWorktreeMergeLifecycle({
                 repoRoot,
                 branch,
                 baseBranch: snapshot.baseBranch,
-                createdHead: branchHead,
+                observedDivergedHead: null,
               })
             }
             return { status: "existing" as const, branch, path: existing.path }
@@ -2551,12 +2528,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           }
 
           if (lifecycleBaseBranch !== null) {
-            const branchHead = await resolveBranchHead({ repoRoot, branch })
             await upsertWorktreeMergeLifecycle({
               repoRoot,
               branch,
               baseBranch: lifecycleBaseBranch,
-              createdHead: branchHead,
+              observedDivergedHead: null,
             })
           }
           await runPostHook({ name: "switch", context: hookContext })
@@ -2645,13 +2621,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             args: ["worktree", "move", current.path, newPath],
           })
           if (snapshot.baseBranch !== null) {
-            const branchHead = await resolveBranchHead({ repoRoot, branch: newBranch })
             await moveWorktreeMergeLifecycle({
               repoRoot,
               fromBranch: oldBranch,
               toBranch: newBranch,
               baseBranch: snapshot.baseBranch,
-              createdHead: branchHead,
+              observedDivergedHead: null,
             })
           }
           await runPostHook({ name: "mv", context: hookContext })
@@ -2910,12 +2885,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           const existing = snapshot.worktrees.find((worktree) => worktree.branch === branch)
           if (existing !== undefined) {
             if (lifecycleBaseBranch !== null) {
-              const branchHead = await resolveBranchHead({ repoRoot, branch })
               await upsertWorktreeMergeLifecycle({
                 repoRoot,
                 branch,
                 baseBranch: lifecycleBaseBranch,
-                createdHead: branchHead,
+                observedDivergedHead: null,
               })
             }
             await runPostHook({ name: "get", context: hookContext })
@@ -2933,12 +2907,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             args: ["worktree", "add", targetPath, branch],
           })
           if (lifecycleBaseBranch !== null) {
-            const branchHead = await resolveBranchHead({ repoRoot, branch })
             await upsertWorktreeMergeLifecycle({
               repoRoot,
               branch,
               baseBranch: lifecycleBaseBranch,
-              createdHead: branchHead,
+              observedDivergedHead: null,
             })
           }
           await runPostHook({ name: "get", context: hookContext })
@@ -3070,12 +3043,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             cwd: repoRoot,
             args: ["worktree", "add", targetPath, branch],
           })
-          const branchHead = await resolveBranchHead({ repoRoot, branch })
           await upsertWorktreeMergeLifecycle({
             repoRoot,
             branch,
             baseBranch,
-            createdHead: branchHead,
+            observedDivergedHead: null,
           })
 
           if (stashOid !== null) {
