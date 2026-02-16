@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest"
-import { resolveMergedByPrBatch } from "./gh"
+import { resolveMergedByPrBatch, resolvePrStatusByBranchBatch } from "./gh"
 
-describe("resolveMergedByPrBatch", () => {
-  it("returns null when feature is disabled", async () => {
+describe("resolvePrStatusByBranchBatch", () => {
+  it("returns unknown states when feature is disabled", async () => {
     const runGh = vi.fn(async () => ({
       exitCode: 0,
       stdout: "[]",
       stderr: "",
     }))
 
-    const result = await resolveMergedByPrBatch({
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo"],
@@ -17,18 +17,18 @@ describe("resolveMergedByPrBatch", () => {
       runGh,
     })
 
-    expect(result.size).toBe(0)
+    expect(result.get("feature/foo")).toBe("unknown")
     expect(runGh).not.toHaveBeenCalled()
   })
 
   it("returns empty map when base branch is unknown", async () => {
     const runGh = vi.fn(async () => ({
       exitCode: 0,
-      stdout: '[{"mergedAt":"2026-02-10T00:00:00Z"}]',
+      stdout: "[]",
       stderr: "",
     }))
 
-    const result = await resolveMergedByPrBatch({
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: null,
       branches: ["feature/foo"],
@@ -42,11 +42,11 @@ describe("resolveMergedByPrBatch", () => {
   it("returns empty map when branch candidates are empty", async () => {
     const runGh = vi.fn(async () => ({
       exitCode: 0,
-      stdout: '[{"mergedAt":"2026-02-10T00:00:00Z"}]',
+      stdout: "[]",
       stderr: "",
     }))
 
-    const result = await resolveMergedByPrBatch({
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: [null, "main", "main"],
@@ -57,23 +57,43 @@ describe("resolveMergedByPrBatch", () => {
     expect(runGh).not.toHaveBeenCalled()
   })
 
-  it("returns merged state for each non-base branch", async () => {
+  it("resolves none/open/merged/closed_unmerged from PR records", async () => {
     const runGh = vi.fn(async () => ({
       exitCode: 0,
-      stdout:
-        '[{"headRefName":"feature/foo","mergedAt":"2026-02-10T00:00:00Z"},{"headRefName":"feature/bar","mergedAt":null}]',
+      stdout: JSON.stringify([
+        {
+          headRefName: "feature/open",
+          state: "OPEN",
+          mergedAt: null,
+          updatedAt: "2026-02-10T10:00:00Z",
+        },
+        {
+          headRefName: "feature/merged",
+          state: "MERGED",
+          mergedAt: "2026-02-10T00:00:00Z",
+          updatedAt: "2026-02-10T11:00:00Z",
+        },
+        {
+          headRefName: "feature/closed",
+          state: "CLOSED",
+          mergedAt: null,
+          updatedAt: "2026-02-10T12:00:00Z",
+        },
+      ]),
       stderr: "",
     }))
 
-    const result = await resolveMergedByPrBatch({
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
-      branches: ["main", "feature/foo", "feature/bar", "feature/foo", null],
+      branches: ["main", "feature/open", "feature/merged", "feature/closed", "feature/none", null],
       runGh,
     })
 
-    expect(result.get("feature/foo")).toBe(true)
-    expect(result.get("feature/bar")).toBe(false)
+    expect(result.get("feature/open")).toBe("open")
+    expect(result.get("feature/merged")).toBe("merged")
+    expect(result.get("feature/closed")).toBe("closed_unmerged")
+    expect(result.get("feature/none")).toBe("none")
     expect(result.has("main")).toBe(false)
     expect(runGh).toHaveBeenCalledWith({
       cwd: "/repo",
@@ -81,37 +101,49 @@ describe("resolveMergedByPrBatch", () => {
         "pr",
         "list",
         "--state",
-        "merged",
+        "all",
         "--base",
         "main",
         "--search",
-        "head:feature/foo OR head:feature/bar",
+        "head:feature/open OR head:feature/merged OR head:feature/closed OR head:feature/none",
         "--limit",
         "1000",
         "--json",
-        "headRefName,mergedAt",
+        "headRefName,state,mergedAt,updatedAt",
       ],
     })
   })
 
-  it("returns false for branches when no merged PR exists", async () => {
-    const result = await resolveMergedByPrBatch({
+  it("prefers latest updated PR when branch has multiple records", async () => {
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
-      branches: ["feature/foo", "feature/bar"],
+      branches: ["feature/foo"],
       runGh: async () => ({
         exitCode: 0,
-        stdout: "[]",
+        stdout: JSON.stringify([
+          {
+            headRefName: "feature/foo",
+            state: "MERGED",
+            mergedAt: "2026-02-10T00:00:00Z",
+            updatedAt: "2026-02-10T00:00:00Z",
+          },
+          {
+            headRefName: "feature/foo",
+            state: "OPEN",
+            mergedAt: null,
+            updatedAt: "2026-02-11T00:00:00Z",
+          },
+        ]),
         stderr: "",
       }),
     })
 
-    expect(result.get("feature/foo")).toBe(false)
-    expect(result.get("feature/bar")).toBe(false)
+    expect(result.get("feature/foo")).toBe("open")
   })
 
-  it("returns null states when gh command fails", async () => {
-    const result = await resolveMergedByPrBatch({
+  it("returns unknown states when gh command fails", async () => {
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo", "feature/bar"],
@@ -122,12 +154,12 @@ describe("resolveMergedByPrBatch", () => {
       }),
     })
 
-    expect(result.get("feature/foo")).toBeNull()
-    expect(result.get("feature/bar")).toBeNull()
+    expect(result.get("feature/foo")).toBe("unknown")
+    expect(result.get("feature/bar")).toBe("unknown")
   })
 
-  it("returns null states on invalid JSON", async () => {
-    const result = await resolveMergedByPrBatch({
+  it("returns unknown states on invalid JSON", async () => {
+    const result = await resolvePrStatusByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo", "feature/bar"],
@@ -138,7 +170,53 @@ describe("resolveMergedByPrBatch", () => {
       }),
     })
 
-    expect(result.get("feature/foo")).toBeNull()
-    expect(result.get("feature/bar")).toBeNull()
+    expect(result.get("feature/foo")).toBe("unknown")
+    expect(result.get("feature/bar")).toBe("unknown")
+  })
+})
+
+describe("resolveMergedByPrBatch", () => {
+  it("maps pr status to merged boolean/null", async () => {
+    const result = await resolveMergedByPrBatch({
+      repoRoot: "/repo",
+      baseBranch: "main",
+      branches: ["feature/none", "feature/open", "feature/merged", "feature/closed", "feature/unknown"],
+      runGh: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify([
+          {
+            headRefName: "feature/open",
+            state: "OPEN",
+            mergedAt: null,
+            updatedAt: "2026-02-10T00:00:00Z",
+          },
+          {
+            headRefName: "feature/merged",
+            state: "MERGED",
+            mergedAt: "2026-02-10T00:00:00Z",
+            updatedAt: "2026-02-10T00:00:00Z",
+          },
+          {
+            headRefName: "feature/closed",
+            state: "CLOSED",
+            mergedAt: null,
+            updatedAt: "2026-02-10T00:00:00Z",
+          },
+          {
+            headRefName: "feature/unknown",
+            state: "SOMETHING_NEW",
+            mergedAt: null,
+            updatedAt: "2026-02-10T00:00:00Z",
+          },
+        ]),
+        stderr: "",
+      }),
+    })
+
+    expect(result.get("feature/none")).toBe(false)
+    expect(result.get("feature/open")).toBe(false)
+    expect(result.get("feature/merged")).toBe(true)
+    expect(result.get("feature/closed")).toBe(false)
+    expect(result.get("feature/unknown")).toBeNull()
   })
 })

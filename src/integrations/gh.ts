@@ -17,7 +17,7 @@ type ExecaLikeError = Error & {
   readonly code?: string
 }
 
-type ResolveMergedByPrBatchInput = {
+type ResolvePrStatusByBranchBatchInput = {
   readonly repoRoot: string
   readonly baseBranch: string | null
   readonly branches: readonly (string | null)[]
@@ -25,9 +25,13 @@ type ResolveMergedByPrBatchInput = {
   readonly runGh?: GhCommandRunner
 }
 
+export type PrStatus = "none" | "open" | "merged" | "closed_unmerged" | "unknown"
+
 type PrSummary = {
   readonly headRefName?: string | null
+  readonly state?: string | null
   readonly mergedAt?: string | null
+  readonly updatedAt?: string | null
 }
 
 const defaultRunGh: GhCommandRunner = async ({ cwd, args }) => {
@@ -62,54 +66,95 @@ const toTargetBranches = ({
   return [...uniqueBranches]
 }
 
-const buildUnknownBranchMap = (branches: readonly string[]): Map<string, null> => {
-  return new Map(branches.map((branch) => [branch, null]))
+const buildUnknownPrStatusMap = (branches: readonly string[]): Map<string, PrStatus> => {
+  return new Map(branches.map((branch) => [branch, "unknown"]))
 }
 
-const parseMergedBranches = ({
+const parseUpdatedAtMillis = (value: unknown): number => {
+  if (typeof value !== "string" || value.length === 0) {
+    return Number.NEGATIVE_INFINITY
+  }
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) {
+    return Number.NEGATIVE_INFINITY
+  }
+  return parsed
+}
+
+const toPrStatus = (record: PrSummary): PrStatus => {
+  if (typeof record.mergedAt === "string" && record.mergedAt.length > 0) {
+    return "merged"
+  }
+  const state = typeof record.state === "string" ? record.state.toUpperCase() : ""
+  if (state === "MERGED") {
+    return "merged"
+  }
+  if (state === "OPEN") {
+    return "open"
+  }
+  if (state === "CLOSED") {
+    return "closed_unmerged"
+  }
+  return "unknown"
+}
+
+const parsePrStatusByBranch = ({
   raw,
   targetBranches,
 }: {
   readonly raw: string
-  readonly targetBranches: ReadonlySet<string>
-}): Set<string> | null => {
+  readonly targetBranches: readonly string[]
+}): Map<string, PrStatus> | null => {
   try {
     const parsed = JSON.parse(raw) as unknown
     if (Array.isArray(parsed) !== true) {
       return null
     }
+    const targetBranchSet = new Set(targetBranches)
     const records = parsed as PrSummary[]
-    const mergedBranches = new Set<string>()
+    const latestByBranch = new Map<string, { updatedAtMillis: number; index: number; status: PrStatus }>()
 
-    for (const record of records) {
+    for (const [index, record] of records.entries()) {
       if (typeof record?.headRefName !== "string" || record.headRefName.length === 0) {
         continue
       }
-      if (targetBranches.has(record.headRefName) !== true) {
+      if (targetBranchSet.has(record.headRefName) !== true) {
         continue
       }
-      if (typeof record.mergedAt !== "string" || record.mergedAt.length === 0) {
-        continue
+      const updatedAtMillis = parseUpdatedAtMillis(record.updatedAt)
+      const status = toPrStatus(record)
+      const current = latestByBranch.get(record.headRefName)
+      if (
+        current === undefined ||
+        updatedAtMillis > current.updatedAtMillis ||
+        (updatedAtMillis === current.updatedAtMillis && index > current.index)
+      ) {
+        latestByBranch.set(record.headRefName, {
+          updatedAtMillis,
+          index,
+          status,
+        })
       }
-      mergedBranches.add(record.headRefName)
     }
 
-    return mergedBranches
+    const result = new Map<string, PrStatus>()
+    for (const branch of targetBranches) {
+      const latest = latestByBranch.get(branch)
+      result.set(branch, latest?.status ?? "none")
+    }
+    return result
   } catch {
     return null
   }
 }
 
-export const resolveMergedByPrBatch = async ({
+export const resolvePrStatusByBranchBatch = async ({
   repoRoot,
   baseBranch,
   branches,
   enabled = true,
   runGh = defaultRunGh,
-}: ResolveMergedByPrBatchInput): Promise<ReadonlyMap<string, boolean | null>> => {
-  if (enabled !== true) {
-    return new Map()
-  }
+}: ResolvePrStatusByBranchBatchInput): Promise<ReadonlyMap<string, PrStatus>> => {
   if (baseBranch === null) {
     return new Map()
   }
@@ -118,9 +163,11 @@ export const resolveMergedByPrBatch = async ({
   if (targetBranches.length === 0) {
     return new Map()
   }
+  if (enabled !== true) {
+    return buildUnknownPrStatusMap(targetBranches)
+  }
 
   try {
-    const targetBranchSet = new Set(targetBranches)
     const searchQuery = targetBranches.map((branch) => `head:${branch}`).join(" OR ")
     const result = await runGh({
       cwd: repoRoot,
@@ -128,7 +175,7 @@ export const resolveMergedByPrBatch = async ({
         "pr",
         "list",
         "--state",
-        "merged",
+        "all",
         "--base",
         baseBranch,
         "--search",
@@ -136,31 +183,44 @@ export const resolveMergedByPrBatch = async ({
         "--limit",
         "1000",
         "--json",
-        "headRefName,mergedAt",
+        "headRefName,state,mergedAt,updatedAt",
       ],
     })
     if (result.exitCode !== 0) {
-      return buildUnknownBranchMap(targetBranches)
+      return buildUnknownPrStatusMap(targetBranches)
     }
 
-    const mergedBranches = parseMergedBranches({
+    const prStatusByBranch = parsePrStatusByBranch({
       raw: result.stdout,
-      targetBranches: targetBranchSet,
+      targetBranches,
     })
-    if (mergedBranches === null) {
-      return buildUnknownBranchMap(targetBranches)
+    if (prStatusByBranch === null) {
+      return buildUnknownPrStatusMap(targetBranches)
     }
 
-    return new Map(
-      targetBranches.map((branch) => {
-        return [branch, mergedBranches.has(branch)]
-      }),
-    )
+    return prStatusByBranch
   } catch (error) {
     const execaError = error as ExecaLikeError
     if (execaError.code === "ENOENT") {
-      return buildUnknownBranchMap(targetBranches)
+      return buildUnknownPrStatusMap(targetBranches)
     }
-    return buildUnknownBranchMap(targetBranches)
+    return buildUnknownPrStatusMap(targetBranches)
   }
+}
+
+export const resolveMergedByPrBatch = async (
+  input: ResolvePrStatusByBranchBatchInput,
+): Promise<ReadonlyMap<string, boolean | null>> => {
+  const prStatusByBranch = await resolvePrStatusByBranchBatch(input)
+  return new Map(
+    [...prStatusByBranch.entries()].map(([branch, status]) => {
+      if (status === "merged") {
+        return [branch, true]
+      }
+      if (status === "unknown") {
+        return [branch, null]
+      }
+      return [branch, false]
+    }),
+  )
 }

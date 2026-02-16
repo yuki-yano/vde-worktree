@@ -22,7 +22,7 @@
 - Node.js 22+
 - pnpm 10+
 - `fzf`（`cd` に必須）
-- `gh`（PR merged 判定に任意）
+- `gh`（PR 状態判定に任意）
 
 ## インストール / ビルド
 
@@ -111,7 +111,7 @@ autoload -Uz compinit && compinit
 - `--verbose`: 詳細ログ
 - `--no-hooks`: 今回のみ hook 無効化（`--allow-unsafe` 必須）
 - `--allow-unsafe`: unsafe 操作の明示同意
-- `--no-gh`: 今回の実行で `gh` による PR merged 判定を無効化
+- `--no-gh`: 今回の実行で `gh` による PR 状態判定を無効化
 - `--hook-timeout-ms <ms>`: hook timeout 上書き
 - `--lock-timeout-ms <ms>`: repo lock timeout 上書き
 
@@ -140,8 +140,8 @@ vw list --no-gh
 機能:
 
 - Git の porcelain 情報から worktree 一覧を取得
-- branch/path/dirty/lock/merged/upstream を表示
-- `--no-gh` 指定時は PR merged 判定をスキップ（`merged.byPR` は `null`）
+- branch/path/dirty/lock/merged/PR/upstream を表示
+- `--no-gh` 指定時は PR 状態判定をスキップ（`pr.status` は `unknown`、`merged.byPR` は `null`）
 - 対話ターミナルでは Catppuccin 風の ANSI 色で表示
 
 ### `status`
@@ -424,6 +424,7 @@ vw completion zsh --install
 - `merged.byAncestry`: ローカル履歴判定（`git merge-base --is-ancestor`）
 - `merged.byPR`: GitHub PR merged 判定（`gh`）
 - `merged.overall`: 最終判定
+- `pr.status`: PR 状態（`none` / `open` / `merged` / `closed_unmerged` / `unknown`）
 
 `overall` ポリシー:
 
@@ -436,7 +437,7 @@ vw completion zsh --install
 - `byPR === false` または lifecycle が明示的に未取り込みなら `overall = false`
 - それ以外は `overall = null`
 
-`byPR` が `null` になる例:
+`byPR` が `null` かつ `pr.status` が `unknown` になる例:
 
 - `gh` 未導入
 - `gh auth` 未設定

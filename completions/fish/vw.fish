@@ -68,6 +68,10 @@ const toFlag = (value) => {
   if (value === false) return "no"
   return "unknown"
 }
+const toPrStatus = (value) => {
+  if (typeof value !== "string" || value.length === 0) return "n/a"
+  return value
+}
 let payload
 try {
   payload = JSON.parse(fs.readFileSync(0, "utf8"))
@@ -78,10 +82,11 @@ const worktrees = Array.isArray(payload.worktrees) ? payload.worktrees : []
 for (const worktree of worktrees) {
   if (typeof worktree?.branch !== "string" || worktree.branch.length === 0) continue
   const merged = toFlag(worktree?.merged?.overall)
+  const pr = toPrStatus(worktree?.pr?.status)
   const dirty = worktree?.dirty === true ? "yes" : "no"
   const locked = worktree?.locked?.value === true ? "yes" : "no"
   const path = toDisplayPath(worktree?.path)
-  const summary = `merged=${merged} dirty=${dirty} locked=${locked}${path ? ` path=${path}` : ""}`
+  const summary = `merged=${merged} pr=${pr} dirty=${dirty} locked=${locked}${path ? ` path=${path}` : ""}`
   const sanitized = summary.replace(/[\t\r\n]+/g, " ").trim()
   process.stdout.write(`${worktree.branch}\t${sanitized}\n`)
 }
@@ -101,6 +106,10 @@ const toFlag = (value) => {
   if (value === false) return "no"
   return "unknown"
 }
+const toPrStatus = (value) => {
+  if (typeof value !== "string" || value.length === 0) return "n/a"
+  return value
+}
 let payload
 try {
   payload = JSON.parse(fs.readFileSync(0, "utf8"))
@@ -118,9 +127,10 @@ for (const worktree of worktrees) {
   const name = rel.split(path.sep).join("/")
   const branch = typeof worktree?.branch === "string" && worktree.branch.length > 0 ? worktree.branch : "(detached)"
   const merged = toFlag(worktree?.merged?.overall)
+  const pr = toPrStatus(worktree?.pr?.status)
   const dirty = worktree?.dirty === true ? "yes" : "no"
   const locked = worktree?.locked?.value === true ? "yes" : "no"
-  const summary = `branch=${branch} merged=${merged} dirty=${dirty} locked=${locked}`
+  const summary = `branch=${branch} merged=${merged} pr=${pr} dirty=${dirty} locked=${locked}`
   const sanitized = summary.replace(/[\t\r\n]+/g, " ").trim()
   process.stdout.write(`${name}\t${sanitized}\n`)
 }

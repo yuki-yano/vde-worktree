@@ -18,20 +18,20 @@ vi.mock("../git/worktree", () => {
 
 vi.mock("../integrations/gh", () => {
   return {
-    resolveMergedByPrBatch: vi.fn(),
+    resolvePrStatusByBranchBatch: vi.fn(),
   }
 })
 
 import { doesGitRefExist, runGitCommand } from "../git/exec"
 import { listGitWorktrees, type GitWorktree } from "../git/worktree"
-import { resolveMergedByPrBatch } from "../integrations/gh"
+import { resolvePrStatusByBranchBatch } from "../integrations/gh"
 import { branchToWorktreeId, getLocksDirectoryPath, getStateDirectoryPath } from "./paths"
 import { collectWorktreeSnapshot } from "./worktree-state"
 
 const mockedRunGitCommand = vi.mocked(runGitCommand)
 const mockedDoesGitRefExist = vi.mocked(doesGitRefExist)
 const mockedListGitWorktrees = vi.mocked(listGitWorktrees)
-const mockedResolveMergedByPrBatch = vi.mocked(resolveMergedByPrBatch)
+const mockedResolvePrStatusByBranchBatch = vi.mocked(resolvePrStatusByBranchBatch)
 
 const tempDirs = new Set<string>()
 
@@ -71,7 +71,7 @@ beforeEach(() => {
   mockedRunGitCommand.mockReset()
   mockedDoesGitRefExist.mockReset()
   mockedListGitWorktrees.mockReset()
-  mockedResolveMergedByPrBatch.mockReset()
+  mockedResolvePrStatusByBranchBatch.mockReset()
 })
 
 describe("collectWorktreeSnapshot", () => {
@@ -101,7 +101,7 @@ describe("collectWorktreeSnapshot", () => {
       } satisfies GitWorktree,
     ])
 
-    mockedResolveMergedByPrBatch.mockResolvedValueOnce(new Map([["feature/a", null]]))
+    mockedResolvePrStatusByBranchBatch.mockResolvedValueOnce(new Map([["feature/a", "unknown"]]))
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
       if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
         return gitResult({ stdout: "trunk\n" })
@@ -128,7 +128,7 @@ describe("collectWorktreeSnapshot", () => {
     expect(snapshot.baseBranch).toBe("trunk")
     expect(snapshot.repoRoot).toBe(repoRoot)
     expect(mockedDoesGitRefExist).not.toHaveBeenCalled()
-    expect(mockedResolveMergedByPrBatch).toHaveBeenCalledWith({
+    expect(mockedResolvePrStatusByBranchBatch).toHaveBeenCalledWith({
       repoRoot,
       baseBranch: "trunk",
       branches: ["feature/a"],
@@ -149,6 +149,9 @@ describe("collectWorktreeSnapshot", () => {
           byAncestry: false,
           byPR: null,
           overall: false,
+        },
+        pr: {
+          status: "unknown",
         },
         upstream: {
           ahead: 5,
@@ -178,7 +181,7 @@ describe("collectWorktreeSnapshot", () => {
     ])
 
     mockedDoesGitRefExist.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
-    mockedResolveMergedByPrBatch.mockResolvedValueOnce(new Map([["feature/b", true]]))
+    mockedResolvePrStatusByBranchBatch.mockResolvedValueOnce(new Map([["feature/b", "merged"]]))
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
       if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
         return gitResult({ exitCode: 1 })
@@ -208,8 +211,8 @@ describe("collectWorktreeSnapshot", () => {
     expect(snapshot.baseBranch).toBe("master")
     expect(mockedDoesGitRefExist).toHaveBeenNthCalledWith(1, repoRoot, "refs/heads/main")
     expect(mockedDoesGitRefExist).toHaveBeenNthCalledWith(2, repoRoot, "refs/heads/master")
-    expect(mockedResolveMergedByPrBatch).toHaveBeenCalledTimes(1)
-    expect(mockedResolveMergedByPrBatch).toHaveBeenCalledWith({
+    expect(mockedResolvePrStatusByBranchBatch).toHaveBeenCalledTimes(1)
+    expect(mockedResolvePrStatusByBranchBatch).toHaveBeenCalledWith({
       repoRoot,
       baseBranch: "master",
       branches: [null, "feature/b"],
@@ -223,6 +226,7 @@ describe("collectWorktreeSnapshot", () => {
       dirty: false,
       locked: { value: false, reason: null, owner: null },
       merged: { byAncestry: null, byPR: null, overall: null },
+      pr: { status: null },
       upstream: { ahead: null, behind: null, remote: null },
     })
     expect(snapshot.worktrees[1]).toEqual({
@@ -232,6 +236,7 @@ describe("collectWorktreeSnapshot", () => {
       dirty: false,
       locked: { value: false, reason: null, owner: null },
       merged: { byAncestry: true, byPR: true, overall: true },
+      pr: { status: "merged" },
       upstream: { ahead: null, behind: null, remote: null },
     })
   })
@@ -252,7 +257,7 @@ describe("collectWorktreeSnapshot", () => {
       } satisfies GitWorktree,
     ])
     mockedDoesGitRefExist.mockResolvedValueOnce(true)
-    mockedResolveMergedByPrBatch.mockResolvedValueOnce(new Map([["feature/c", false]]))
+    mockedResolvePrStatusByBranchBatch.mockResolvedValueOnce(new Map([["feature/c", "closed_unmerged"]]))
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
       if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
         return gitResult({ exitCode: 1 })
@@ -292,6 +297,9 @@ describe("collectWorktreeSnapshot", () => {
         byPR: false,
         overall: false,
       },
+      pr: {
+        status: "closed_unmerged",
+      },
       upstream: {
         ahead: null,
         behind: null,
@@ -313,7 +321,7 @@ describe("collectWorktreeSnapshot", () => {
       } satisfies GitWorktree,
     ])
 
-    mockedResolveMergedByPrBatch.mockResolvedValueOnce(new Map())
+    mockedResolvePrStatusByBranchBatch.mockResolvedValueOnce(new Map([["feature/no-gh", "unknown"]]))
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
       if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
         return gitResult({ stdout: "main\n" })
@@ -335,13 +343,14 @@ describe("collectWorktreeSnapshot", () => {
 
     const snapshot = await collectWorktreeSnapshot(repoRoot, { noGh: true })
     expect(snapshot.baseBranch).toBe("main")
-    expect(mockedResolveMergedByPrBatch).toHaveBeenCalledWith({
+    expect(mockedResolvePrStatusByBranchBatch).toHaveBeenCalledWith({
       repoRoot,
       baseBranch: "main",
       branches: ["feature/no-gh"],
       enabled: false,
     })
     expect(snapshot.worktrees[0]?.merged.byPR).toBeNull()
+    expect(snapshot.worktrees[0]?.pr.status).toBe("unknown")
   })
 
   it("keeps branch unmerged after rebase when no divergence has been observed", async () => {
@@ -366,9 +375,9 @@ describe("collectWorktreeSnapshot", () => {
         } satisfies GitWorktree,
       ])
 
-    mockedResolveMergedByPrBatch
-      .mockResolvedValueOnce(new Map([["feature/rebase", null]]))
-      .mockResolvedValueOnce(new Map([["feature/rebase", null]]))
+    mockedResolvePrStatusByBranchBatch
+      .mockResolvedValueOnce(new Map([["feature/rebase", "unknown"]]))
+      .mockResolvedValueOnce(new Map([["feature/rebase", "unknown"]]))
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
       if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
         return gitResult({ stdout: "main\n" })
@@ -420,9 +429,9 @@ describe("collectWorktreeSnapshot", () => {
         } satisfies GitWorktree,
       ])
 
-    mockedResolveMergedByPrBatch
-      .mockResolvedValueOnce(new Map([["feature/integrated", null]]))
-      .mockResolvedValueOnce(new Map([["feature/integrated", null]]))
+    mockedResolvePrStatusByBranchBatch
+      .mockResolvedValueOnce(new Map([["feature/integrated", "unknown"]]))
+      .mockResolvedValueOnce(new Map([["feature/integrated", "unknown"]]))
 
     let branchAncestryChecks = 0
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {

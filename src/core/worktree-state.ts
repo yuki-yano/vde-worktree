@@ -2,7 +2,7 @@ import { constants as fsConstants } from "node:fs"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { doesGitRefExist, runGitCommand } from "../git/exec"
-import { resolveMergedByPrBatch } from "../integrations/gh"
+import { resolvePrStatusByBranchBatch, type PrStatus } from "../integrations/gh"
 import { type GitWorktree, listGitWorktrees } from "../git/worktree"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
 import { upsertWorktreeMergeLifecycle } from "./worktree-merge-lifecycle"
@@ -27,6 +27,10 @@ export type WorktreeMergedState = {
   readonly overall: boolean | null
 }
 
+export type WorktreePrState = {
+  readonly status: PrStatus | null
+}
+
 export type WorktreeUpstreamState = {
   readonly ahead: number | null
   readonly behind: number | null
@@ -40,6 +44,7 @@ export type WorktreeStatus = {
   readonly dirty: boolean
   readonly locked: WorktreeLockState
   readonly merged: WorktreeMergedState
+  readonly pr: WorktreePrState
   readonly upstream: WorktreeUpstreamState
 }
 
@@ -223,13 +228,13 @@ const resolveMergedState = async ({
   branch,
   head,
   baseBranch,
-  mergedByPrByBranch,
+  prStatusByBranch,
 }: {
   readonly repoRoot: string
   readonly branch: string | null
   readonly head: string
   readonly baseBranch: string | null
-  readonly mergedByPrByBranch: ReadonlyMap<string, boolean | null>
+  readonly prStatusByBranch: ReadonlyMap<string, PrStatus>
 }): Promise<WorktreeMergedState> => {
   if (branch === null) {
     return { byAncestry: null, byPR: null, overall: null }
@@ -250,7 +255,13 @@ const resolveMergedState = async ({
     }
   }
 
-  const byPR = branch === baseBranch ? null : (mergedByPrByBranch.get(branch) ?? null)
+  const prStatus = branch === baseBranch ? null : (prStatusByBranch.get(branch) ?? null)
+  let byPR: boolean | null = null
+  if (prStatus === "merged") {
+    byPR = true
+  } else if (prStatus === "none" || prStatus === "open" || prStatus === "closed_unmerged") {
+    byPR = false
+  }
 
   let byLifecycle: boolean | null = null
   if (baseBranch !== null) {
@@ -307,6 +318,23 @@ const resolveMergedState = async ({
       byPR,
       byLifecycle,
     }),
+  }
+}
+
+const resolvePrState = ({
+  branch,
+  baseBranch,
+  prStatusByBranch,
+}: {
+  readonly branch: string | null
+  readonly baseBranch: string | null
+  readonly prStatusByBranch: ReadonlyMap<string, PrStatus>
+}): WorktreePrState => {
+  if (branch === null || branch === baseBranch) {
+    return { status: null }
+  }
+  return {
+    status: prStatusByBranch.get(branch) ?? null,
   }
 }
 
@@ -373,19 +401,24 @@ const enrichWorktree = async ({
   repoRoot,
   worktree,
   baseBranch,
-  mergedByPrByBranch,
+  prStatusByBranch,
 }: {
   readonly repoRoot: string
   readonly worktree: GitWorktree
   readonly baseBranch: string | null
-  readonly mergedByPrByBranch: ReadonlyMap<string, boolean | null>
+  readonly prStatusByBranch: ReadonlyMap<string, PrStatus>
 }): Promise<WorktreeStatus> => {
   const [dirty, locked, merged, upstream] = await Promise.all([
     resolveDirty(worktree.path),
     resolveLockState({ repoRoot, branch: worktree.branch }),
-    resolveMergedState({ repoRoot, branch: worktree.branch, head: worktree.head, baseBranch, mergedByPrByBranch }),
+    resolveMergedState({ repoRoot, branch: worktree.branch, head: worktree.head, baseBranch, prStatusByBranch }),
     resolveUpstreamState(worktree.path),
   ])
+  const pr = resolvePrState({
+    branch: worktree.branch,
+    baseBranch,
+    prStatusByBranch,
+  })
 
   return {
     branch: worktree.branch,
@@ -394,6 +427,7 @@ const enrichWorktree = async ({
     dirty,
     locked,
     merged,
+    pr,
     upstream,
   }
 }
@@ -417,7 +451,7 @@ export const collectWorktreeSnapshot = async (
     listGitWorktrees(repoRoot),
     resolveEnableGh(repoRoot),
   ])
-  const mergedByPrByBranch = await resolveMergedByPrBatch({
+  const prStatusByBranch = await resolvePrStatusByBranchBatch({
     repoRoot,
     baseBranch,
     branches: worktrees.map((worktree) => worktree.branch),
@@ -425,7 +459,7 @@ export const collectWorktreeSnapshot = async (
   })
   const enriched = await Promise.all(
     worktrees.map(async (worktree) => {
-      return enrichWorktree({ repoRoot, worktree, baseBranch, mergedByPrByBranch })
+      return enrichWorktree({ repoRoot, worktree, baseBranch, prStatusByBranch })
     }),
   )
 

@@ -1207,6 +1207,7 @@ exit 1
     expect(text).toContain("branch")
     expect(text).toContain("dirty")
     expect(text).toContain("merged")
+    expect(text).toContain("pr")
     expect(text).toContain("locked")
     expect(text).toContain("ahead")
     expect(text).toContain("behind")
@@ -1223,9 +1224,10 @@ exit 1
     expect(mainCells[1]).toBe("clean")
     expect(mainCells[2]).toBe("-")
     expect(mainCells[3]).toBe("-")
-    expect(mainCells[4]).toBe("0")
+    expect(mainCells[4]).toBe("-")
     expect(mainCells[5]).toBe("0")
-    expect(mainCells[6]).toContain(repoRoot)
+    expect(mainCells[6]).toBe("0")
+    expect(mainCells[7]).toContain(repoRoot)
 
     const featureLine = stdout.find((line) => line.includes("feature/list"))
     expect(featureLine).toBeDefined()
@@ -1235,8 +1237,9 @@ exit 1
       .filter((cell) => cell.length > 0)
     expect(featureCells[2]).not.toBe("-")
     expect(["merged", "unmerged", "unknown"]).toContain(featureCells[2])
-    expect(featureCells[4]).toBe("1")
-    expect(featureCells[5]).toBe("0")
+    expect(["none", "open", "merged", "closed_unmerged", "unknown"]).toContain(featureCells[3] ?? "")
+    expect(featureCells[5]).toBe("1")
+    expect(featureCells[6]).toBe("0")
   })
 
   it("list --no-gh skips gh command invocation", async () => {

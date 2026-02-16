@@ -250,7 +250,7 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
   }
 
   const cells = segments.slice(1, -1)
-  if (cells.length !== 7) {
+  if (cells.length !== 8) {
     return line
   }
 
@@ -259,10 +259,11 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
     headers[0] === "branch" &&
     headers[1] === "dirty" &&
     headers[2] === "merged" &&
-    headers[3] === "locked" &&
-    headers[4] === "ahead" &&
-    headers[5] === "behind" &&
-    headers[6] === "path"
+    headers[3] === "pr" &&
+    headers[4] === "locked" &&
+    headers[5] === "ahead" &&
+    headers[6] === "behind" &&
+    headers[7] === "path"
 
   if (isHeaderRow) {
     const nextCells = cells.map((cell) => colorizeCellContent({ cell, color: theme.header }))
@@ -272,10 +273,11 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
   const branchCell = cells[0] as string
   const dirtyCell = cells[1] as string
   const mergedCell = cells[2] as string
-  const lockedCell = cells[3] as string
-  const aheadCell = cells[4] as string
-  const behindCell = cells[5] as string
-  const pathCell = cells[6] as string
+  const prCell = cells[3] as string
+  const lockedCell = cells[4] as string
+  const aheadCell = cells[5] as string
+  const behindCell = cells[6] as string
+  const pathCell = cells[7] as string
 
   const branchColor =
     branchCell.includes("(detached)") === true
@@ -294,6 +296,19 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
         : mergedTrimmed === "-"
           ? theme.base
           : theme.unknown
+  const prTrimmed = prCell.trim()
+  const prColor =
+    prTrimmed === "merged"
+      ? theme.merged
+      : prTrimmed === "open"
+        ? theme.value
+        : prTrimmed === "closed_unmerged"
+          ? theme.unmerged
+          : prTrimmed === "none"
+            ? theme.muted
+            : prTrimmed === "-"
+              ? theme.base
+              : theme.unknown
   const lockedTrimmed = lockedCell.trim()
   const lockedColor = lockedTrimmed === "locked" ? theme.locked : theme.muted
   const aheadTrimmed = aheadCell.trim()
@@ -325,6 +340,7 @@ const colorizeListTableLine = ({ line, theme }: { readonly line: string; readonl
     colorizeCellContent({ cell: branchCell, color: branchColor }),
     colorizeCellContent({ cell: dirtyCell, color: dirtyColor }),
     colorizeCellContent({ cell: mergedCell, color: mergedColor }),
+    colorizeCellContent({ cell: prCell, color: prColor }),
     colorizeCellContent({ cell: lockedCell, color: lockedColor }),
     colorizeCellContent({ cell: aheadCell, color: aheadColor }),
     colorizeCellContent({ cell: behindCell, color: behindColor }),
@@ -363,8 +379,8 @@ const commandHelpEntries: readonly CommandHelp[] = [
     usage: "vw list [--json]",
     summary: "List worktrees with status metadata.",
     details: [
-      "Table output includes branch, path, dirty, lock, merged, and ahead/behind vs base branch.",
-      "JSON output includes upstream metadata fields.",
+      "Table output includes branch, path, dirty, lock, merged, PR state, and ahead/behind vs base branch.",
+      "JSON output includes PR and upstream metadata fields.",
     ],
   },
   {
@@ -1536,6 +1552,28 @@ const formatMergedColor = ({
   return theme.unknown(mergedState)
 }
 
+const formatPrDisplayState = ({
+  prStatus,
+  isBaseBranch,
+}: {
+  readonly prStatus: WorktreeStatus["pr"]["status"]
+  readonly isBaseBranch: boolean
+}): string => {
+  if (isBaseBranch || prStatus === null) {
+    return "-"
+  }
+  if (
+    prStatus === "none" ||
+    prStatus === "open" ||
+    prStatus === "merged" ||
+    prStatus === "closed_unmerged" ||
+    prStatus === "unknown"
+  ) {
+    return prStatus
+  }
+  return "unknown"
+}
+
 const formatListUpstreamCount = (value: number | null): string => {
   if (value === null) {
     return "-"
@@ -1810,7 +1848,7 @@ const renderGeneralHelpText = ({ version }: { readonly version: string }): strin
     "  --json                  Output machine-readable JSON.",
     "  --verbose               Enable verbose logs.",
     "  --no-hooks              Disable hooks for this run (requires --allow-unsafe).",
-    "  --no-gh                 Disable GitHub CLI based PR merge checks for this run.",
+    "  --no-gh                 Disable GitHub CLI based PR status checks for this run.",
     "  --allow-unsafe          Explicitly allow unsafe behavior in non-TTY mode.",
     "  --hook-timeout-ms <ms>  Override hook timeout.",
     "  --lock-timeout-ms <ms>  Override repository lock timeout.",
@@ -1940,7 +1978,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
     },
     gh: {
       type: "boolean",
-      description: "Enable GitHub CLI based PR merge checks (disable with --no-gh)",
+      description: "Enable GitHub CLI based PR status checks (disable with --no-gh)",
       default: true,
     },
     allowUnsafe: {
@@ -2307,7 +2345,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive }),
         })
         const rows: string[][] = [
-          ["branch", "dirty", "merged", "locked", "ahead", "behind", "path"],
+          ["branch", "dirty", "merged", "pr", "locked", "ahead", "behind", "path"],
           ...(await Promise.all(
             snapshot.worktrees.map(async (worktree) => {
               const distanceFromBase = await resolveAheadBehindAgainstBaseBranch({
@@ -2325,11 +2363,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
                     : worktree.merged.overall === false
                       ? "unmerged"
                       : "unknown"
+              const prState = formatPrDisplayState({
+                prStatus: worktree.pr.status,
+                isBaseBranch,
+              })
               const isCurrent = worktree.path === repoContext.currentWorktreeRoot
               return [
                 `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`,
                 worktree.dirty ? "dirty" : "clean",
                 mergedState,
+                prState,
                 worktree.locked.value ? "locked" : "-",
                 formatListUpstreamCount(distanceFromBase.ahead),
                 formatListUpstreamCount(distanceFromBase.behind),

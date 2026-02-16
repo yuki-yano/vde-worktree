@@ -111,7 +111,7 @@ After `vw init`, the tool manages:
 - `--verbose`: verbose logging
 - `--no-hooks`: disable hooks for this run (requires `--allow-unsafe`)
 - `--allow-unsafe`: explicit unsafe override
-- `--no-gh`: disable GitHub CLI based PR merge checks for this run
+- `--no-gh`: disable GitHub CLI based PR status checks for this run
 - `--hook-timeout-ms <ms>`: hook timeout override
 - `--lock-timeout-ms <ms>`: repository lock timeout override
 
@@ -140,8 +140,8 @@ vw list --no-gh
 What it does:
 
 - Lists all worktrees from Git porcelain output
-- Includes metadata such as branch, path, dirty, lock, merged, and upstream status
-- With `--no-gh`, skips PR-based merge checks (`merged.byPR` becomes `null`)
+- Includes metadata such as branch, path, dirty, lock, merged, PR status, and upstream status
+- With `--no-gh`, skips PR status checks (`pr.status` becomes `unknown`, `merged.byPR` becomes `null`)
 - In interactive terminal, uses Catppuccin-style ANSI colors
 
 ### `status`
@@ -424,6 +424,7 @@ Each worktree reports:
 - `merged.byAncestry`: local ancestry check (`git merge-base --is-ancestor <branch> <baseBranch>`)
 - `merged.byPR`: PR-based merged check via GitHub CLI
 - `merged.overall`: final decision
+- `pr.status`: PR state (`none` / `open` / `merged` / `closed_unmerged` / `unknown`)
 
 Overall policy:
 
@@ -436,7 +437,7 @@ Overall policy:
 - `byPR === false` or explicit lifecycle "not merged" evidence => `overall = false`
 - otherwise `overall = null`
 
-`byPR` becomes `null` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, `vde-worktree.enableGh=false`, or `--no-gh`).
+`byPR` becomes `null` and `pr.status` becomes `unknown` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, `vde-worktree.enableGh=false`, or `--no-gh`).
 
 ## JSON Contract
 
