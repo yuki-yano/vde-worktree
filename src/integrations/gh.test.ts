@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
-import { resolveMergedByPrBatch, resolvePrStatusByBranchBatch } from "./gh"
+import { resolveMergedByPrBatch, resolvePrStateByBranchBatch, resolvePrStatusByBranchBatch } from "./gh"
 
-describe("resolvePrStatusByBranchBatch", () => {
+describe("resolvePrStateByBranchBatch", () => {
   it("returns unknown states when feature is disabled", async () => {
     const runGh = vi.fn(async () => ({
       exitCode: 0,
@@ -9,7 +9,7 @@ describe("resolvePrStatusByBranchBatch", () => {
       stderr: "",
     }))
 
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo"],
@@ -17,7 +17,10 @@ describe("resolvePrStatusByBranchBatch", () => {
       runGh,
     })
 
-    expect(result.get("feature/foo")).toBe("unknown")
+    expect(result.get("feature/foo")).toEqual({
+      status: "unknown",
+      url: null,
+    })
     expect(runGh).not.toHaveBeenCalled()
   })
 
@@ -28,7 +31,7 @@ describe("resolvePrStatusByBranchBatch", () => {
       stderr: "",
     }))
 
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: null,
       branches: ["feature/foo"],
@@ -46,7 +49,7 @@ describe("resolvePrStatusByBranchBatch", () => {
       stderr: "",
     }))
 
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: [null, "main", "main"],
@@ -57,7 +60,7 @@ describe("resolvePrStatusByBranchBatch", () => {
     expect(runGh).not.toHaveBeenCalled()
   })
 
-  it("resolves none/open/merged/closed_unmerged from PR records", async () => {
+  it("resolves none/open/merged/closed_unmerged and urls from PR records", async () => {
     const runGh = vi.fn(async () => ({
       exitCode: 0,
       stdout: JSON.stringify([
@@ -66,34 +69,49 @@ describe("resolvePrStatusByBranchBatch", () => {
           state: "OPEN",
           mergedAt: null,
           updatedAt: "2026-02-10T10:00:00Z",
+          url: "https://github.com/example/repo/pull/101",
         },
         {
           headRefName: "feature/merged",
           state: "MERGED",
           mergedAt: "2026-02-10T00:00:00Z",
           updatedAt: "2026-02-10T11:00:00Z",
+          url: "https://github.com/example/repo/pull/102",
         },
         {
           headRefName: "feature/closed",
           state: "CLOSED",
           mergedAt: null,
           updatedAt: "2026-02-10T12:00:00Z",
+          url: "https://github.com/example/repo/pull/103",
         },
       ]),
       stderr: "",
     }))
 
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["main", "feature/open", "feature/merged", "feature/closed", "feature/none", null],
       runGh,
     })
 
-    expect(result.get("feature/open")).toBe("open")
-    expect(result.get("feature/merged")).toBe("merged")
-    expect(result.get("feature/closed")).toBe("closed_unmerged")
-    expect(result.get("feature/none")).toBe("none")
+    expect(result.get("feature/open")).toEqual({
+      status: "open",
+      url: "https://github.com/example/repo/pull/101",
+    })
+    expect(result.get("feature/merged")).toEqual({
+      status: "merged",
+      url: "https://github.com/example/repo/pull/102",
+    })
+    expect(result.get("feature/closed")).toEqual({
+      status: "closed_unmerged",
+      url: "https://github.com/example/repo/pull/103",
+    })
+    expect(result.get("feature/none")).toEqual({
+      status: "none",
+      url: null,
+    })
     expect(result.has("main")).toBe(false)
     expect(runGh).toHaveBeenCalledWith({
       cwd: "/repo",
@@ -109,13 +127,13 @@ describe("resolvePrStatusByBranchBatch", () => {
         "--limit",
         "1000",
         "--json",
-        "headRefName,state,mergedAt,updatedAt",
+        "headRefName,state,mergedAt,updatedAt,url",
       ],
     })
   })
 
   it("prefers latest updated PR when branch has multiple records", async () => {
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo"],
@@ -127,23 +145,28 @@ describe("resolvePrStatusByBranchBatch", () => {
             state: "MERGED",
             mergedAt: "2026-02-10T00:00:00Z",
             updatedAt: "2026-02-10T00:00:00Z",
+            url: "https://github.com/example/repo/pull/201",
           },
           {
             headRefName: "feature/foo",
             state: "OPEN",
             mergedAt: null,
             updatedAt: "2026-02-11T00:00:00Z",
+            url: "https://github.com/example/repo/pull/202",
           },
         ]),
         stderr: "",
       }),
     })
 
-    expect(result.get("feature/foo")).toBe("open")
+    expect(result.get("feature/foo")).toEqual({
+      status: "open",
+      url: "https://github.com/example/repo/pull/202",
+    })
   })
 
   it("returns unknown states when gh command fails", async () => {
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo", "feature/bar"],
@@ -154,12 +177,18 @@ describe("resolvePrStatusByBranchBatch", () => {
       }),
     })
 
-    expect(result.get("feature/foo")).toBe("unknown")
-    expect(result.get("feature/bar")).toBe("unknown")
+    expect(result.get("feature/foo")).toEqual({
+      status: "unknown",
+      url: null,
+    })
+    expect(result.get("feature/bar")).toEqual({
+      status: "unknown",
+      url: null,
+    })
   })
 
   it("returns unknown states on invalid JSON", async () => {
-    const result = await resolvePrStatusByBranchBatch({
+    const result = await resolvePrStateByBranchBatch({
       repoRoot: "/repo",
       baseBranch: "main",
       branches: ["feature/foo", "feature/bar"],
@@ -170,8 +199,39 @@ describe("resolvePrStatusByBranchBatch", () => {
       }),
     })
 
-    expect(result.get("feature/foo")).toBe("unknown")
-    expect(result.get("feature/bar")).toBe("unknown")
+    expect(result.get("feature/foo")).toEqual({
+      status: "unknown",
+      url: null,
+    })
+    expect(result.get("feature/bar")).toEqual({
+      status: "unknown",
+      url: null,
+    })
+  })
+})
+
+describe("resolvePrStatusByBranchBatch", () => {
+  it("maps pr state map to status-only map", async () => {
+    const result = await resolvePrStatusByBranchBatch({
+      repoRoot: "/repo",
+      baseBranch: "main",
+      branches: ["feature/foo"],
+      runGh: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify([
+          {
+            headRefName: "feature/foo",
+            state: "OPEN",
+            mergedAt: null,
+            updatedAt: "2026-02-10T00:00:00Z",
+            url: "https://github.com/example/repo/pull/300",
+          },
+        ]),
+        stderr: "",
+      }),
+    })
+
+    expect(result.get("feature/foo")).toBe("open")
   })
 })
 
@@ -189,24 +249,28 @@ describe("resolveMergedByPrBatch", () => {
             state: "OPEN",
             mergedAt: null,
             updatedAt: "2026-02-10T00:00:00Z",
+            url: "https://github.com/example/repo/pull/401",
           },
           {
             headRefName: "feature/merged",
             state: "MERGED",
             mergedAt: "2026-02-10T00:00:00Z",
             updatedAt: "2026-02-10T00:00:00Z",
+            url: "https://github.com/example/repo/pull/402",
           },
           {
             headRefName: "feature/closed",
             state: "CLOSED",
             mergedAt: null,
             updatedAt: "2026-02-10T00:00:00Z",
+            url: "https://github.com/example/repo/pull/403",
           },
           {
             headRefName: "feature/unknown",
             state: "SOMETHING_NEW",
             mergedAt: null,
             updatedAt: "2026-02-10T00:00:00Z",
+            url: "https://github.com/example/repo/pull/404",
           },
         ]),
         stderr: "",

@@ -142,6 +142,7 @@ What it does:
 
 - Lists all worktrees from Git porcelain output
 - Includes metadata such as branch, path, dirty, lock, merged, PR status, and upstream status
+- JSON metadata includes `pr.status` and `pr.url` for each non-base branch
 - In table output, long `path` values are truncated with `…` to fit terminal width by default
 - Use `--full-path` to disable path truncation in table output
 - With `--no-gh`, skips PR status checks (`pr.status` becomes `unknown`, `merged.byPR` becomes `null`)
@@ -428,6 +429,7 @@ Each worktree reports:
 - `merged.byPR`: PR-based merged check via GitHub CLI
 - `merged.overall`: final decision
 - `pr.status`: PR state (`none` / `open` / `merged` / `closed_unmerged` / `unknown`)
+- `pr.url`: latest PR URL for the branch (`null` when unavailable)
 
 Overall policy:
 

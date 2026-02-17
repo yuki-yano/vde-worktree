@@ -2,7 +2,7 @@ import { constants as fsConstants } from "node:fs"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { doesGitRefExist, runGitCommand } from "../git/exec"
-import { resolvePrStatusByBranchBatch, type PrStatus } from "../integrations/gh"
+import { resolvePrStateByBranchBatch, type PrState, type PrStatus } from "../integrations/gh"
 import { type GitWorktree, listGitWorktrees } from "../git/worktree"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
 import { upsertWorktreeMergeLifecycle } from "./worktree-merge-lifecycle"
@@ -29,6 +29,7 @@ export type WorktreeMergedState = {
 
 export type WorktreePrState = {
   readonly status: PrStatus | null
+  readonly url: string | null
 }
 
 export type WorktreeUpstreamState = {
@@ -228,13 +229,13 @@ const resolveMergedState = async ({
   branch,
   head,
   baseBranch,
-  prStatusByBranch,
+  prStateByBranch,
 }: {
   readonly repoRoot: string
   readonly branch: string | null
   readonly head: string
   readonly baseBranch: string | null
-  readonly prStatusByBranch: ReadonlyMap<string, PrStatus>
+  readonly prStateByBranch: ReadonlyMap<string, PrState>
 }): Promise<WorktreeMergedState> => {
   if (branch === null) {
     return { byAncestry: null, byPR: null, overall: null }
@@ -255,7 +256,7 @@ const resolveMergedState = async ({
     }
   }
 
-  const prStatus = branch === baseBranch ? null : (prStatusByBranch.get(branch) ?? null)
+  const prStatus = branch === baseBranch ? null : (prStateByBranch.get(branch)?.status ?? null)
   let byPR: boolean | null = null
   if (prStatus === "merged") {
     byPR = true
@@ -321,20 +322,22 @@ const resolveMergedState = async ({
   }
 }
 
-const resolvePrState = ({
+const resolveWorktreePrState = ({
   branch,
   baseBranch,
-  prStatusByBranch,
+  prStateByBranch,
 }: {
   readonly branch: string | null
   readonly baseBranch: string | null
-  readonly prStatusByBranch: ReadonlyMap<string, PrStatus>
+  readonly prStateByBranch: ReadonlyMap<string, PrState>
 }): WorktreePrState => {
   if (branch === null || branch === baseBranch) {
-    return { status: null }
+    return { status: null, url: null }
   }
+  const prState = prStateByBranch.get(branch)
   return {
-    status: prStatusByBranch.get(branch) ?? null,
+    status: prState?.status ?? null,
+    url: prState?.url ?? null,
   }
 }
 
@@ -401,23 +404,23 @@ const enrichWorktree = async ({
   repoRoot,
   worktree,
   baseBranch,
-  prStatusByBranch,
+  prStateByBranch,
 }: {
   readonly repoRoot: string
   readonly worktree: GitWorktree
   readonly baseBranch: string | null
-  readonly prStatusByBranch: ReadonlyMap<string, PrStatus>
+  readonly prStateByBranch: ReadonlyMap<string, PrState>
 }): Promise<WorktreeStatus> => {
   const [dirty, locked, merged, upstream] = await Promise.all([
     resolveDirty(worktree.path),
     resolveLockState({ repoRoot, branch: worktree.branch }),
-    resolveMergedState({ repoRoot, branch: worktree.branch, head: worktree.head, baseBranch, prStatusByBranch }),
+    resolveMergedState({ repoRoot, branch: worktree.branch, head: worktree.head, baseBranch, prStateByBranch }),
     resolveUpstreamState(worktree.path),
   ])
-  const pr = resolvePrState({
+  const pr = resolveWorktreePrState({
     branch: worktree.branch,
     baseBranch,
-    prStatusByBranch,
+    prStateByBranch,
   })
 
   return {
@@ -451,7 +454,7 @@ export const collectWorktreeSnapshot = async (
     listGitWorktrees(repoRoot),
     resolveEnableGh(repoRoot),
   ])
-  const prStatusByBranch = await resolvePrStatusByBranchBatch({
+  const prStateByBranch = await resolvePrStateByBranchBatch({
     repoRoot,
     baseBranch,
     branches: worktrees.map((worktree) => worktree.branch),
@@ -459,7 +462,7 @@ export const collectWorktreeSnapshot = async (
   })
   const enriched = await Promise.all(
     worktrees.map(async (worktree) => {
-      return enrichWorktree({ repoRoot, worktree, baseBranch, prStatusByBranch })
+      return enrichWorktree({ repoRoot, worktree, baseBranch, prStateByBranch })
     }),
   )
 

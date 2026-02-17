@@ -1283,6 +1283,50 @@ echo '[]'
     await expect(access(ghLogPath)).rejects.toThrow()
   })
 
+  it("list --json includes pr.url when gh returns PR metadata", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/pr-url"])).toBe(0)
+
+    const shimDir = await mkdtemp(join(tmpdir(), "vde-worktree-gh-shim-pr-url-"))
+    tempDirs.add(shimDir)
+    const ghPath = join(shimDir, "gh")
+    await writeFile(
+      ghPath,
+      `#!/bin/sh
+echo '[{"headRefName":"feature/pr-url","state":"OPEN","mergedAt":null,"updatedAt":"2026-02-17T00:00:00Z","url":"https://github.com/example/repo/pull/987"}]'
+`,
+      "utf8",
+    )
+    await chmod(ghPath, 0o755)
+
+    envBackup.set("PATH", process.env.PATH)
+    process.env.PATH = `${shimDir}:${process.env.PATH ?? ""}`
+
+    stdout.length = 0
+    expect(await cli.run(["list", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      worktrees: Array<{
+        branch: string | null
+        pr: {
+          status: string | null
+          url: string | null
+        }
+      }>
+    }
+    const target = payload.worktrees.find((worktree) => worktree.branch === "feature/pr-url")
+    expect(target).toBeDefined()
+    expect(target?.pr.status).toBe("open")
+    expect(target?.pr.url).toBe("https://github.com/example/repo/pull/987")
+  })
+
   it("list truncates long path in narrow tty and --full-path disables truncation", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)

@@ -385,7 +385,7 @@ const commandHelpEntries: readonly CommandHelp[] = [
     details: [
       "Table output includes branch, path, dirty, lock, merged, PR state, and ahead/behind vs base branch.",
       "By default, long path values are truncated to fit terminal width.",
-      "JSON output includes PR and upstream metadata fields.",
+      "JSON output includes PR status/url and upstream metadata fields.",
     ],
     options: ["--full-path"],
   },

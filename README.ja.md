@@ -142,6 +142,7 @@ vw list --full-path
 
 - Git の porcelain 情報から worktree 一覧を取得
 - branch/path/dirty/lock/merged/PR/upstream を表示
+- JSON メタデータには non-base branch ごとに `pr.status` と `pr.url` を含む
 - テーブル表示では長い `path` は端末幅に合わせて `…` で省略
 - `--full-path` でテーブル表示の path 省略を無効化
 - `--no-gh` 指定時は PR 状態判定をスキップ（`pr.status` は `unknown`、`merged.byPR` は `null`）
@@ -428,6 +429,7 @@ vw completion zsh --install
 - `merged.byPR`: GitHub PR merged 判定（`gh`）
 - `merged.overall`: 最終判定
 - `pr.status`: PR 状態（`none` / `open` / `merged` / `closed_unmerged` / `unknown`）
+- `pr.url`: branch の最新 PR URL（取得不可時は `null`）
 
 `overall` ポリシー:
 
