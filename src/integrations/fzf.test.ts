@@ -83,4 +83,54 @@ describe("selectPathWithFzf", () => {
       }),
     ).rejects.toThrow("cannot override reserved fzf option")
   })
+
+  it("uses tmux popup args when surface=auto and tmux is available", async () => {
+    const result = await selectPathWithFzf({
+      candidates: ["/repo/.worktree/a"],
+      isInteractive: () => true,
+      env: {
+        ...process.env,
+        TMUX: "/tmp/tmux-1000/default,1234,0",
+      },
+      surface: "auto",
+      tmuxPopupOpts: "90%,80%",
+      checkFzfAvailability: async () => true,
+      checkFzfTmuxSupport: async () => true,
+      runFzf: async ({ args }) => {
+        expect(args).toContain("--tmux=90%,80%")
+        return { stdout: "/repo/.worktree/a\n" }
+      },
+    })
+
+    expect(result).toEqual({
+      status: "selected",
+      path: "/repo/.worktree/a",
+    })
+  })
+
+  it("falls back to inline when tmux arg is unsupported at runtime", async () => {
+    const calls: string[][] = []
+    const result = await selectPathWithFzf({
+      candidates: ["/repo/.worktree/a"],
+      isInteractive: () => true,
+      surface: "tmux-popup",
+      checkFzfAvailability: async () => true,
+      runFzf: async ({ args }) => {
+        calls.push(args)
+        if (calls.length === 1) {
+          throw Object.assign(new Error("unknown option --tmux"), {
+            stderr: "unknown option: --tmux",
+          })
+        }
+        return { stdout: "/repo/.worktree/a\n" }
+      },
+    })
+
+    expect(calls[0]?.some((arg) => arg.startsWith("--tmux="))).toBe(true)
+    expect(calls[1]?.some((arg) => arg.startsWith("--tmux="))).toBe(false)
+    expect(result).toEqual({
+      status: "selected",
+      path: "/repo/.worktree/a",
+    })
+  })
 })

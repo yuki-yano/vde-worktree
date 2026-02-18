@@ -10,6 +10,7 @@ import { runGitCommand } from "../git/exec"
 import {
   branchToWorktreeId,
   branchToWorktreePath,
+  ensurePathInsideRoot,
   ensurePathInsideRepo,
   getHooksDirectoryPath,
   getLocksDirectoryPath,
@@ -17,6 +18,7 @@ import {
   getStateDirectoryPath,
   getWorktreeMetaRootPath,
   getWorktreeRootPath,
+  isManagedWorktreePath,
   resolvePathFromCwd,
   resolveRepoContext,
   resolveRepoRelativePath,
@@ -105,6 +107,8 @@ describe("paths", () => {
 
   it("returns expected managed directories", () => {
     expect(getWorktreeRootPath("/repo")).toBe("/repo/.worktree")
+    expect(getWorktreeRootPath("/repo", "/tmp/worktrees")).toBe("/tmp/worktrees")
+    expect(getWorktreeRootPath("/repo", ".custom-worktrees")).toBe("/repo/.custom-worktrees")
     expect(getWorktreeMetaRootPath("/repo")).toBe("/repo/.vde/worktree")
     expect(getHooksDirectoryPath("/repo")).toBe("/repo/.vde/worktree/hooks")
     expect(getLogsDirectoryPath("/repo")).toBe("/repo/.vde/worktree/logs")
@@ -112,6 +116,7 @@ describe("paths", () => {
     expect(getStateDirectoryPath("/repo")).toBe("/repo/.vde/worktree/state")
     expect(branchToWorktreeId("feature/a b")).toBe("feature-a-b--13250f2ab119")
     expect(branchToWorktreePath("/repo", "feature/a b")).toBe("/repo/.worktree/feature/a b")
+    expect(branchToWorktreePath("/repo", "feature/a b", "/tmp/worktrees")).toBe("/tmp/worktrees/feature/a b")
   })
 
   it("ensures path is inside repository", () => {
@@ -152,5 +157,30 @@ describe("paths", () => {
   it("resolves path from cwd", () => {
     expect(resolvePathFromCwd({ cwd: "/repo", path: "a/b" })).toBe("/repo/a/b")
     expect(resolvePathFromCwd({ cwd: "/repo", path: "/tmp/a" })).toBe("/tmp/a")
+  })
+
+  it("ensures path is inside arbitrary root and detects managed worktree paths", () => {
+    expect(ensurePathInsideRoot({ rootPath: "/tmp/worktrees", path: "/tmp/worktrees/feature/a" })).toBe(
+      "/tmp/worktrees/feature/a",
+    )
+    expect(() =>
+      ensurePathInsideRoot({
+        rootPath: "/tmp/worktrees",
+        path: "/tmp/outside",
+      }),
+    ).toThrow("outside allowed root")
+
+    expect(
+      isManagedWorktreePath({
+        worktreePath: "/tmp/worktrees/feature/a",
+        managedWorktreeRoot: "/tmp/worktrees",
+      }),
+    ).toBe(true)
+    expect(
+      isManagedWorktreePath({
+        worktreePath: "/tmp/worktrees",
+        managedWorktreeRoot: "/tmp/worktrees",
+      }),
+    ).toBe(false)
   })
 })

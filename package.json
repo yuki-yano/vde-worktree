@@ -61,7 +61,8 @@
     "citty": "^0.2.0",
     "execa": "^9.6.0",
     "string-width": "^8.1.1",
-    "table": "^6.9.0"
+    "table": "^6.9.0",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",

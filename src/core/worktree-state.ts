@@ -1,7 +1,7 @@
 import { constants as fsConstants } from "node:fs"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { doesGitRefExist, runGitCommand } from "../git/exec"
+import { runGitCommand } from "../git/exec"
 import { resolvePrStateByBranchBatch, type PrState, type PrStatus } from "../integrations/gh"
 import { type GitWorktree, listGitWorktrees } from "../git/worktree"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
@@ -47,40 +47,6 @@ export type WorktreeStatus = {
   readonly merged: WorktreeMergedState
   readonly pr: WorktreePrState
   readonly upstream: WorktreeUpstreamState
-}
-
-const resolveBaseBranch = async (repoRoot: string): Promise<string | null> => {
-  const explicit = await runGitCommand({
-    cwd: repoRoot,
-    args: ["config", "--get", "vde-worktree.baseBranch"],
-    reject: false,
-  })
-  if (explicit.exitCode === 0 && explicit.stdout.trim().length > 0) {
-    return explicit.stdout.trim()
-  }
-
-  for (const candidate of ["main", "master"]) {
-    if (await doesGitRefExist(repoRoot, `refs/heads/${candidate}`)) {
-      return candidate
-    }
-  }
-  return null
-}
-
-const resolveEnableGh = async (repoRoot: string): Promise<boolean> => {
-  const result = await runGitCommand({
-    cwd: repoRoot,
-    args: ["config", "--bool", "--get", "vde-worktree.enableGh"],
-    reject: false,
-  })
-  if (result.exitCode !== 0) {
-    return true
-  }
-  const value = result.stdout.trim().toLowerCase()
-  if (value === "false" || value === "no" || value === "off" || value === "0") {
-    return false
-  }
-  return true
 }
 
 const resolveDirty = async (worktreePath: string): Promise<boolean> => {
@@ -442,23 +408,21 @@ export type WorktreeSnapshot = {
 }
 
 type CollectWorktreeSnapshotOptions = {
+  readonly baseBranch?: string | null
+  readonly ghEnabled?: boolean
   readonly noGh?: boolean
 }
 
 export const collectWorktreeSnapshot = async (
   repoRoot: string,
-  { noGh = false }: CollectWorktreeSnapshotOptions = {},
+  { baseBranch = null, ghEnabled = true, noGh = false }: CollectWorktreeSnapshotOptions = {},
 ): Promise<WorktreeSnapshot> => {
-  const [baseBranch, worktrees, enableGh] = await Promise.all([
-    resolveBaseBranch(repoRoot),
-    listGitWorktrees(repoRoot),
-    resolveEnableGh(repoRoot),
-  ])
+  const worktrees = await listGitWorktrees(repoRoot)
   const prStateByBranch = await resolvePrStateByBranchBatch({
     repoRoot,
     baseBranch,
     branches: worktrees.map((worktree) => worktree.branch),
-    enabled: enableGh && noGh !== true,
+    enabled: ghEnabled && noGh !== true,
   })
   const enriched = await Promise.all(
     worktrees.map(async (worktree) => {

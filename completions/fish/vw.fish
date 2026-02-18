@@ -9,10 +9,24 @@ end
 function __vw_default_branch
   command git rev-parse --is-inside-work-tree >/dev/null 2>/dev/null; or return 0
 
-  set -l configured (command git config --get vde-worktree.baseBranch 2>/dev/null)
-  if test -n "$configured"
-    echo $configured
-    return
+  set -l vw_bin (__vw_current_bin)
+  if test -n "$vw_bin"
+    set -l configured (command $vw_bin list --json 2>/dev/null | command node -e '
+const fs = require("fs")
+let payload
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf8"))
+} catch {
+  process.exit(0)
+}
+if (typeof payload?.baseBranch === "string" && payload.baseBranch.length > 0) {
+  process.stdout.write(payload.baseBranch)
+}
+' 2>/dev/null)
+    if test -n "$configured"
+      echo $configured
+      return
+    end
   end
 
   command git show-ref --verify --quiet refs/heads/main >/dev/null 2>/dev/null
@@ -117,12 +131,17 @@ try {
   process.exit(0)
 }
 const repoRoot = typeof payload?.repoRoot === "string" ? payload.repoRoot : ""
-if (repoRoot.length === 0) process.exit(0)
-const worktreeRoot = path.join(repoRoot, ".worktree")
+const managedWorktreeRoot =
+  typeof payload?.managedWorktreeRoot === "string" && payload.managedWorktreeRoot.length > 0
+    ? payload.managedWorktreeRoot
+    : repoRoot.length > 0
+      ? path.join(repoRoot, ".worktree")
+      : ""
+if (managedWorktreeRoot.length === 0) process.exit(0)
 const worktrees = Array.isArray(payload.worktrees) ? payload.worktrees : []
 for (const worktree of worktrees) {
   if (typeof worktree?.path !== "string" || worktree.path.length === 0) continue
-  const rel = path.relative(worktreeRoot, worktree.path)
+  const rel = path.relative(managedWorktreeRoot, worktree.path)
   if (!rel || rel === "." || rel === ".." || rel.startsWith(`..${path.sep}`)) continue
   const name = rel.split(path.sep).join("/")
   const branch = typeof worktree?.branch === "string" && worktree.branch.length > 0 ? worktree.branch : "(detached)"

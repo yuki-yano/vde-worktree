@@ -1,16 +1,15 @@
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { constants as fsConstants } from "node:fs"
-import { join } from "node:path"
+import { join, relative, sep } from "node:path"
 import {
   getHooksDirectoryPath,
   getLocksDirectoryPath,
   getLogsDirectoryPath,
   getStateDirectoryPath,
   getWorktreeMetaRootPath,
-  getWorktreeRootPath,
 } from "./paths"
 
-const MANAGED_EXCLUDE_BLOCK = `# vde-worktree (managed)\n.worktree/\n.vde/worktree/\n`
+const EXCLUDE_MARKER = "# vde-worktree (managed)"
 
 const DEFAULT_HOOKS: ReadonlyArray<{ name: string; lines: string[] }> = [
   {
@@ -46,7 +45,54 @@ const createHookTemplate = async (hooksDir: string, name: string, lines: readonl
   }
 }
 
-const ensureExcludeBlock = async (repoRoot: string): Promise<void> => {
+const isPathInsideOrEqual = ({
+  rootPath,
+  candidatePath,
+}: {
+  readonly rootPath: string
+  readonly candidatePath: string
+}): boolean => {
+  const rel = relative(rootPath, candidatePath)
+  if (rel.length === 0) {
+    return true
+  }
+  return rel !== ".." && rel.startsWith(`..${sep}`) !== true
+}
+
+const toExcludeEntry = ({
+  repoRoot,
+  managedWorktreeRoot,
+}: {
+  readonly repoRoot: string
+  readonly managedWorktreeRoot: string
+}): string | null => {
+  if (
+    isPathInsideOrEqual({
+      rootPath: repoRoot,
+      candidatePath: managedWorktreeRoot,
+    }) !== true
+  ) {
+    return null
+  }
+
+  const rel = relative(repoRoot, managedWorktreeRoot).split(sep).join("/")
+  const normalized = rel.length === 0 ? "." : rel
+  return normalized.endsWith("/") ? normalized : `${normalized}/`
+}
+
+const ensureExcludeBlock = async ({
+  repoRoot,
+  managedWorktreeRoot,
+}: {
+  readonly repoRoot: string
+  readonly managedWorktreeRoot: string
+}): Promise<void> => {
+  const managedEntry = toExcludeEntry({ repoRoot, managedWorktreeRoot })
+  if (managedEntry === null) {
+    return
+  }
+
+  const managedExcludeBlock = `${EXCLUDE_MARKER}\n${managedEntry}\n.vde/worktree/\n`
   const excludePath = join(repoRoot, ".git", "info", "exclude")
   let current = ""
   try {
@@ -55,12 +101,12 @@ const ensureExcludeBlock = async (repoRoot: string): Promise<void> => {
     current = ""
   }
 
-  if (current.includes(MANAGED_EXCLUDE_BLOCK)) {
+  if (current.includes(managedExcludeBlock)) {
     return
   }
 
   const normalizedCurrent = current.endsWith("\n") || current.length === 0 ? current : `${current}\n`
-  await writeFile(excludePath, `${normalizedCurrent}${MANAGED_EXCLUDE_BLOCK}`, "utf8")
+  await writeFile(excludePath, `${normalizedCurrent}${managedExcludeBlock}`, "utf8")
 }
 
 export const isInitialized = async (repoRoot: string): Promise<boolean> => {
@@ -72,14 +118,20 @@ export const isInitialized = async (repoRoot: string): Promise<boolean> => {
   }
 }
 
-export const initializeRepository = async (repoRoot: string): Promise<InitResult> => {
+export const initializeRepository = async ({
+  repoRoot,
+  managedWorktreeRoot,
+}: {
+  readonly repoRoot: string
+  readonly managedWorktreeRoot: string
+}): Promise<InitResult> => {
   const wasInitialized = await isInitialized(repoRoot)
-  await mkdir(getWorktreeRootPath(repoRoot), { recursive: true })
+  await mkdir(managedWorktreeRoot, { recursive: true })
   await mkdir(getHooksDirectoryPath(repoRoot), { recursive: true })
   await mkdir(getLogsDirectoryPath(repoRoot), { recursive: true })
   await mkdir(getLocksDirectoryPath(repoRoot), { recursive: true })
   await mkdir(getStateDirectoryPath(repoRoot), { recursive: true })
-  await ensureExcludeBlock(repoRoot)
+  await ensureExcludeBlock({ repoRoot, managedWorktreeRoot })
 
   for (const hook of DEFAULT_HOOKS) {
     await createHookTemplate(getHooksDirectoryPath(repoRoot), hook.name, hook.lines)

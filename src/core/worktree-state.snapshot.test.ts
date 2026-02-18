@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 vi.mock("../git/exec", () => {
   return {
     runGitCommand: vi.fn(),
-    doesGitRefExist: vi.fn(),
   }
 })
 
@@ -22,14 +21,13 @@ vi.mock("../integrations/gh", () => {
   }
 })
 
-import { doesGitRefExist, runGitCommand } from "../git/exec"
+import { runGitCommand } from "../git/exec"
 import { listGitWorktrees, type GitWorktree } from "../git/worktree"
 import { resolvePrStateByBranchBatch } from "../integrations/gh"
 import { branchToWorktreeId, getLocksDirectoryPath, getStateDirectoryPath } from "./paths"
 import { collectWorktreeSnapshot } from "./worktree-state"
 
 const mockedRunGitCommand = vi.mocked(runGitCommand)
-const mockedDoesGitRefExist = vi.mocked(doesGitRefExist)
 const mockedListGitWorktrees = vi.mocked(listGitWorktrees)
 const mockedResolvePrStateByBranchBatch = vi.mocked(resolvePrStateByBranchBatch)
 
@@ -69,7 +67,6 @@ afterEach(async () => {
 
 beforeEach(() => {
   mockedRunGitCommand.mockReset()
-  mockedDoesGitRefExist.mockReset()
   mockedListGitWorktrees.mockReset()
   mockedResolvePrStateByBranchBatch.mockReset()
 })
@@ -113,12 +110,6 @@ describe("collectWorktreeSnapshot", () => {
       ]),
     )
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
-      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
-        return gitResult({ stdout: "trunk\n" })
-      }
-      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
-        return gitResult({ stdout: "false\n" })
-      }
       if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor feature/a trunk") {
         return gitResult({ exitCode: 1 })
       }
@@ -134,10 +125,12 @@ describe("collectWorktreeSnapshot", () => {
       throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
     })
 
-    const snapshot = await collectWorktreeSnapshot(repoRoot)
+    const snapshot = await collectWorktreeSnapshot(repoRoot, {
+      baseBranch: "trunk",
+      ghEnabled: false,
+    })
     expect(snapshot.baseBranch).toBe("trunk")
     expect(snapshot.repoRoot).toBe(repoRoot)
-    expect(mockedDoesGitRefExist).not.toHaveBeenCalled()
     expect(mockedResolvePrStateByBranchBatch).toHaveBeenCalledWith({
       repoRoot,
       baseBranch: "trunk",
@@ -191,7 +184,6 @@ describe("collectWorktreeSnapshot", () => {
       } satisfies GitWorktree,
     ])
 
-    mockedDoesGitRefExist.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     mockedResolvePrStateByBranchBatch.mockResolvedValueOnce(
       new Map([
         [
@@ -204,12 +196,6 @@ describe("collectWorktreeSnapshot", () => {
       ]),
     )
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
-      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
-        return gitResult({ exitCode: 1 })
-      }
-      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
-        return gitResult({ exitCode: 1 })
-      }
       if (cwd === detachedPath && args.join(" ") === "status --porcelain") {
         return gitResult({ stdout: "" })
       }
@@ -228,10 +214,10 @@ describe("collectWorktreeSnapshot", () => {
       throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
     })
 
-    const snapshot = await collectWorktreeSnapshot(repoRoot)
+    const snapshot = await collectWorktreeSnapshot(repoRoot, {
+      baseBranch: "master",
+    })
     expect(snapshot.baseBranch).toBe("master")
-    expect(mockedDoesGitRefExist).toHaveBeenNthCalledWith(1, repoRoot, "refs/heads/main")
-    expect(mockedDoesGitRefExist).toHaveBeenNthCalledWith(2, repoRoot, "refs/heads/master")
     expect(mockedResolvePrStateByBranchBatch).toHaveBeenCalledTimes(1)
     expect(mockedResolvePrStateByBranchBatch).toHaveBeenCalledWith({
       repoRoot,
@@ -277,7 +263,6 @@ describe("collectWorktreeSnapshot", () => {
         branch,
       } satisfies GitWorktree,
     ])
-    mockedDoesGitRefExist.mockResolvedValueOnce(true)
     mockedResolvePrStateByBranchBatch.mockResolvedValueOnce(
       new Map([
         [
@@ -290,12 +275,6 @@ describe("collectWorktreeSnapshot", () => {
       ]),
     )
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
-      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
-        return gitResult({ exitCode: 1 })
-      }
-      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
-        return gitResult({ stdout: "off\n" })
-      }
       if (cwd === worktreePath && args.join(" ") === "status --porcelain") {
         return gitResult({ stdout: "" })
       }
@@ -311,7 +290,10 @@ describe("collectWorktreeSnapshot", () => {
       throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
     })
 
-    const snapshot = await collectWorktreeSnapshot(repoRoot)
+    const snapshot = await collectWorktreeSnapshot(repoRoot, {
+      baseBranch: "main",
+      ghEnabled: false,
+    })
     expect(snapshot.baseBranch).toBe("main")
     expect(snapshot.worktrees[0]).toEqual({
       branch: "feature/c",
@@ -365,12 +347,6 @@ describe("collectWorktreeSnapshot", () => {
       ]),
     )
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
-      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
-        return gitResult({ stdout: "main\n" })
-      }
-      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
-        return gitResult({ stdout: "true\n" })
-      }
       if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor feature/no-gh main") {
         return gitResult({ exitCode: 1 })
       }
@@ -383,7 +359,7 @@ describe("collectWorktreeSnapshot", () => {
       throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
     })
 
-    const snapshot = await collectWorktreeSnapshot(repoRoot, { noGh: true })
+    const snapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: true, noGh: true })
     expect(snapshot.baseBranch).toBe("main")
     expect(mockedResolvePrStateByBranchBatch).toHaveBeenCalledWith({
       repoRoot,
@@ -422,12 +398,6 @@ describe("collectWorktreeSnapshot", () => {
       .mockResolvedValueOnce(new Map([["feature/rebase", { status: "unknown", url: null }]]))
       .mockResolvedValueOnce(new Map([["feature/rebase", { status: "unknown", url: null }]]))
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
-      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
-        return gitResult({ stdout: "main\n" })
-      }
-      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
-        return gitResult({ stdout: "false\n" })
-      }
       if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor feature/rebase main") {
         return gitResult({ exitCode: 0 })
       }
@@ -443,8 +413,8 @@ describe("collectWorktreeSnapshot", () => {
       throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
     })
 
-    const beforeRebaseSnapshot = await collectWorktreeSnapshot(repoRoot)
-    const afterRebaseSnapshot = await collectWorktreeSnapshot(repoRoot)
+    const beforeRebaseSnapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: false })
+    const afterRebaseSnapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: false })
 
     expect(beforeRebaseSnapshot.worktrees[0]?.merged.overall).toBe(false)
     expect(afterRebaseSnapshot.worktrees[0]?.merged.overall).toBe(false)
@@ -478,12 +448,6 @@ describe("collectWorktreeSnapshot", () => {
 
     let branchAncestryChecks = 0
     mockedRunGitCommand.mockImplementation(async ({ cwd, args }) => {
-      if (cwd === repoRoot && args.join(" ") === "config --get vde-worktree.baseBranch") {
-        return gitResult({ stdout: "main\n" })
-      }
-      if (cwd === repoRoot && args.join(" ") === "config --bool --get vde-worktree.enableGh") {
-        return gitResult({ stdout: "false\n" })
-      }
       if (cwd === repoRoot && args.join(" ") === "merge-base --is-ancestor feature/integrated main") {
         branchAncestryChecks += 1
         return gitResult({ exitCode: branchAncestryChecks === 1 ? 1 : 0 })
@@ -500,8 +464,8 @@ describe("collectWorktreeSnapshot", () => {
       throw new Error(`unexpected git command: cwd=${cwd} args=${args.join(" ")}`)
     })
 
-    const beforeMergeSnapshot = await collectWorktreeSnapshot(repoRoot)
-    const afterMergeSnapshot = await collectWorktreeSnapshot(repoRoot)
+    const beforeMergeSnapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: false })
+    const afterMergeSnapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: false })
 
     expect(beforeMergeSnapshot.worktrees[0]?.merged.overall).toBe(false)
     expect(afterMergeSnapshot.worktrees[0]?.merged.overall).toBe(true)

@@ -447,7 +447,7 @@ vw completion zsh --install
 - `gh` 未導入
 - `gh auth` 未設定
 - API 失敗
-- `git config vde-worktree.enableGh false`
+- `config.yml` の `github.enabled: false`
 - `--no-gh` を指定して実行
 
 ## JSON 契約
@@ -468,15 +468,39 @@ vw completion zsh --install
 - `message`
 - `details`
 
-## 設定キー（git config）
+## 設定（config.yml）
 
-- `vde-worktree.baseBranch`
-- `vde-worktree.baseRemote`
-- `vde-worktree.enableGh`
-- `vde-worktree.hooksEnabled`
-- `vde-worktree.hookTimeoutMs`
-- `vde-worktree.lockTimeoutMs`
-- `vde-worktree.staleLockTTLSeconds`
+設定ファイルは次の順で読み込みます:
+
+- `$XDG_CONFIG_HOME/vde/worktree/config.yml`（fallback: `~/.config/vde/worktree/config.yml`）
+- `cwd` から Git 境界（`.git`）まで探索した `.vde/worktree/config.yml`
+- `<repoRoot>/.vde/worktree/config.yml`（linked worktree 実行時も参照）
+
+主な設定キー:
+
+```yaml
+paths:
+  worktreeRoot: .worktree
+git:
+  baseBranch: null
+  baseRemote: origin
+github:
+  enabled: true
+hooks:
+  enabled: true
+  timeoutMs: 30000
+locks:
+  timeoutMs: 15000
+  staleLockTTLSeconds: 1800
+list:
+  table:
+    columns: [branch, dirty, merged, pr, locked, ahead, behind, path]
+selector:
+  cd:
+    prompt: "worktree> "
+    surface: auto # auto | inline | tmux-popup
+    tmuxPopupOpts: "80%,70%"
+```
 
 ## 現在のスコープ
 

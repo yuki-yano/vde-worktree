@@ -10,6 +10,8 @@ import type { ArgsDef } from "citty"
 import { execa } from "execa"
 import stringWidth from "string-width"
 import { getBorderCharacters, table } from "table"
+import { loadResolvedConfig } from "../config/loader"
+import { LIST_TABLE_COLUMNS, type ListTableColumn, type ResolvedConfig, type SelectorCdSurface } from "../config/types"
 import {
   DEFAULT_HOOK_TIMEOUT_MS,
   DEFAULT_LOCK_TIMEOUT_MS,
@@ -23,8 +25,10 @@ import { invokeHook, runPostHook, runPreHook, type HookExecutionContext } from "
 import { initializeRepository, isInitialized } from "../core/init"
 import {
   branchToWorktreePath,
+  ensurePathInsideRoot,
   ensurePathInsideRepo,
   getWorktreeRootPath,
+  isManagedWorktreePath,
   resolvePathFromCwd,
   resolveRepoContext,
   resolveRepoRelativePath,
@@ -141,9 +145,7 @@ const CD_FZF_EXTRA_ARGS = [
   "--preview-window=right,60%,wrap",
   "--ansi",
 ] as const
-const LIST_TABLE_COLUMN_COUNT = 8
-const LIST_TABLE_PATH_COLUMN_INDEX = 7
-const LIST_TABLE_PATH_MIN_WIDTH = 12
+const DEFAULT_LIST_TABLE_COLUMNS = [...LIST_TABLE_COLUMNS]
 const LIST_TABLE_CELL_HORIZONTAL_PADDING = 2
 const COMPLETION_SHELLS: readonly CompletionShell[] = ["zsh", "fish"] as const
 const COMPLETION_FILE_BY_SHELL: Readonly<Record<CompletionShell, string>> = {
@@ -167,6 +169,13 @@ const CATPPUCCIN_MOCHA = {
 } as const
 
 const identityColor = (value: string): string => value
+
+const hasDefaultListColumnOrder = (columns: ReadonlyArray<ListTableColumn>): boolean => {
+  if (columns.length !== DEFAULT_LIST_TABLE_COLUMNS.length) {
+    return false
+  }
+  return columns.every((column, index) => column === DEFAULT_LIST_TABLE_COLUMNS[index])
+}
 
 const createCatppuccinTheme = ({ enabled }: { readonly enabled: boolean }): CatppuccinTheme => {
   if (enabled !== true) {
@@ -801,77 +810,24 @@ const ensureHasCommandAfterDoubleDash = ({
   }
 }
 
-const readGitConfigInt = async (repoRoot: string, key: string): Promise<number | undefined> => {
-  const result = await runGitCommand({
+const resolveBaseBranch = async ({
+  repoRoot,
+  config,
+}: {
+  readonly repoRoot: string
+  readonly config: ResolvedConfig
+}): Promise<string> => {
+  if (typeof config.git.baseBranch === "string" && config.git.baseBranch.length > 0) {
+    return config.git.baseBranch
+  }
+
+  const remote = config.git.baseRemote
+  const resolved = await runGitCommand({
     cwd: repoRoot,
-    args: ["config", "--get", key],
+    args: ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`],
     reject: false,
   })
-  if (result.exitCode !== 0) {
-    return undefined
-  }
-
-  const parsed = Number.parseInt(result.stdout.trim(), 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-}
-
-const readGitConfigBoolean = async (repoRoot: string, key: string): Promise<boolean | undefined> => {
-  const result = await runGitCommand({
-    cwd: repoRoot,
-    args: ["config", "--bool", "--get", key],
-    reject: false,
-  })
-  if (result.exitCode !== 0) {
-    return undefined
-  }
-
-  const value = result.stdout.trim().toLowerCase()
-  if (value === "true" || value === "yes" || value === "on" || value === "1") {
-    return true
-  }
-  if (value === "false" || value === "no" || value === "off" || value === "0") {
-    return false
-  }
-  return undefined
-}
-
-const resolveConfiguredBaseRemote = async (repoRoot: string): Promise<string> => {
-  const configured = await runGitCommand({
-    cwd: repoRoot,
-    args: ["config", "--get", "vde-worktree.baseRemote"],
-    reject: false,
-  })
-  if (configured.exitCode === 0 && configured.stdout.trim().length > 0) {
-    return configured.stdout.trim()
-  }
-  return "origin"
-}
-
-const resolveBaseBranch = async (repoRoot: string): Promise<string> => {
-  const configured = await runGitCommand({
-    cwd: repoRoot,
-    args: ["config", "--get", "vde-worktree.baseBranch"],
-    reject: false,
-  })
-  if (configured.exitCode === 0 && configured.stdout.trim().length > 0) {
-    return configured.stdout.trim()
-  }
-
-  const configuredRemote = await resolveConfiguredBaseRemote(repoRoot)
-  const remotesToProbe = [configuredRemote, "origin", "upstream"].filter((value, index, arr) => {
-    return arr.indexOf(value) === index
-  })
-
-  for (const remote of remotesToProbe) {
-    const resolved = await runGitCommand({
-      cwd: repoRoot,
-      args: ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`],
-      reject: false,
-    })
-    if (resolved.exitCode !== 0) {
-      continue
-    }
-
+  if (resolved.exitCode === 0) {
     const raw = resolved.stdout.trim()
     const prefix = `${remote}/`
     if (raw.startsWith(prefix)) {
@@ -886,7 +842,10 @@ const resolveBaseBranch = async (repoRoot: string): Promise<string> => {
   }
 
   throw createCliError("INVALID_ARGUMENT", {
-    message: "Unable to resolve base branch. Configure vde-worktree.baseBranch.",
+    message: "Unable to resolve base branch from config.yml (baseRemote/HEAD -> main/master).",
+    details: {
+      remote,
+    },
   })
 }
 
@@ -1200,11 +1159,11 @@ const resolveLinkTargetPath = ({
 
 const resolveFileCopyTargets = ({
   repoRoot,
-  worktreePath,
+  targetWorktreeRoot,
   relativePath,
 }: {
   readonly repoRoot: string
-  readonly worktreePath: string
+  readonly targetWorktreeRoot: string
   readonly relativePath: string
 }): {
   readonly sourcePath: string
@@ -1216,11 +1175,44 @@ const resolveFileCopyTargets = ({
     relativePath,
   })
   const relativeFromRoot = relative(repoRoot, sourcePath)
-  const destinationPath = ensurePathInsideRepo({
-    repoRoot,
-    path: resolve(worktreePath, relativeFromRoot),
+  const destinationPath = ensurePathInsideRoot({
+    rootPath: targetWorktreeRoot,
+    path: resolve(targetWorktreeRoot, relativeFromRoot),
+    message: "Path is outside target worktree root",
   })
   return { sourcePath, destinationPath, relativeFromRoot }
+}
+
+const resolveTargetWorktreeRootForCopyLink = ({
+  repoContext,
+  snapshot,
+}: {
+  readonly repoContext: { currentWorktreeRoot: string }
+  readonly snapshot: WorktreeSnapshot
+}): string => {
+  const rawTarget = process.env.WT_WORKTREE_PATH ?? repoContext.currentWorktreeRoot
+  const resolvedTarget = resolvePathFromCwd({
+    cwd: repoContext.currentWorktreeRoot,
+    path: rawTarget,
+  })
+
+  const matched = snapshot.worktrees
+    .filter((worktree) => {
+      return worktree.path === resolvedTarget || resolvedTarget.startsWith(`${worktree.path}${sep}`)
+    })
+    .sort((a, b) => b.path.length - a.path.length)[0]
+
+  if (matched === undefined) {
+    throw createCliError("WORKTREE_NOT_FOUND", {
+      message: "copy/link target worktree not found",
+      details: {
+        rawTarget,
+        resolvedTarget,
+      },
+    })
+  }
+
+  return matched.path
 }
 
 const ensureBranchIsNotPrimary = ({
@@ -1240,31 +1232,30 @@ const ensureBranchIsNotPrimary = ({
 }
 
 const toManagedWorktreeName = ({
-  repoRoot,
+  managedWorktreeRoot,
   worktreePath,
 }: {
-  readonly repoRoot: string
+  readonly managedWorktreeRoot: string
   readonly worktreePath: string
 }): string | null => {
-  const worktreeRoot = getWorktreeRootPath(repoRoot)
-  const relativePath = relative(worktreeRoot, worktreePath)
   if (
-    relativePath.length === 0 ||
-    relativePath === "." ||
-    relativePath === ".." ||
-    relativePath.startsWith(`..${sep}`)
+    isManagedWorktreePath({
+      worktreePath,
+      managedWorktreeRoot,
+    }) !== true
   ) {
     return null
   }
+  const relativePath = relative(managedWorktreeRoot, worktreePath)
   return relativePath.split(sep).join("/")
 }
 
 const resolveManagedWorktreePathFromName = ({
-  repoRoot,
+  managedWorktreeRoot,
   optionName,
   worktreeName,
 }: {
-  readonly repoRoot: string
+  readonly managedWorktreeRoot: string
   readonly optionName: "--from" | "--to"
   readonly worktreeName: string
 }): string => {
@@ -1275,18 +1266,11 @@ const resolveManagedWorktreePathFromName = ({
       details: { optionName, worktreeName },
     })
   }
-  if (normalized === ".worktree" || normalized.startsWith(".worktree/") || normalized.startsWith(".worktree\\")) {
-    throw createCliError("INVALID_ARGUMENT", {
-      message: `${optionName} expects vw-managed worktree name (without .worktree/ prefix)`,
-      details: { optionName, worktreeName },
-    })
-  }
 
-  const worktreeRoot = getWorktreeRootPath(repoRoot)
   let resolvedPath: string
   try {
     resolvedPath = resolveRepoRelativePath({
-      repoRoot: worktreeRoot,
+      repoRoot: managedWorktreeRoot,
       relativePath: normalized,
     })
   } catch (error) {
@@ -1297,7 +1281,7 @@ const resolveManagedWorktreePathFromName = ({
     })
   }
 
-  if (resolvedPath === worktreeRoot) {
+  if (resolvedPath === managedWorktreeRoot) {
     throw createCliError("INVALID_ARGUMENT", {
       message: `${optionName} expects vw-managed worktree name`,
       details: { optionName, worktreeName },
@@ -1309,6 +1293,7 @@ const resolveManagedWorktreePathFromName = ({
 
 const resolveManagedNonPrimaryWorktreeByBranch = ({
   repoRoot,
+  managedWorktreeRoot,
   branch,
   worktrees,
   optionName,
@@ -1316,6 +1301,7 @@ const resolveManagedNonPrimaryWorktreeByBranch = ({
   role,
 }: {
   readonly repoRoot: string
+  readonly managedWorktreeRoot: string
   readonly branch: string
   readonly worktrees: readonly WorktreeStatus[]
   readonly optionName: "--from" | "--to"
@@ -1326,13 +1312,13 @@ const resolveManagedNonPrimaryWorktreeByBranch = ({
     return (
       worktree.branch === branch &&
       worktree.path !== repoRoot &&
-      toManagedWorktreeName({ repoRoot, worktreePath: worktree.path }) !== null
+      toManagedWorktreeName({ managedWorktreeRoot, worktreePath: worktree.path }) !== null
     )
   })
 
   if (typeof worktreeName === "string") {
     const resolvedPath = resolveManagedWorktreePathFromName({
-      repoRoot,
+      managedWorktreeRoot,
       optionName,
       worktreeName,
     })
@@ -1360,7 +1346,7 @@ const resolveManagedNonPrimaryWorktreeByBranch = ({
         role,
         optionName,
         candidates: managedCandidates.map((worktree) => {
-          return toManagedWorktreeName({ repoRoot, worktreePath: worktree.path }) ?? worktree.path
+          return toManagedWorktreeName({ managedWorktreeRoot, worktreePath: worktree.path }) ?? worktree.path
         }),
       },
     })
@@ -1602,12 +1588,22 @@ const resolveListColumnContentWidth = ({
 
 const resolveListPathColumnWidth = ({
   rows,
-  disablePathTruncation,
+  columns,
+  truncateMode,
+  fullPath,
+  minWidth,
 }: {
   readonly rows: readonly (readonly string[])[]
-  readonly disablePathTruncation: boolean
+  readonly columns: ReadonlyArray<ListTableColumn>
+  readonly truncateMode: "auto" | "never"
+  readonly fullPath: boolean
+  readonly minWidth: number
 }): number | null => {
-  if (disablePathTruncation) {
+  const pathColumnIndex = columns.indexOf("path")
+  if (pathColumnIndex < 0) {
+    return null
+  }
+  if (fullPath || truncateMode === "never") {
     return null
   }
   if (process.stdout.isTTY !== true) {
@@ -1618,14 +1614,19 @@ const resolveListPathColumnWidth = ({
     return null
   }
 
-  const measuredNonPathWidth = Array.from({ length: LIST_TABLE_PATH_COLUMN_INDEX })
-    .map((_, index) => resolveListColumnContentWidth({ rows, columnIndex: index }))
+  const measuredNonPathWidth = columns
+    .map((_, index) => {
+      if (index === pathColumnIndex) {
+        return 0
+      }
+      return resolveListColumnContentWidth({ rows, columnIndex: index })
+    })
     .reduce((sum, width) => sum + width, 0)
-  const borderWidth = LIST_TABLE_COLUMN_COUNT + 1
-  const paddingWidth = LIST_TABLE_COLUMN_COUNT * LIST_TABLE_CELL_HORIZONTAL_PADDING
+  const borderWidth = columns.length + 1
+  const paddingWidth = columns.length * LIST_TABLE_CELL_HORIZONTAL_PADDING
   const availablePathWidth = Math.floor(terminalColumns) - borderWidth - paddingWidth - measuredNonPathWidth
 
-  return Math.max(LIST_TABLE_PATH_MIN_WIDTH, availablePathWidth)
+  return Math.max(minWidth, availablePathWidth)
 }
 
 const resolveAheadBehindAgainstBaseBranch = async ({
@@ -2104,7 +2105,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
     from: {
       type: "string",
       valueHint: "value",
-      description: "For extract: filesystem path. For absorb: managed worktree name without .worktree/ prefix.",
+      description: "For extract: filesystem path. For absorb: managed worktree name.",
     },
     to: {
       type: "string",
@@ -2282,28 +2283,28 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       const repoContext = await resolveRepoContext(runtimeCwd)
       const repoRoot = repoContext.repoRoot
       repoRootForJson = repoRoot
-
-      const configuredHookTimeoutMs = await readGitConfigInt(repoRoot, "vde-worktree.hookTimeoutMs")
-      const configuredLockTimeoutMs = await readGitConfigInt(repoRoot, "vde-worktree.lockTimeoutMs")
-      const configuredStaleTTL = await readGitConfigInt(repoRoot, "vde-worktree.staleLockTTLSeconds")
-      const configuredHooksEnabled = await readGitConfigBoolean(repoRoot, "vde-worktree.hooksEnabled")
+      const { config: resolvedConfig } = await loadResolvedConfig({
+        cwd: runtimeCwd,
+        repoRoot,
+      })
+      const managedWorktreeRoot = getWorktreeRootPath(repoRoot, resolvedConfig.paths.worktreeRoot)
 
       const runtime: CommonRuntime = {
         command,
         json: jsonEnabled,
-        hooksEnabled: parsedArgs.hooks !== false && configuredHooksEnabled !== false,
-        ghEnabled: parsedArgs.gh !== false,
+        hooksEnabled: parsedArgs.hooks !== false && resolvedConfig.hooks.enabled,
+        ghEnabled: parsedArgs.gh !== false && resolvedConfig.github.enabled,
         strictPostHooks: parsedArgs.strictPostHooks === true,
         hookTimeoutMs: readNumberFromEnvOrDefault({
           rawValue:
             toNumberOption({ value: parsedArgs.hookTimeoutMs, optionName: "--hook-timeout-ms" }) ??
-            configuredHookTimeoutMs,
+            resolvedConfig.hooks.timeoutMs,
           defaultValue: DEFAULT_HOOK_TIMEOUT_MS,
         }),
         lockTimeoutMs: readNumberFromEnvOrDefault({
           rawValue:
             toNumberOption({ value: parsedArgs.lockTimeoutMs, optionName: "--lock-timeout-ms" }) ??
-            configuredLockTimeoutMs,
+            resolvedConfig.locks.timeoutMs,
           defaultValue: DEFAULT_LOCK_TIMEOUT_MS,
         }),
         allowUnsafe,
@@ -2311,12 +2312,20 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       }
 
       const staleLockTTLSeconds = readNumberFromEnvOrDefault({
-        rawValue: configuredStaleTTL,
+        rawValue: resolvedConfig.locks.staleLockTTLSeconds,
         defaultValue: DEFAULT_STALE_LOCK_TTL_SECONDS,
       })
 
       const collectWorktreeSnapshot = async (_ignoredRepoRoot: string): Promise<WorktreeSnapshot> => {
-        return collectWorktreeSnapshotBase(repoRoot, { noGh: runtime.ghEnabled !== true })
+        const baseBranch = await resolveBaseBranch({
+          repoRoot,
+          config: resolvedConfig,
+        })
+        return collectWorktreeSnapshotBase(repoRoot, {
+          baseBranch,
+          ghEnabled: runtime.ghEnabled,
+          noGh: runtime.ghEnabled !== true,
+        })
       }
 
       const runWriteOperation = async <T>(task: () => Promise<T>): Promise<T> => {
@@ -2349,7 +2358,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             stderr,
           })
           await runPreHook({ name: "init", context: hookContext })
-          const initialized = await initializeRepository(repoRoot)
+          const initialized = await initializeRepository({
+            repoRoot,
+            managedWorktreeRoot,
+          })
           await runPostHook({ name: "init", context: hookContext })
           return initialized
         })
@@ -2385,6 +2397,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
                 repoRoot,
                 details: {
                   baseBranch: snapshot.baseBranch,
+                  managedWorktreeRoot,
                   worktrees: snapshot.worktrees,
                 },
               }),
@@ -2396,8 +2409,9 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         const theme = createCatppuccinTheme({
           enabled: shouldUseAnsiColors({ interactive: runtime.isInteractive }),
         })
+        const columns = resolvedConfig.list.table.columns
         const rows: string[][] = [
-          ["branch", "dirty", "merged", "pr", "locked", "ahead", "behind", "path"],
+          [...columns],
           ...(await Promise.all(
             snapshot.worktrees.map(async (worktree) => {
               const distanceFromBase = await resolveAheadBehindAgainstBaseBranch({
@@ -2420,29 +2434,34 @@ export const createCli = (options: CLIOptions = {}): CLI => {
                 isBaseBranch,
               })
               const isCurrent = worktree.path === repoContext.currentWorktreeRoot
-              return [
-                `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`,
-                worktree.dirty ? "dirty" : "clean",
-                mergedState,
-                prState,
-                worktree.locked.value ? "locked" : "-",
-                formatListUpstreamCount(distanceFromBase.ahead),
-                formatListUpstreamCount(distanceFromBase.behind),
-                formatDisplayPath(worktree.path),
-              ]
+              const valuesByColumn: Record<ListTableColumn, string> = {
+                branch: `${isCurrent ? "*" : " "} ${worktree.branch ?? "(detached)"}`,
+                dirty: worktree.dirty ? "dirty" : "clean",
+                merged: mergedState,
+                pr: prState,
+                locked: worktree.locked.value ? "locked" : "-",
+                ahead: formatListUpstreamCount(distanceFromBase.ahead),
+                behind: formatListUpstreamCount(distanceFromBase.behind),
+                path: formatDisplayPath(worktree.path),
+              }
+              return columns.map((column) => valuesByColumn[column])
             }),
           )),
         ]
 
         const pathColumnWidth = resolveListPathColumnWidth({
           rows,
-          disablePathTruncation: parsedArgs.fullPath === true,
+          columns,
+          truncateMode: resolvedConfig.list.table.path.truncate,
+          fullPath: parsedArgs.fullPath === true,
+          minWidth: resolvedConfig.list.table.path.minWidth,
         })
+        const pathColumnIndex = columns.indexOf("path")
         const columnsConfig =
-          pathColumnWidth === null
+          pathColumnWidth === null || pathColumnIndex < 0
             ? undefined
             : {
-                [LIST_TABLE_PATH_COLUMN_INDEX]: {
+                [pathColumnIndex]: {
                   width: pathColumnWidth,
                   truncate: pathColumnWidth,
                 },
@@ -2454,10 +2473,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           },
           columns: columnsConfig,
         })
-        const colorized = colorizeListTable({
-          rendered,
-          theme,
-        })
+        const colorized = hasDefaultListColumnOrder(columns)
+          ? colorizeListTable({
+              rendered,
+              theme,
+            })
+          : rendered.trimEnd()
 
         for (const line of colorized.split("\n")) {
           stdout(line)
@@ -2545,9 +2566,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             })
           }
 
-          const targetPath = branchToWorktreePath(repoRoot, branch)
+          const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
           await ensureTargetPathWritable(targetPath)
-          const baseBranch = await resolveBaseBranch(repoRoot)
+          const baseBranch = await resolveBaseBranch({
+            repoRoot,
+            config: resolvedConfig,
+          })
 
           const hookContext = createHookContext({
             runtime,
@@ -2609,7 +2633,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             return { status: "existing" as const, branch, path: existing.path }
           }
 
-          const targetPath = branchToWorktreePath(repoRoot, branch)
+          const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
           await ensureTargetPathWritable(targetPath)
           const hookContext = createHookContext({
             runtime,
@@ -2628,7 +2652,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               args: ["worktree", "add", targetPath, branch],
             })
           } else {
-            const baseBranch = await resolveBaseBranch(repoRoot)
+            const baseBranch = await resolveBaseBranch({
+              repoRoot,
+              config: resolvedConfig,
+            })
             lifecycleBaseBranch = baseBranch
             await runGitCommand({
               cwd: repoRoot,
@@ -2706,7 +2733,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             })
           }
 
-          const newPath = branchToWorktreePath(repoRoot, newBranch)
+          const newPath = branchToWorktreePath(repoRoot, newBranch, resolvedConfig.paths.worktreeRoot)
           await ensureTargetPathWritable(newPath)
           const hookContext = createHookContext({
             runtime,
@@ -2795,6 +2822,21 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               details: { path: target.path },
             })
           }
+          if (
+            isManagedWorktreePath({
+              worktreePath: target.path,
+              managedWorktreeRoot,
+            }) !== true
+          ) {
+            throw createCliError("WORKTREE_NOT_FOUND", {
+              message: "Target branch is not in managed worktree root",
+              details: {
+                branch: target.branch,
+                path: target.path,
+                managedWorktreeRoot,
+              },
+            })
+          }
 
           validateDeleteSafety({
             target,
@@ -2864,6 +2906,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           const candidates = snapshot.worktrees
             .filter((worktree) => worktree.branch !== null)
             .filter((worktree) => worktree.path !== repoRoot)
+            .filter((worktree) =>
+              isManagedWorktreePath({
+                worktreePath: worktree.path,
+                managedWorktreeRoot,
+              }),
+            )
             .filter((worktree) => worktree.dirty === false)
             .filter((worktree) => worktree.locked.value === false)
             .filter((worktree) => worktree.merged.overall === true)
@@ -2965,7 +3013,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             repoRoot,
             action: "get",
             branch,
-            worktreePath: branchToWorktreePath(repoRoot, branch),
+            worktreePath: branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot),
             stderr,
           })
           await runPreHook({ name: "get", context: hookContext })
@@ -3009,7 +3057,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             }
           }
 
-          const targetPath = branchToWorktreePath(repoRoot, branch)
+          const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
           await ensureTargetPathWritable(targetPath)
           await runGitCommand({
             cwd: repoRoot,
@@ -3098,9 +3146,12 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           }
 
           const branch = sourceWorktree.branch
-          const baseBranch = await resolveBaseBranch(repoRoot)
+          const baseBranch = await resolveBaseBranch({
+            repoRoot,
+            config: resolvedConfig,
+          })
           ensureBranchIsNotPrimary({ branch, baseBranch })
-          const targetPath = branchToWorktreePath(repoRoot, branch)
+          const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
           await ensureTargetPathWritable(targetPath)
 
           const status = await runGitCommand({
@@ -3235,6 +3286,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           const snapshot = await collectWorktreeSnapshot(repoRoot)
           const sourceWorktree = resolveManagedNonPrimaryWorktreeByBranch({
             repoRoot,
+            managedWorktreeRoot,
             branch,
             worktrees: snapshot.worktrees,
             optionName: "--from",
@@ -3383,6 +3435,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           const snapshot = await collectWorktreeSnapshot(repoRoot)
           const targetWorktree = resolveManagedNonPrimaryWorktreeByBranch({
             repoRoot,
+            managedWorktreeRoot,
             branch,
             worktrees: snapshot.worktrees,
             optionName: "--to",
@@ -3689,18 +3742,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
 
       if (command === "copy") {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: Number.MAX_SAFE_INTEGER })
-        const worktreePath = ensurePathInsideRepo({
-          repoRoot,
-          path: resolvePathFromCwd({
-            cwd: repoContext.currentWorktreeRoot,
-            path: process.env.WT_WORKTREE_PATH ?? ".",
-          }),
+        const snapshot = await collectWorktreeSnapshot(repoRoot)
+        const targetWorktreeRoot = resolveTargetWorktreeRootForCopyLink({
+          repoContext,
+          snapshot,
         })
 
         for (const relativePath of commandArgs) {
           const { sourcePath, destinationPath } = resolveFileCopyTargets({
             repoRoot,
-            worktreePath,
+            targetWorktreeRoot,
             relativePath,
           })
           await access(sourcePath, fsConstants.F_OK)
@@ -3722,7 +3773,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
                 repoRoot,
                 details: {
                   copied: commandArgs,
-                  worktreePath,
+                  worktreePath: targetWorktreeRoot,
                 },
               }),
             ),
@@ -3734,19 +3785,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
 
       if (command === "link") {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: Number.MAX_SAFE_INTEGER })
-        const worktreePath = ensurePathInsideRepo({
-          repoRoot,
-          path: resolvePathFromCwd({
-            cwd: repoContext.currentWorktreeRoot,
-            path: process.env.WT_WORKTREE_PATH ?? ".",
-          }),
+        const snapshot = await collectWorktreeSnapshot(repoRoot)
+        const targetWorktreeRoot = resolveTargetWorktreeRootForCopyLink({
+          repoContext,
+          snapshot,
         })
         const fallbackEnabled = parsedArgs.fallback !== false
 
         for (const relativePath of commandArgs) {
           const { sourcePath, destinationPath } = resolveFileCopyTargets({
             repoRoot,
-            worktreePath,
+            targetWorktreeRoot,
             relativePath,
           })
           await access(sourcePath, fsConstants.F_OK)
@@ -3782,7 +3831,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
                 repoRoot,
                 details: {
                   linked: commandArgs,
-                  worktreePath,
+                  worktreePath: targetWorktreeRoot,
                   fallback: fallbackEnabled,
                 },
               }),
@@ -3931,19 +3980,27 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         }
 
         const promptValue = readStringOption(parsedArgsRecord, "prompt")
-        const prompt = typeof promptValue === "string" && promptValue.length > 0 ? promptValue : "worktree> "
-        const fzfExtraArgs = collectOptionValues({
+        const prompt =
+          typeof promptValue === "string" && promptValue.length > 0 ? promptValue : resolvedConfig.selector.cd.prompt
+        const cliFzfExtraArgs = collectOptionValues({
           args: beforeDoubleDash,
           optionNames: ["fzfArg", "fzf-arg"],
         })
+        const mergedConfigFzfArgs = mergeFzfArgs({
+          defaults: resolvedConfig.selector.cd.fzf.extraArgs,
+          extras: cliFzfExtraArgs,
+        })
+        const surface: SelectorCdSurface = resolvedConfig.selector.cd.surface
 
         const selection = await selectPathWithFzf({
           candidates,
           prompt,
           fzfExtraArgs: mergeFzfArgs({
             defaults: CD_FZF_EXTRA_ARGS,
-            extras: fzfExtraArgs,
+            extras: mergedConfigFzfArgs,
           }),
+          surface,
+          tmuxPopupOpts: resolvedConfig.selector.cd.tmuxPopupOpts,
           cwd: repoRoot,
           isInteractive: () => runtime.isInteractive || process.stderr.isTTY === true,
         }).catch((error: unknown) => {

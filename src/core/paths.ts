@@ -10,6 +10,7 @@ export type RepoContext = {
 }
 
 const GIT_DIR_NAME = ".git"
+const DEFAULT_WORKTREE_ROOT = ".worktree"
 const WORKTREE_ID_HASH_LENGTH = 12
 const WORKTREE_ID_SLUG_MAX_LENGTH = 48
 
@@ -61,8 +62,14 @@ export const resolveRepoContext = async (cwd: string): Promise<RepoContext> => {
   }
 }
 
-export const getWorktreeRootPath = (repoRoot: string): string => {
-  return join(repoRoot, ".worktree")
+export const getWorktreeRootPath = (
+  repoRoot: string,
+  configuredWorktreeRoot: string = DEFAULT_WORKTREE_ROOT,
+): string => {
+  if (isAbsolute(configuredWorktreeRoot)) {
+    return resolve(configuredWorktreeRoot)
+  }
+  return resolve(repoRoot, configuredWorktreeRoot)
 }
 
 export const getWorktreeMetaRootPath = (repoRoot: string): string => {
@@ -96,13 +103,40 @@ export const branchToWorktreeId = (branch: string): string => {
   return `${slug}--${hash}`
 }
 
-export const branchToWorktreePath = (repoRoot: string, branch: string): string => {
-  const worktreeRoot = getWorktreeRootPath(repoRoot)
+export const branchToWorktreePath = (
+  repoRoot: string,
+  branch: string,
+  configuredWorktreeRoot: string = DEFAULT_WORKTREE_ROOT,
+): string => {
+  const worktreeRoot = getWorktreeRootPath(repoRoot, configuredWorktreeRoot)
   const targetPath = join(worktreeRoot, ...branch.split("/"))
-  return ensurePathInsideRepo({
-    repoRoot: worktreeRoot,
+  return ensurePathInsideRoot({
+    rootPath: worktreeRoot,
     path: targetPath,
+    message: "Path is outside managed worktree root",
   })
+}
+
+export const ensurePathInsideRoot = ({
+  rootPath,
+  path,
+  message = "Path is outside allowed root",
+}: {
+  readonly rootPath: string
+  readonly path: string
+  readonly message?: string
+}): string => {
+  const rel = relative(rootPath, path)
+  if (rel === "") {
+    return path
+  }
+  if (rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw createCliError("PATH_OUTSIDE_REPO", {
+      message,
+      details: { rootPath, path },
+    })
+  }
+  return path
 }
 
 export const ensurePathInsideRepo = ({
@@ -112,17 +146,11 @@ export const ensurePathInsideRepo = ({
   readonly repoRoot: string
   readonly path: string
 }): string => {
-  const rel = relative(repoRoot, path)
-  if (rel === "") {
-    return path
-  }
-  if (rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw createCliError("PATH_OUTSIDE_REPO", {
-      message: "Path is outside repository root",
-      details: { repoRoot, path },
-    })
-  }
-  return path
+  return ensurePathInsideRoot({
+    rootPath: repoRoot,
+    path,
+    message: "Path is outside repository root",
+  })
 }
 
 export const resolveRepoRelativePath = ({
@@ -151,4 +179,18 @@ export const resolvePathFromCwd = ({ cwd, path }: { readonly cwd: string; readon
     return path
   }
   return resolve(cwd, path)
+}
+
+export const isManagedWorktreePath = ({
+  worktreePath,
+  managedWorktreeRoot,
+}: {
+  readonly worktreePath: string
+  readonly managedWorktreeRoot: string
+}): boolean => {
+  const rel = relative(managedWorktreeRoot, worktreePath)
+  if (rel === "" || rel === "." || rel === "..") {
+    return false
+  }
+  return rel.startsWith(`..${sep}`) !== true
 }

@@ -442,7 +442,7 @@ Overall policy:
 - `byPR === false` or explicit lifecycle "not merged" evidence => `overall = false`
 - otherwise `overall = null`
 
-`byPR` becomes `null` and `pr.status` becomes `unknown` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, `vde-worktree.enableGh=false`, or `--no-gh`).
+`byPR` becomes `null` and `pr.status` becomes `unknown` when PR lookup is unavailable (for example: `gh` missing, auth missing, API error, `github.enabled=false` in config.yml, or `--no-gh`).
 
 ## JSON Contract
 
@@ -462,17 +462,39 @@ Error shape:
 - `message`
 - `details`
 
-## Configuration Keys
+## Configuration (`config.yml`)
 
-Configured via `git config`:
+Configuration is loaded from:
 
-- `vde-worktree.baseBranch`
-- `vde-worktree.baseRemote`
-- `vde-worktree.enableGh`
-- `vde-worktree.hooksEnabled`
-- `vde-worktree.hookTimeoutMs`
-- `vde-worktree.lockTimeoutMs`
-- `vde-worktree.staleLockTTLSeconds`
+- `$XDG_CONFIG_HOME/vde/worktree/config.yml` (fallback: `~/.config/vde/worktree/config.yml`)
+- `.vde/worktree/config.yml` discovered from `cwd` to the local Git boundary (`.git`)
+- `<repoRoot>/.vde/worktree/config.yml` (always considered, including linked worktree execution)
+
+Supported keys (examples):
+
+```yaml
+paths:
+  worktreeRoot: .worktree
+git:
+  baseBranch: null
+  baseRemote: origin
+github:
+  enabled: true
+hooks:
+  enabled: true
+  timeoutMs: 30000
+locks:
+  timeoutMs: 15000
+  staleLockTTLSeconds: 1800
+list:
+  table:
+    columns: [branch, dirty, merged, pr, locked, ahead, behind, path]
+selector:
+  cd:
+    prompt: "worktree> "
+    surface: auto # auto | inline | tmux-popup
+    tmuxPopupOpts: "80%,70%"
+```
 
 ## Current Scope
 

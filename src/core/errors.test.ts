@@ -46,6 +46,7 @@ describe("errors", () => {
     const cases: ReadonlyArray<[ErrorCode, number]> = [
       ["UNSAFE_FLAG_REQUIRED", 4],
       ["WORKTREE_NOT_FOUND", 4],
+      ["INVALID_CONFIG", 3],
       ["DEPENDENCY_MISSING", 5],
       ["GIT_COMMAND_FAILED", 20],
     ]

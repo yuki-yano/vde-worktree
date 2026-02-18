@@ -2,7 +2,7 @@ import { execa } from "execa"
 
 const FZF_BINARY = "fzf"
 const FZF_CHECK_TIMEOUT_MS = 5_000
-const RESERVED_FZF_ARGS = new Set(["prompt", "layout", "height", "border"])
+const RESERVED_FZF_ARGS = new Set(["prompt", "layout", "height", "border", "tmux"])
 const ANSI_ESCAPE_SEQUENCE_PATTERN = String.raw`\u001B\[[0-?]*[ -/]*[@-~]`
 const ANSI_ESCAPE_SEQUENCE_REGEX = new RegExp(ANSI_ESCAPE_SEQUENCE_PATTERN, "g")
 
@@ -35,11 +35,14 @@ export type SelectPathWithFzfResult =
 export type SelectPathWithFzfInput = {
   readonly candidates: ReadonlyArray<string>
   readonly prompt?: string
+  readonly surface?: "auto" | "inline" | "tmux-popup"
+  readonly tmuxPopupOpts?: string
   readonly fzfExtraArgs?: ReadonlyArray<string>
   readonly cwd?: string
   readonly env?: NodeJS.ProcessEnv
   readonly isInteractive?: () => boolean
   readonly checkFzfAvailability?: () => Promise<boolean>
+  readonly checkFzfTmuxSupport?: () => Promise<boolean>
   readonly runFzf?: (input: RunFzfInput) => Promise<RunFzfResult>
 }
 
@@ -108,6 +111,17 @@ const defaultCheckFzfAvailability = async (): Promise<boolean> => {
   }
 }
 
+const defaultCheckFzfTmuxSupport = async (): Promise<boolean> => {
+  try {
+    const result = await execa(FZF_BINARY, ["--help"], {
+      timeout: FZF_CHECK_TIMEOUT_MS,
+    })
+    return result.stdout.includes("--tmux")
+  } catch {
+    return false
+  }
+}
+
 const defaultRunFzf = async ({ args, input, cwd, env }: RunFzfInput): Promise<RunFzfResult> => {
   const result = await execa(FZF_BINARY, args, {
     input,
@@ -127,14 +141,54 @@ const ensureFzfAvailable = async (checkFzfAvailability: () => Promise<boolean>):
   throw new Error("fzf is required for interactive selection")
 }
 
+const shouldTryTmuxPopup = async ({
+  surface,
+  env,
+  checkFzfTmuxSupport,
+}: {
+  readonly surface: "auto" | "inline" | "tmux-popup"
+  readonly env: NodeJS.ProcessEnv
+  readonly checkFzfTmuxSupport: () => Promise<boolean>
+}): Promise<boolean> => {
+  if (surface === "inline") {
+    return false
+  }
+  if (surface === "tmux-popup") {
+    return true
+  }
+  if (typeof env.TMUX !== "string" || env.TMUX.length === 0) {
+    return false
+  }
+  try {
+    return await checkFzfTmuxSupport()
+  } catch {
+    return false
+  }
+}
+
+const isTmuxUnknownOptionError = (error: unknown): boolean => {
+  const execaError = error as ExecaLikeError & {
+    readonly stderr?: string
+    readonly stdout?: string
+    readonly shortMessage?: string
+  }
+  const text = [execaError.message, execaError.shortMessage, execaError.stderr, execaError.stdout]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join("\n")
+  return /unknown option.*--tmux|--tmux.*unknown option/i.test(text)
+}
+
 export const selectPathWithFzf = async ({
   candidates,
   prompt = "worktree> ",
+  surface = "inline",
+  tmuxPopupOpts = "80%,70%",
   fzfExtraArgs = [],
   cwd = process.cwd(),
   env = process.env,
   isInteractive = (): boolean => process.stdout.isTTY === true && process.stderr.isTTY === true,
   checkFzfAvailability = defaultCheckFzfAvailability,
+  checkFzfTmuxSupport = defaultCheckFzfTmuxSupport,
   runFzf = defaultRunFzf,
 }: SelectPathWithFzfInput): Promise<SelectPathWithFzfResult> => {
   if (candidates.length === 0) {
@@ -146,7 +200,13 @@ export const selectPathWithFzf = async ({
   }
 
   await ensureFzfAvailable(checkFzfAvailability)
-  const args = buildFzfArgs({ prompt, fzfExtraArgs })
+  const baseArgs = buildFzfArgs({ prompt, fzfExtraArgs })
+  const tryTmuxPopup = await shouldTryTmuxPopup({
+    surface,
+    env,
+    checkFzfTmuxSupport,
+  })
+  const args = tryTmuxPopup ? [...baseArgs, `--tmux=${tmuxPopupOpts}`] : baseArgs
   const input = buildFzfInput(candidates)
   if (input.length === 0) {
     throw new Error("All candidates are empty after sanitization")
@@ -154,9 +214,9 @@ export const selectPathWithFzf = async ({
 
   const candidateSet = new Set(input.split("\n").map((candidate) => stripAnsi(candidate)))
 
-  try {
+  const runWithValidation = async (fzfArgs: string[]): Promise<SelectPathWithFzfResult> => {
     const result = await runFzf({
-      args,
+      args: fzfArgs,
       input,
       cwd,
       env,
@@ -175,7 +235,22 @@ export const selectPathWithFzf = async ({
       status: "selected",
       path: selectedPath,
     }
+  }
+
+  try {
+    return await runWithValidation(args)
   } catch (error) {
+    if (tryTmuxPopup && isTmuxUnknownOptionError(error)) {
+      try {
+        return await runWithValidation(baseArgs)
+      } catch (fallbackError) {
+        const fallbackExecaError = fallbackError as ExecaLikeError
+        if (fallbackExecaError.exitCode === 130) {
+          return { status: "cancelled" }
+        }
+        throw fallbackError
+      }
+    }
     const execaError = error as ExecaLikeError
     if (execaError.exitCode === 130) {
       return { status: "cancelled" }

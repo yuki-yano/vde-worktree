@@ -149,6 +149,9 @@ describe("createCli", () => {
             "1:branch:_vw_complete_worktree_branches_with_meta" \\`)
     expect(text).toContain("--to[Target managed worktree name]:worktree-name:_vw_complete_managed_worktree_names")
     expect(text).toContain("--allow-shared[Allow checkout when branch is attached by another worktree]")
+    expect(text).toContain("list --json 2>/dev/null | command node -e")
+    expect(text).toContain("payload?.baseBranch")
+    expect(text).toContain("payload?.managedWorktreeRoot")
     expect(stderr).toEqual([])
   })
 
@@ -196,6 +199,9 @@ describe("createCli", () => {
     expect(installed).toContain(
       'complete -c $__vw_bin -n "__fish_seen_subcommand_from use" -l allow-shared -d "Allow checkout when branch is attached by another worktree"',
     )
+    expect(installed).toContain("list --json 2>/dev/null | command node -e")
+    expect(installed).toContain("payload?.baseBranch")
+    expect(installed).toContain("payload?.managedWorktreeRoot")
     expect(expectSingleStdoutLine(stdout)).toContain(targetPath)
     expect(stderr).toEqual([])
   })
@@ -705,6 +711,40 @@ echo invoked > "${marker}"
     expect(applyPayload.deleted).toContain("feature/gone")
   })
 
+  it("gone excludes unmanaged worktrees even when merged", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const managedRoot = await mkdtemp(join(tmpdir(), "vde-worktree-managed-gone-"))
+    const unmanagedRoot = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-gone-"))
+    tempDirs.add(managedRoot)
+    tempDirs.add(unmanagedRoot)
+    await mkdir(join(repoRoot, ".vde", "worktree"), { recursive: true })
+    await writeFile(
+      join(repoRoot, ".vde", "worktree", "config.yml"),
+      ["paths:", `  worktreeRoot: ${managedRoot}`].join("\n"),
+      "utf8",
+    )
+
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    await runGit(repoRoot, ["branch", "feature/gone-unmanaged", "main"])
+    await runGit(repoRoot, ["worktree", "add", unmanagedRoot, "feature/gone-unmanaged"])
+
+    stdout.length = 0
+    expect(await cli.run(["gone", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      candidates: string[]
+      dryRun: boolean
+    }
+    expect(payload.dryRun).toBe(true)
+    expect(payload.candidates).not.toContain("feature/gone-unmanaged")
+  })
+
   it("get creates tracked local branch worktree from remote branch", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
@@ -897,7 +937,7 @@ git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-absorb" >/dev/null
     expect(await readFile(join(repoRoot, "stable.txt"), "utf8")).toBe("from-source\n")
   })
 
-  it("absorb rejects --from with .worktree/ prefix", async () => {
+  it("absorb rejects --from when managed worktree name does not resolve", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
     const stderr: string[] = []
@@ -921,8 +961,8 @@ git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-absorb" >/dev/null
         "--allow-agent",
         "--allow-unsafe",
       ]),
-    ).toBe(3)
-    expect(stderr.some((line) => line.includes("--from expects vw-managed worktree name"))).toBe(true)
+    ).toBe(4)
+    expect(stderr.some((line) => line.includes("source worktree not found"))).toBe(true)
   })
 
   it("absorb auto-restores source changes when pre-hook fails", async () => {
@@ -1049,7 +1089,7 @@ git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-unabsorb" >/dev/null
     expect(await readFile(join(targetPath, "stable-unabsorb.txt"), "utf8")).toBe("from-primary\n")
   })
 
-  it("unabsorb rejects --to with .worktree/ prefix", async () => {
+  it("unabsorb rejects --to when managed worktree name does not resolve", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
     const stderr: string[] = []
@@ -1075,8 +1115,8 @@ git -C "$WT_REPO_ROOT" stash push -u -m "hook-pre-unabsorb" >/dev/null
         "--allow-agent",
         "--allow-unsafe",
       ]),
-    ).toBe(3)
-    expect(stderr.some((line) => line.includes("--to expects vw-managed worktree name"))).toBe(true)
+    ).toBe(4)
+    expect(stderr.some((line) => line.includes("target worktree not found"))).toBe(true)
   })
 
   it("unabsorb auto-restores primary changes when pre-hook fails", async () => {
@@ -1241,6 +1281,56 @@ exit 1
     expect(["none", "open", "merged", "closed_unmerged", "unknown"]).toContain(featureCells[3] ?? "")
     expect(featureCells[5]).toBe("1")
     expect(featureCells[6]).toBe("0")
+  })
+
+  it("list reflects config.yml columns and list --json includes managedWorktreeRoot", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const managedRoot = await mkdtemp(join(tmpdir(), "vde-worktree-managed-root-"))
+    tempDirs.add(managedRoot)
+    await mkdir(join(repoRoot, ".vde", "worktree"), { recursive: true })
+    await writeFile(
+      join(repoRoot, ".vde", "worktree", "config.yml"),
+      ["paths:", `  worktreeRoot: ${managedRoot}`, "list:", "  table:", "    columns: [branch, locked]"].join("\n"),
+      "utf8",
+    )
+
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    const exclude = await readFile(join(repoRoot, ".git", "info", "exclude"), "utf8")
+    expect(exclude.includes("# vde-worktree (managed)")).toBe(false)
+    expect(await cli.run(["switch", "feature/config-columns"])).toBe(0)
+    const switchedPath = expectSingleStdoutLine(stdout.slice(-1))
+    expect(switchedPath.startsWith(managedRoot)).toBe(true)
+
+    stdout.length = 0
+    expect(await cli.run(["list"])).toBe(0)
+    const listText = stdout.join("\n")
+    expect(listText).toContain("branch")
+    expect(listText).toContain("locked")
+    expect(listText).not.toContain("│ path")
+
+    stdout.length = 0
+    expect(await cli.run(["list", "--full-path"])).toBe(0)
+    expect(stdout.join("\n")).not.toContain("│ path")
+
+    stdout.length = 0
+    expect(await cli.run(["list", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      managedWorktreeRoot: string
+      worktrees: Array<{ branch: string | null; path: string }>
+    }
+    expect(payload.managedWorktreeRoot).toBe(managedRoot)
+    const managedFeature = payload.worktrees.find((worktree) => worktree.branch === "feature/config-columns")
+    expect(managedFeature).toBeDefined()
+    const resolvedManagedRoot = await realpath(payload.managedWorktreeRoot)
+    const resolvedManagedFeaturePath = await realpath((managedFeature as { path: string }).path)
+    expect(resolvedManagedFeaturePath.startsWith(resolvedManagedRoot)).toBe(true)
   })
 
   it("list --no-gh skips gh command invocation", async () => {
@@ -1411,6 +1501,22 @@ echo '[{"headRefName":"feature/pr-url","state":"OPEN","mergedAt":null,"updatedAt
     expect(text).toMatch(/\u001b\[38;2;/)
   })
 
+  it("returns INVALID_CONFIG when config.yml schema is invalid", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    await mkdir(join(repoRoot, ".vde", "worktree"), { recursive: true })
+    await writeFile(join(repoRoot, ".vde", "worktree", "config.yml"), "list:\n  table:\n    unknown: true\n", "utf8")
+
+    const stderr: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stderr: (line) => stderr.push(line),
+    })
+
+    expect(await cli.run(["list"])).toBe(3)
+    expect(stderr.some((line) => line.includes("INVALID_CONFIG"))).toBe(true)
+  })
+
   it("returns INVALID_REMOTE_BRANCH_FORMAT for malformed get target", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
@@ -1551,6 +1657,62 @@ echo '[{"headRefName":"feature/pr-url","state":"OPEN","mergedAt":null,"updatedAt
       "--preview-window=right,60%,wrap",
       "--ansi",
       "--nth=1",
+    ])
+  })
+
+  it("cd reads selector settings from config.yml when CLI flags are omitted", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    await mkdir(join(repoRoot, ".vde", "worktree"), { recursive: true })
+    await writeFile(
+      join(repoRoot, ".vde", "worktree", "config.yml"),
+      [
+        "selector:",
+        "  cd:",
+        '    prompt: "cfg> "',
+        "    surface: auto",
+        '    tmuxPopupOpts: "70%,60%"',
+        "    fzf:",
+        "      extraArgs:",
+        "        - --cycle",
+      ].join("\n"),
+      "utf8",
+    )
+
+    const stdout: string[] = []
+    const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(
+      async ({ candidates }) => {
+        return {
+          status: "selected",
+          path: candidates[0] ?? "",
+        }
+      },
+    )
+
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+      selectPathWithFzf,
+      isInteractive: () => true,
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    expect(await cli.run(["switch", "feature/cd-config"])).toBe(0)
+    stdout.length = 0
+    expect(await cli.run(["cd", "--json"])).toBe(0)
+
+    const firstCall = selectPathWithFzf.mock.calls[0]?.[0] ?? null
+    expect(firstCall).not.toBeNull()
+    expect((firstCall as SelectPathWithFzfInput).prompt).toBe("cfg> ")
+    expect((firstCall as SelectPathWithFzfInput).surface).toBe("auto")
+    expect((firstCall as SelectPathWithFzfInput).tmuxPopupOpts).toBe("70%,60%")
+    expect((firstCall as SelectPathWithFzfInput).fzfExtraArgs).toEqual([
+      "--delimiter=\t",
+      "--with-nth=1",
+      "--preview=printf '%b' {3}",
+      "--preview-window=right,60%,wrap",
+      "--ansi",
+      "--cycle",
     ])
   })
 
