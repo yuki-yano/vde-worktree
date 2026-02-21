@@ -61,15 +61,14 @@ const NOT_HANDLED: DispatchNotHandled = {
   handled: false,
 }
 
-export const dispatchReadOnlyCommands = async <
-  CommandHelpEntry,
-  CompletionShell extends string,
->(
+export const dispatchReadOnlyCommands = async <CommandHelpEntry, CompletionShell extends string>(
   input: DispatchReadOnlyCommandsInput<CommandHelpEntry, CompletionShell>,
 ): Promise<DispatchReadOnlyCommandsResult> => {
   if (input.parsedArgs.help === true) {
     const commandHelpTarget =
-      typeof input.command === "string" && input.command !== "unknown" && input.command !== "help" ? input.command : null
+      typeof input.command === "string" && input.command !== "unknown" && input.command !== "help"
+        ? input.command
+        : null
     if (commandHelpTarget !== null) {
       const entry = input.findCommandHelp(commandHelpTarget)
       if (entry !== undefined) {

@@ -1,7 +1,7 @@
-import { constants as fsConstants } from "node:fs"
-import { access, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { rm } from "node:fs/promises"
 import { hostname } from "node:os"
 import { join } from "node:path"
+import { readJsonRecord, writeJsonAtomically } from "./json-storage"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
 
 export type WorktreeLockRecord = {
@@ -21,48 +21,17 @@ type ParsedLock = {
   readonly record: WorktreeLockRecord | null
 }
 
-const parseLock = (content: string): ParsedLock => {
-  try {
-    const parsed = JSON.parse(content) as Partial<WorktreeLockRecord>
-    if (
-      parsed.schemaVersion !== 1 ||
-      typeof parsed.branch !== "string" ||
-      typeof parsed.worktreeId !== "string" ||
-      typeof parsed.reason !== "string" ||
-      typeof parsed.owner !== "string" ||
-      typeof parsed.host !== "string" ||
-      typeof parsed.pid !== "number" ||
-      typeof parsed.createdAt !== "string" ||
-      typeof parsed.updatedAt !== "string"
-    ) {
-      return {
-        valid: false,
-        record: null,
-      }
-    }
-
-    return {
-      valid: true,
-      record: parsed as WorktreeLockRecord,
-    }
-  } catch {
-    return {
-      valid: false,
-      record: null,
-    }
-  }
-}
-
-const writeJsonAtomically = async ({
-  filePath,
-  payload,
-}: {
-  readonly filePath: string
-  readonly payload: Record<string, unknown>
-}): Promise<void> => {
-  const tmpPath = `${filePath}.tmp-${String(process.pid)}-${String(Date.now())}`
-  await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8")
-  await rename(tmpPath, filePath)
+export const isWorktreeLockRecord = (parsed: Partial<WorktreeLockRecord>): parsed is WorktreeLockRecord => {
+  return (
+    typeof parsed.branch === "string" &&
+    typeof parsed.worktreeId === "string" &&
+    typeof parsed.reason === "string" &&
+    typeof parsed.owner === "string" &&
+    typeof parsed.host === "string" &&
+    typeof parsed.pid === "number" &&
+    typeof parsed.createdAt === "string" &&
+    typeof parsed.updatedAt === "string"
+  )
 }
 
 const lockFilePath = (repoRoot: string, branch: string): string => {
@@ -77,33 +46,11 @@ export const readWorktreeLock = async ({
   readonly branch: string
 }): Promise<ParsedLock & { path: string; exists: boolean }> => {
   const path = lockFilePath(repoRoot, branch)
-  try {
-    await access(path, fsConstants.F_OK)
-  } catch {
-    return {
-      path,
-      exists: false,
-      valid: true,
-      record: null,
-    }
-  }
-
-  try {
-    const content = await readFile(path, "utf8")
-    const parsed = parseLock(content)
-    return {
-      path,
-      exists: true,
-      ...parsed,
-    }
-  } catch {
-    return {
-      path,
-      exists: true,
-      valid: false,
-      record: null,
-    }
-  }
+  return readJsonRecord<WorktreeLockRecord>({
+    path,
+    schemaVersion: 1,
+    validate: isWorktreeLockRecord,
+  })
 }
 
 export const upsertWorktreeLock = async ({

@@ -1,9 +1,8 @@
-import { constants as fsConstants } from "node:fs"
-import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runGitCommand } from "../git/exec"
 import { resolvePrStateByBranchBatch, type PrState, type PrStatus } from "../integrations/gh"
 import { type GitWorktree, listGitWorktrees } from "../git/worktree"
+import { readJsonRecord } from "./json-storage"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
 import { type WorktreeMergeLifecycleRecord, upsertWorktreeMergeLifecycle } from "./worktree-merge-lifecycle"
 
@@ -49,6 +48,16 @@ export type WorktreeStatus = {
   readonly upstream: WorktreeUpstreamState
 }
 
+const isLockPayload = (parsed: Partial<LockPayload>): parsed is LockPayload => {
+  return (
+    typeof parsed.branch === "string" &&
+    typeof parsed.worktreeId === "string" &&
+    typeof parsed.reason === "string" &&
+    parsed.reason.length > 0 &&
+    (typeof parsed.owner === "undefined" || typeof parsed.owner === "string")
+  )
+}
+
 const resolveDirty = async (worktreePath: string): Promise<boolean> => {
   const status = await runGitCommand({
     cwd: worktreePath,
@@ -56,26 +65,6 @@ const resolveDirty = async (worktreePath: string): Promise<boolean> => {
     reject: false,
   })
   return status.stdout.trim().length > 0
-}
-
-const parseLockPayload = (content: string): LockPayload | null => {
-  try {
-    const parsed = JSON.parse(content) as Partial<LockPayload>
-    if (parsed.schemaVersion !== 1) {
-      return null
-    }
-    if (
-      typeof parsed.branch !== "string" ||
-      typeof parsed.worktreeId !== "string" ||
-      typeof parsed.reason !== "string" ||
-      parsed.reason.length === 0
-    ) {
-      return null
-    }
-    return parsed as LockPayload
-  } catch {
-    return null
-  }
 }
 
 const resolveLockState = async ({
@@ -91,33 +80,26 @@ const resolveLockState = async ({
 
   const id = branchToWorktreeId(branch)
   const lockPath = join(getLocksDirectoryPath(repoRoot), `${id}.json`)
-  try {
-    await access(lockPath, fsConstants.F_OK)
-  } catch {
+  const lock = await readJsonRecord<LockPayload>({
+    path: lockPath,
+    schemaVersion: 1,
+    validate: isLockPayload,
+  })
+  if (lock.exists !== true) {
     return { value: false, reason: null, owner: null }
   }
-
-  try {
-    const content = await readFile(lockPath, "utf8")
-    const lock = parseLockPayload(content)
-    if (lock === null) {
-      return {
-        value: true,
-        reason: "invalid lock metadata",
-        owner: null,
-      }
-    }
-    return {
-      value: true,
-      reason: lock.reason,
-      owner: typeof lock.owner === "string" && lock.owner.length > 0 ? lock.owner : null,
-    }
-  } catch {
+  if (lock.valid !== true || lock.record === null) {
     return {
       value: true,
       reason: "invalid lock metadata",
       owner: null,
     }
+  }
+
+  return {
+    value: true,
+    reason: lock.record.reason,
+    owner: typeof lock.record.owner === "string" && lock.record.owner.length > 0 ? lock.record.owner : null,
   }
 }
 
@@ -174,7 +156,9 @@ const hasLifecycleDivergedHead = (
   return lifecycle.everDiverged === true && lifecycle.lastDivergedHead !== null
 }
 
-const parseWorkReflogHeads = (reflogOutput: string): { readonly heads: string[]; readonly latestHead: string | null } => {
+const parseWorkReflogHeads = (
+  reflogOutput: string,
+): { readonly heads: string[]; readonly latestHead: string | null } => {
   const heads: string[] = []
   let latestHead: string | null = null
 
@@ -311,8 +295,7 @@ const resolveMergedState = async ({
   const mergeProbeRepository = createMergeProbeRepository({ repoRoot })
   const mergeLifecycleRepository = createMergeLifecycleRepository({ repoRoot })
 
-  const byAncestry =
-    baseBranch === null ? null : await mergeProbeRepository.probeAncestry({ branch, baseBranch })
+  const byAncestry = baseBranch === null ? null : await mergeProbeRepository.probeAncestry({ branch, baseBranch })
 
   const byPR = resolveMergedByPr({
     branch,
