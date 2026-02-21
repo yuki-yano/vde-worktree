@@ -35,13 +35,7 @@ export class GhCommandError extends Error {
     readonly stderr: string
   }
 
-  constructor({
-    exitCode,
-    stderr,
-  }: {
-    readonly exitCode: number
-    readonly stderr: string
-  }) {
+  constructor({ exitCode, stderr }: { readonly exitCode: number; readonly stderr: string }) {
     super(`gh command failed with exitCode=${String(exitCode)}`)
     this.name = "GhCommandError"
     this.details = {
