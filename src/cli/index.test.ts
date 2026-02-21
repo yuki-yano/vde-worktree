@@ -5,6 +5,7 @@ import { execa } from "execa"
 import stringWidth from "string-width"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { branchToWorktreeId } from "../core/paths"
+import { FzfDependencyError } from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createCli } from "./index"
 
@@ -1195,6 +1196,7 @@ exit 1
         expectedMessage: "Missing value for option: --hook-timeout-ms",
       },
       { args: ["-x"], expectedMessage: "Unknown option: -x" },
+      { args: ["-xv"], expectedMessage: "Unknown option: -x" },
     ]
 
     for (const testCase of cases) {
@@ -1202,6 +1204,26 @@ exit 1
       expect(await cli.run(testCase.args)).toBe(3)
       expect(stderr.some((line) => line.includes(testCase.expectedMessage))).toBe(true)
     }
+  })
+
+  it("accepts boolean negation, inline value options, and grouped short options", async () => {
+    const stderr: string[] = []
+    const cli = createCli({
+      stderr: (line) => stderr.push(line),
+    })
+
+    stderr.length = 0
+    expect(await cli.run(["-vh"])).toBe(0)
+
+    stderr.length = 0
+    const noGhExitCode = await cli.run(["help", "--no-gh"])
+    expect(noGhExitCode).not.toBe(3)
+    expect(stderr.some((line) => line.includes("Unknown option"))).toBe(false)
+
+    stderr.length = 0
+    const inlineValueExitCode = await cli.run(["help", "--hook-timeout-ms=100"])
+    expect(inlineValueExitCode).not.toBe(3)
+    expect(stderr.some((line) => line.includes("Missing value for option"))).toBe(false)
   })
 
   it("init --json returns initialization metadata", async () => {
@@ -1629,7 +1651,7 @@ echo '[{"headRefName":"feature/pr-url","state":"OPEN","mergedAt":null,"updatedAt
     tempDirs.add(repoRoot)
     const stdout: string[] = []
     const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(async () => {
-      throw new Error("fzf is required for interactive selection")
+      throw new FzfDependencyError()
     })
 
     const cli = createCli({

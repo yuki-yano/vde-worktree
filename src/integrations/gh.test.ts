@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest"
-import { resolveMergedByPrBatch, resolvePrStateByBranchBatch, resolvePrStatusByBranchBatch } from "./gh"
+import {
+  GhUnavailableError,
+  resolveMergedByPrBatch,
+  resolvePrStateByBranchBatch,
+  resolvePrStatusByBranchBatch,
+} from "./gh"
 
 describe("resolvePrStateByBranchBatch", () => {
   it("returns unknown states when feature is disabled", async () => {
@@ -204,6 +209,22 @@ describe("resolvePrStateByBranchBatch", () => {
       url: null,
     })
     expect(result.get("feature/bar")).toEqual({
+      status: "unknown",
+      url: null,
+    })
+  })
+
+  it("returns unknown states when gh runner raises typed unavailable error", async () => {
+    const result = await resolvePrStateByBranchBatch({
+      repoRoot: "/repo",
+      baseBranch: "main",
+      branches: ["feature/foo"],
+      runGh: async () => {
+        throw new GhUnavailableError()
+      },
+    })
+
+    expect(result.get("feature/foo")).toEqual({
       status: "unknown",
       url: null,
     })

@@ -1,11 +1,10 @@
-import { constants as fsConstants } from "node:fs"
-import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runGitCommand } from "../git/exec"
 import { resolvePrStateByBranchBatch, type PrState, type PrStatus } from "../integrations/gh"
 import { type GitWorktree, listGitWorktrees } from "../git/worktree"
+import { readJsonRecord } from "./json-storage"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
-import { upsertWorktreeMergeLifecycle } from "./worktree-merge-lifecycle"
+import { type WorktreeMergeLifecycleRecord, upsertWorktreeMergeLifecycle } from "./worktree-merge-lifecycle"
 
 type LockPayload = {
   readonly schemaVersion: 1
@@ -49,6 +48,16 @@ export type WorktreeStatus = {
   readonly upstream: WorktreeUpstreamState
 }
 
+const isLockPayload = (parsed: Partial<LockPayload>): parsed is LockPayload => {
+  return (
+    typeof parsed.branch === "string" &&
+    typeof parsed.worktreeId === "string" &&
+    typeof parsed.reason === "string" &&
+    parsed.reason.length > 0 &&
+    (typeof parsed.owner === "undefined" || typeof parsed.owner === "string")
+  )
+}
+
 const resolveDirty = async (worktreePath: string): Promise<boolean> => {
   const status = await runGitCommand({
     cwd: worktreePath,
@@ -56,26 +65,6 @@ const resolveDirty = async (worktreePath: string): Promise<boolean> => {
     reject: false,
   })
   return status.stdout.trim().length > 0
-}
-
-const parseLockPayload = (content: string): LockPayload | null => {
-  try {
-    const parsed = JSON.parse(content) as Partial<LockPayload>
-    if (parsed.schemaVersion !== 1) {
-      return null
-    }
-    if (
-      typeof parsed.branch !== "string" ||
-      typeof parsed.worktreeId !== "string" ||
-      typeof parsed.reason !== "string" ||
-      parsed.reason.length === 0
-    ) {
-      return null
-    }
-    return parsed as LockPayload
-  } catch {
-    return null
-  }
 }
 
 const resolveLockState = async ({
@@ -91,39 +80,117 @@ const resolveLockState = async ({
 
   const id = branchToWorktreeId(branch)
   const lockPath = join(getLocksDirectoryPath(repoRoot), `${id}.json`)
-  try {
-    await access(lockPath, fsConstants.F_OK)
-  } catch {
+  const lock = await readJsonRecord<LockPayload>({
+    path: lockPath,
+    schemaVersion: 1,
+    validate: isLockPayload,
+  })
+  if (lock.exists !== true) {
     return { value: false, reason: null, owner: null }
   }
-
-  try {
-    const content = await readFile(lockPath, "utf8")
-    const lock = parseLockPayload(content)
-    if (lock === null) {
-      return {
-        value: true,
-        reason: "invalid lock metadata",
-        owner: null,
-      }
-    }
-    return {
-      value: true,
-      reason: lock.reason,
-      owner: typeof lock.owner === "string" && lock.owner.length > 0 ? lock.owner : null,
-    }
-  } catch {
+  if (lock.valid !== true || lock.record === null) {
     return {
       value: true,
       reason: "invalid lock metadata",
       owner: null,
     }
   }
+
+  return {
+    value: true,
+    reason: lock.record.reason,
+    owner: typeof lock.record.owner === "string" && lock.record.owner.length > 0 ? lock.record.owner : null,
+  }
 }
 
 const WORK_REFLOG_MESSAGE_PATTERN = /^(commit(?: \([^)]*\))?|cherry-pick|revert|rebase \(pick\)|merge):/
 
-const resolveLifecycleFromReflog = async ({
+type MergeLifecycleRepository = {
+  readonly upsert: (input: {
+    readonly branch: string
+    readonly baseBranch: string
+    readonly observedDivergedHead: string | null
+  }) => Promise<WorktreeMergeLifecycleRecord>
+}
+
+type MergeProbeRepository = {
+  readonly probeAncestry: (input: { readonly branch: string; readonly baseBranch: string }) => Promise<boolean | null>
+  readonly probeLifecycleFromReflog: (input: {
+    readonly branch: string
+    readonly baseBranch: string
+  }) => Promise<{ merged: boolean | null; divergedHead: string | null }>
+}
+
+const resolveAncestryFromExitCode = (exitCode: number): boolean | null => {
+  if (exitCode === 0) {
+    return true
+  }
+  if (exitCode === 1) {
+    return false
+  }
+  return null
+}
+
+const resolveMergedByPr = ({
+  branch,
+  baseBranch,
+  prStateByBranch,
+}: {
+  readonly branch: string
+  readonly baseBranch: string | null
+  readonly prStateByBranch: ReadonlyMap<string, PrState>
+}): boolean | null => {
+  const prStatus = branch === baseBranch ? null : (prStateByBranch.get(branch)?.status ?? null)
+  if (prStatus === "merged") {
+    return true
+  }
+  if (prStatus === "none" || prStatus === "open" || prStatus === "closed_unmerged") {
+    return false
+  }
+  return null
+}
+
+const hasLifecycleDivergedHead = (
+  lifecycle: WorktreeMergeLifecycleRecord,
+): lifecycle is WorktreeMergeLifecycleRecord & { readonly lastDivergedHead: string } => {
+  return lifecycle.everDiverged === true && lifecycle.lastDivergedHead !== null
+}
+
+const parseWorkReflogHeads = (
+  reflogOutput: string,
+): { readonly heads: string[]; readonly latestHead: string | null } => {
+  const heads: string[] = []
+  let latestHead: string | null = null
+
+  for (const line of reflogOutput.split("\n")) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) {
+      continue
+    }
+
+    const separatorIndex = trimmed.indexOf("\t")
+    if (separatorIndex <= 0) {
+      continue
+    }
+
+    const head = trimmed.slice(0, separatorIndex).trim()
+    const message = trimmed.slice(separatorIndex + 1).trim()
+    if (head.length === 0 || WORK_REFLOG_MESSAGE_PATTERN.test(message) !== true) {
+      continue
+    }
+    if (latestHead === null) {
+      latestHead = head
+    }
+    heads.push(head)
+  }
+
+  return {
+    heads,
+    latestHead,
+  }
+}
+
+const probeLifecycleFromReflog = async ({
   repoRoot,
   branch,
   baseBranch,
@@ -144,49 +211,74 @@ const resolveLifecycleFromReflog = async ({
     }
   }
 
-  let latestWorkHead: string | null = null
-  for (const line of reflog.stdout.split("\n")) {
-    const trimmed = line.trim()
-    if (trimmed.length === 0) {
-      continue
+  const parsedHeads = parseWorkReflogHeads(reflog.stdout)
+  if (parsedHeads.heads.length === 0) {
+    return {
+      merged: null,
+      divergedHead: null,
     }
+  }
 
-    const separatorIndex = trimmed.indexOf("\t")
-    if (separatorIndex <= 0) {
-      continue
-    }
-
-    const head = trimmed.slice(0, separatorIndex).trim()
-    const message = trimmed.slice(separatorIndex + 1).trim()
-    if (head.length === 0 || WORK_REFLOG_MESSAGE_PATTERN.test(message) !== true) {
-      continue
-    }
-    if (latestWorkHead === null) {
-      latestWorkHead = head
-    }
-
+  for (const head of parsedHeads.heads) {
     const result = await runGitCommand({
       cwd: repoRoot,
       args: ["merge-base", "--is-ancestor", head, baseBranch],
       reject: false,
     })
-    if (result.exitCode === 0) {
+    const merged = resolveAncestryFromExitCode(result.exitCode)
+    if (merged === true) {
       return {
         merged: true,
         divergedHead: head,
       }
     }
-    if (result.exitCode !== 1) {
+    if (merged === null) {
       return {
         merged: null,
-        divergedHead: latestWorkHead,
+        divergedHead: parsedHeads.latestHead,
       }
     }
   }
 
   return {
     merged: false,
-    divergedHead: latestWorkHead,
+    divergedHead: parsedHeads.latestHead,
+  }
+}
+
+const createMergeLifecycleRepository = ({ repoRoot }: { readonly repoRoot: string }): MergeLifecycleRepository => {
+  return {
+    upsert: async ({ branch, baseBranch, observedDivergedHead }): Promise<WorktreeMergeLifecycleRecord> => {
+      return upsertWorktreeMergeLifecycle({
+        repoRoot,
+        branch,
+        baseBranch,
+        observedDivergedHead,
+      })
+    },
+  }
+}
+
+const createMergeProbeRepository = ({ repoRoot }: { readonly repoRoot: string }): MergeProbeRepository => {
+  return {
+    probeAncestry: async ({ branch, baseBranch }): Promise<boolean | null> => {
+      const result = await runGitCommand({
+        cwd: repoRoot,
+        args: ["merge-base", "--is-ancestor", branch, baseBranch],
+        reject: false,
+      })
+      return resolveAncestryFromExitCode(result.exitCode)
+    },
+    probeLifecycleFromReflog: async ({
+      branch,
+      baseBranch,
+    }): Promise<{ merged: boolean | null; divergedHead: string | null }> => {
+      return probeLifecycleFromReflog({
+        repoRoot,
+        branch,
+        baseBranch,
+      })
+    },
   }
 }
 
@@ -207,33 +299,20 @@ const resolveMergedState = async ({
     return { byAncestry: null, byPR: null, overall: null }
   }
 
-  let byAncestry: boolean | null = null
-  if (baseBranch !== null) {
-    const result = await runGitCommand({
-      cwd: repoRoot,
-      args: ["merge-base", "--is-ancestor", branch, baseBranch],
-      reject: false,
-    })
+  const mergeProbeRepository = createMergeProbeRepository({ repoRoot })
+  const mergeLifecycleRepository = createMergeLifecycleRepository({ repoRoot })
 
-    if (result.exitCode === 0) {
-      byAncestry = true
-    } else if (result.exitCode === 1) {
-      byAncestry = false
-    }
-  }
+  const byAncestry = baseBranch === null ? null : await mergeProbeRepository.probeAncestry({ branch, baseBranch })
 
-  const prStatus = branch === baseBranch ? null : (prStateByBranch.get(branch)?.status ?? null)
-  let byPR: boolean | null = null
-  if (prStatus === "merged") {
-    byPR = true
-  } else if (prStatus === "none" || prStatus === "open" || prStatus === "closed_unmerged") {
-    byPR = false
-  }
+  const byPR = resolveMergedByPr({
+    branch,
+    baseBranch,
+    prStateByBranch,
+  })
 
   let byLifecycle: boolean | null = null
   if (baseBranch !== null) {
-    const lifecycle = await upsertWorktreeMergeLifecycle({
-      repoRoot,
+    const lifecycle = await mergeLifecycleRepository.upsert({
       branch,
       baseBranch,
       observedDivergedHead: byAncestry === false ? head : null,
@@ -241,37 +320,25 @@ const resolveMergedState = async ({
     if (byAncestry === false) {
       byLifecycle = false
     } else if (byAncestry === true) {
-      if (lifecycle.everDiverged !== true || lifecycle.lastDivergedHead === null) {
-        if (byPR === true) {
-          byLifecycle = null
-        } else {
-          const probe = await resolveLifecycleFromReflog({
-            repoRoot,
+      if (hasLifecycleDivergedHead(lifecycle)) {
+        byLifecycle = await mergeProbeRepository.probeAncestry({
+          branch: lifecycle.lastDivergedHead,
+          baseBranch,
+        })
+      } else if (byPR === true) {
+        byLifecycle = null
+      } else {
+        const probe = await mergeProbeRepository.probeLifecycleFromReflog({
+          branch,
+          baseBranch,
+        })
+        byLifecycle = probe.merged
+        if (probe.divergedHead !== null) {
+          await mergeLifecycleRepository.upsert({
             branch,
             baseBranch,
+            observedDivergedHead: probe.divergedHead,
           })
-          byLifecycle = probe.merged
-          if (probe.divergedHead !== null) {
-            await upsertWorktreeMergeLifecycle({
-              repoRoot,
-              branch,
-              baseBranch,
-              observedDivergedHead: probe.divergedHead,
-            })
-          }
-        }
-      } else {
-        const lifecycleResult = await runGitCommand({
-          cwd: repoRoot,
-          args: ["merge-base", "--is-ancestor", lifecycle.lastDivergedHead, baseBranch],
-          reject: false,
-        })
-        if (lifecycleResult.exitCode === 0) {
-          byLifecycle = true
-        } else if (lifecycleResult.exitCode === 1) {
-          byLifecycle = false
-        } else {
-          byLifecycle = null
         }
       }
     }

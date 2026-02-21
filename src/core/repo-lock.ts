@@ -1,9 +1,10 @@
 import { constants as fsConstants } from "node:fs"
-import { access, open, readFile, rm } from "node:fs/promises"
+import { access, readFile, rm } from "node:fs/promises"
 import { hostname } from "node:os"
 import { join } from "node:path"
 import { DEFAULT_LOCK_TIMEOUT_MS, DEFAULT_STALE_LOCK_TTL_SECONDS } from "./constants"
 import { createCliError } from "./errors"
+import { parseJsonRecord, writeJsonExclusively } from "./json-storage"
 import { getStateDirectoryPath } from "./paths"
 
 type RepoLockFileSchema = {
@@ -49,22 +50,14 @@ const isProcessAlive = (pid: number): boolean => {
   }
 }
 
-const safeParseLockFile = (content: string): RepoLockFileSchema | null => {
-  try {
-    const parsed = JSON.parse(content) as Partial<RepoLockFileSchema>
-    if (parsed.schemaVersion !== 1) {
-      return null
-    }
-    if (typeof parsed.command !== "string" || typeof parsed.owner !== "string") {
-      return null
-    }
-    if (typeof parsed.pid !== "number" || typeof parsed.host !== "string" || typeof parsed.startedAt !== "string") {
-      return null
-    }
-    return parsed as RepoLockFileSchema
-  } catch {
-    return null
-  }
+const isRepoLockFileSchema = (parsed: Partial<RepoLockFileSchema>): parsed is RepoLockFileSchema => {
+  return (
+    typeof parsed.owner === "string" &&
+    typeof parsed.command === "string" &&
+    typeof parsed.pid === "number" &&
+    typeof parsed.host === "string" &&
+    typeof parsed.startedAt === "string"
+  )
 }
 
 const lockFilePath = async (repoRoot: string): Promise<string> => {
@@ -116,21 +109,6 @@ const canRecoverStaleLock = ({
   return true
 }
 
-const writeNewLockFile = async (path: string, payload: RepoLockFileSchema): Promise<boolean> => {
-  try {
-    const handle = await open(path, "wx")
-    await handle.writeFile(`${JSON.stringify(payload)}\n`, "utf8")
-    await handle.close()
-    return true
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === "EEXIST") {
-      return false
-    }
-    throw error
-  }
-}
-
 export const acquireRepoLock = async ({
   repoRoot,
   command,
@@ -142,7 +120,10 @@ export const acquireRepoLock = async ({
   const payload = buildLockPayload(command)
 
   while (Date.now() - startAt <= timeoutMs) {
-    const created = await writeNewLockFile(path, payload)
+    const created = await writeJsonExclusively({
+      path,
+      payload,
+    })
     if (created) {
       return {
         release: async (): Promise<void> => {
@@ -163,8 +144,12 @@ export const acquireRepoLock = async ({
       continue
     }
 
-    const parsed = safeParseLockFile(lockContent)
-    if (canRecoverStaleLock({ lock: parsed, staleLockTTLSeconds })) {
+    const parsed = parseJsonRecord<RepoLockFileSchema>({
+      content: lockContent,
+      schemaVersion: 1,
+      validate: isRepoLockFileSchema,
+    })
+    if (canRecoverStaleLock({ lock: parsed.record, staleLockTTLSeconds })) {
       try {
         await rm(path, { force: true })
       } catch {

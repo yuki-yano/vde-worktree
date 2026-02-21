@@ -33,6 +33,35 @@ afterEach(async () => {
 })
 
 describe("hook execution error handling", () => {
+  it("maps timedOut execution results to HOOK_TIMEOUT", async () => {
+    const repoRoot = await createRepoRoot()
+    const hookPath = join(repoRoot, ".vde", "worktree", "hooks", "pre-switch")
+    await writeFile(hookPath, "#!/usr/bin/env bash\nexit 0\n", "utf8")
+    await chmod(hookPath, 0o755)
+
+    mockedExeca.mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: "timeout",
+      timedOut: true,
+    } as never)
+
+    await expect(
+      runPreHook({
+        name: "switch",
+        context: {
+          repoRoot,
+          action: "switch",
+          branch: "feature/hooks",
+          enabled: true,
+          stderr: () => undefined,
+          timeoutMs: 10,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "HOOK_TIMEOUT",
+    })
+  })
+
   it("maps timeout errors to HOOK_TIMEOUT", async () => {
     const repoRoot = await createRepoRoot()
     const hookPath = join(repoRoot, ".vde", "worktree", "hooks", "pre-switch")

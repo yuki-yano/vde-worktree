@@ -26,6 +26,14 @@ type HookExecutionError = Error & {
   readonly code?: string
 }
 
+type HookExecutionResult = {
+  readonly exitCode: number
+  readonly stderr: string
+  readonly timedOut: boolean
+  readonly startedAt: string
+  readonly endedAt: string
+}
+
 const nowTimestamp = (): string => {
   return new Date().toISOString().replace(/[^\d]/g, "").slice(0, 14)
 }
@@ -56,6 +64,136 @@ const appendHookLog = async ({
   await appendFile(logPath, content, "utf8")
 }
 
+const ensureHookExists = async ({
+  path,
+  hookName,
+  requireExists,
+}: {
+  readonly path: string
+  readonly hookName: string
+  readonly requireExists: boolean
+}): Promise<boolean> => {
+  try {
+    await access(path, fsConstants.F_OK)
+    return true
+  } catch {
+    if (requireExists) {
+      throw createCliError("HOOK_NOT_FOUND", {
+        message: `Hook not found: ${hookName}`,
+        details: { hook: hookName, path },
+      })
+    }
+    return false
+  }
+}
+
+const ensureHookExecutable = async ({
+  path,
+  hookName,
+}: {
+  readonly path: string
+  readonly hookName: string
+}): Promise<void> => {
+  try {
+    await access(path, fsConstants.X_OK)
+  } catch {
+    throw createCliError("HOOK_NOT_EXECUTABLE", {
+      message: `Hook is not executable: ${hookName}`,
+      details: { hook: hookName, path },
+    })
+  }
+}
+
+const executeHookProcess = async ({
+  path,
+  args,
+  context,
+}: {
+  readonly path: string
+  readonly args: readonly string[]
+  readonly context: HookExecutionContext
+}): Promise<HookExecutionResult> => {
+  const startedAt = new Date().toISOString()
+  const result = await execa(path, [...args], {
+    cwd: context.worktreePath ?? context.repoRoot,
+    env: {
+      ...process.env,
+      WT_REPO_ROOT: context.repoRoot,
+      WT_ACTION: context.action,
+      WT_BRANCH: context.branch ?? "",
+      WT_WORKTREE_PATH: context.worktreePath ?? "",
+      WT_IS_TTY: process.stdout.isTTY === true ? "1" : "0",
+      WT_TOOL: "vde-worktree",
+      ...(context.extraEnv ?? {}),
+    },
+    timeout: context.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS,
+    reject: false,
+  })
+  const endedAt = new Date().toISOString()
+  return {
+    exitCode: result.exitCode ?? 0,
+    stderr: result.stderr ?? "",
+    timedOut: result.timedOut === true,
+    startedAt,
+    endedAt,
+  }
+}
+
+const writeHookLog = async ({
+  repoRoot,
+  action,
+  branch,
+  hookName,
+  phase,
+  result,
+}: {
+  readonly repoRoot: string
+  readonly action: string
+  readonly branch?: string | null
+  readonly hookName: string
+  readonly phase: HookPhase
+  readonly result: HookExecutionResult
+}): Promise<void> => {
+  const logContent = [
+    `hook=${hookName}`,
+    `phase=${phase}`,
+    `start=${result.startedAt}`,
+    `end=${result.endedAt}`,
+    `exitCode=${String(result.exitCode)}`,
+    `timedOut=${result.timedOut ? "1" : "0"}`,
+    `stderr=${result.stderr}`,
+    "",
+  ].join("\n")
+  await appendHookLog({
+    repoRoot,
+    action,
+    branch,
+    content: logContent,
+  })
+}
+
+const shouldIgnorePostHookFailure = ({
+  phase,
+  context,
+}: {
+  readonly phase: HookPhase
+  readonly context: HookExecutionContext
+}): boolean => {
+  return phase === "post" && context.strictPostHooks !== true
+}
+
+const handleIgnoredPostHookFailure = ({
+  context,
+  hookName,
+  message,
+}: {
+  readonly context: HookExecutionContext
+  readonly hookName: string
+  readonly message?: string
+}): void => {
+  context.stderr(message ?? `Hook failed: ${hookName}`)
+}
+
 const runHook = async ({
   phase,
   hookName,
@@ -74,69 +212,58 @@ const runHook = async ({
   }
 
   const path = hookPath(context.repoRoot, hookName)
-  try {
-    await access(path, fsConstants.F_OK)
-  } catch {
-    if (requireExists) {
-      throw createCliError("HOOK_NOT_FOUND", {
-        message: `Hook not found: ${hookName}`,
-        details: { hook: hookName, path },
-      })
-    }
+  const exists = await ensureHookExists({
+    path,
+    hookName,
+    requireExists,
+  })
+  if (exists !== true) {
     return
   }
 
-  try {
-    await access(path, fsConstants.X_OK)
-  } catch {
-    throw createCliError("HOOK_NOT_EXECUTABLE", {
-      message: `Hook is not executable: ${hookName}`,
-      details: { hook: hookName, path },
-    })
-  }
+  await ensureHookExecutable({
+    path,
+    hookName,
+  })
 
-  const startedAt = new Date().toISOString()
   try {
-    const result = await execa(path, [...args], {
-      cwd: context.worktreePath ?? context.repoRoot,
-      env: {
-        ...process.env,
-        WT_REPO_ROOT: context.repoRoot,
-        WT_ACTION: context.action,
-        WT_BRANCH: context.branch ?? "",
-        WT_WORKTREE_PATH: context.worktreePath ?? "",
-        WT_IS_TTY: process.stdout.isTTY === true ? "1" : "0",
-        WT_TOOL: "vde-worktree",
-        ...(context.extraEnv ?? {}),
-      },
-      timeout: context.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS,
-      reject: false,
+    const result = await executeHookProcess({
+      path,
+      args,
+      context,
     })
-
-    const endedAt = new Date().toISOString()
-    const logContent = [
-      `hook=${hookName}`,
-      `phase=${phase}`,
-      `start=${startedAt}`,
-      `end=${endedAt}`,
-      `exitCode=${String(result.exitCode ?? 0)}`,
-      `stderr=${result.stderr ?? ""}`,
-      "",
-    ].join("\n")
-    await appendHookLog({
+    await writeHookLog({
       repoRoot: context.repoRoot,
       action: context.action,
       branch: context.branch,
-      content: logContent,
+      hookName,
+      phase,
+      result,
     })
 
-    if ((result.exitCode ?? 0) === 0) {
+    if (result.timedOut) {
+      throw createCliError("HOOK_TIMEOUT", {
+        message: `Hook timed out: ${hookName}`,
+        details: {
+          hook: hookName,
+          timeoutMs: context.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS,
+          exitCode: result.exitCode,
+          stderr: result.stderr,
+        },
+      })
+    }
+
+    if (result.exitCode === 0) {
       return
     }
 
-    const message = `Hook failed: ${hookName} (exitCode=${String(result.exitCode ?? 1)})`
-    if (phase === "post" && context.strictPostHooks !== true) {
-      context.stderr(message)
+    const message = `Hook failed: ${hookName} (exitCode=${String(result.exitCode)})`
+    if (shouldIgnorePostHookFailure({ phase, context })) {
+      handleIgnoredPostHookFailure({
+        context,
+        hookName,
+        message,
+      })
       return
     }
 
@@ -166,8 +293,11 @@ const runHook = async ({
       })
     }
 
-    if (phase === "post" && context.strictPostHooks !== true) {
-      context.stderr(`Hook failed: ${hookName}`)
+    if (shouldIgnorePostHookFailure({ phase, context })) {
+      handleIgnoredPostHookFailure({
+        context,
+        hookName,
+      })
       return
     }
 

@@ -46,9 +46,14 @@ import {
   type WorktreeStatus,
 } from "../core/worktree-state"
 import { doesGitRefExist, runGitCommand } from "../git/exec"
-import { selectPathWithFzf as defaultSelectPathWithFzf } from "../integrations/fzf"
+import {
+  FzfDependencyError,
+  FzfInteractiveRequiredError,
+  selectPathWithFzf as defaultSelectPathWithFzf,
+} from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createLogger, LogLevel, type Logger } from "../utils/logger"
+import { dispatchReadOnlyCommands } from "./commands/read/dispatcher"
 import { loadPackageVersion } from "./package-version"
 
 export type CLI = {
@@ -69,6 +74,7 @@ type OptionValueKind = "boolean" | "value"
 type OptionSpec = {
   readonly kind: OptionValueKind
   readonly allowOptionLikeValue: boolean
+  readonly allowNegation: boolean
 }
 
 type OptionSpecs = {
@@ -542,6 +548,8 @@ const commandHelpEntries: readonly CommandHelp[] = [
   },
 ] as const
 
+const commandHelpNames = commandHelpEntries.map((entry) => entry.name)
+
 const splitRawArgsByDoubleDash = (
   args: readonly string[],
 ): {
@@ -569,6 +577,7 @@ const toOptionSpec = (kind: OptionValueKind, optionName: string): OptionSpec => 
   return {
     kind,
     allowOptionLikeValue: optionNamesAllowOptionLikeValue.has(optionName),
+    allowNegation: kind === "boolean",
   }
 }
 
@@ -604,86 +613,182 @@ const buildOptionSpecs = (argsDef: Readonly<ArgsDef>): OptionSpecs => {
   return { longOptions, shortOptions }
 }
 
+const ensureOptionValueToken = ({
+  valueToken,
+  optionLabel,
+  optionSpec,
+}: {
+  readonly valueToken: string
+  readonly optionLabel: string
+  readonly optionSpec: OptionSpec
+}): void => {
+  if (valueToken.length === 0) {
+    throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: ${optionLabel}` })
+  }
+  if (valueToken.startsWith("-") && optionSpec.allowOptionLikeValue !== true) {
+    throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: ${optionLabel}` })
+  }
+}
+
+const resolveLongOption = ({
+  rawOptionName,
+  optionSpecs,
+}: {
+  readonly rawOptionName: string
+  readonly optionSpecs: OptionSpecs
+}):
+  | {
+      readonly optionSpec: OptionSpec
+      readonly optionName: string
+    }
+  | undefined => {
+  const directOptionSpec = optionSpecs.longOptions.get(rawOptionName)
+  if (directOptionSpec !== undefined) {
+    return {
+      optionSpec: directOptionSpec,
+      optionName: rawOptionName,
+    }
+  }
+
+  if (rawOptionName.startsWith("no-")) {
+    const optionName = rawOptionName.slice(3)
+    const negatedOptionSpec = optionSpecs.longOptions.get(optionName)
+    if (negatedOptionSpec?.allowNegation === true) {
+      return {
+        optionSpec: negatedOptionSpec,
+        optionName,
+      }
+    }
+  }
+
+  return undefined
+}
+
+const validateLongOptionToken = ({
+  args,
+  index,
+  token,
+  optionSpecs,
+}: {
+  readonly args: readonly string[]
+  readonly index: number
+  readonly token: string
+  readonly optionSpecs: OptionSpecs
+}): number => {
+  const value = token.slice(2)
+  if (value.length === 0) {
+    return index
+  }
+
+  const separatorIndex = value.indexOf("=")
+  const rawOptionName = separatorIndex >= 0 ? value.slice(0, separatorIndex) : value
+  const resolved = resolveLongOption({
+    rawOptionName,
+    optionSpecs,
+  })
+  if (resolved === undefined) {
+    throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: --${rawOptionName}` })
+  }
+
+  if (resolved.optionSpec.kind !== "value") {
+    return index
+  }
+
+  if (separatorIndex >= 0) {
+    const inlineValue = value.slice(separatorIndex + 1)
+    if (inlineValue.length === 0) {
+      throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
+    }
+    return index
+  }
+
+  const nextToken = args[index + 1]
+  if (typeof nextToken !== "string") {
+    throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
+  }
+  ensureOptionValueToken({
+    valueToken: nextToken,
+    optionLabel: `--${rawOptionName}`,
+    optionSpec: resolved.optionSpec,
+  })
+  return index + 1
+}
+
+const validateShortOptionToken = ({
+  args,
+  index,
+  token,
+  optionSpecs,
+}: {
+  readonly args: readonly string[]
+  readonly index: number
+  readonly token: string
+  readonly optionSpecs: OptionSpecs
+}): number => {
+  const shortFlags = token.slice(1)
+  for (let flagIndex = 0; flagIndex < shortFlags.length; flagIndex += 1) {
+    const option = shortFlags[flagIndex]
+    if (typeof option !== "string" || option.length === 0) {
+      continue
+    }
+
+    const optionSpec = optionSpecs.shortOptions.get(option)
+    if (optionSpec === undefined) {
+      throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: -${option}` })
+    }
+    if (optionSpec.kind !== "value") {
+      continue
+    }
+
+    if (flagIndex < shortFlags.length - 1) {
+      throw createCliError("INVALID_ARGUMENT", {
+        message: `Missing value for option: -${option}`,
+      })
+    }
+
+    const nextToken = args[index + 1]
+    if (typeof nextToken !== "string") {
+      throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: -${option}` })
+    }
+    ensureOptionValueToken({
+      valueToken: nextToken,
+      optionLabel: `-${option}`,
+      optionSpec,
+    })
+    return index + 1
+  }
+  return index
+}
+
 const validateRawOptions = (args: readonly string[], optionSpecs: OptionSpecs): void => {
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index]
     if (typeof token !== "string") {
       continue
     }
-
     if (token === "--") {
       break
     }
-
     if (!token.startsWith("-") || token === "-") {
       continue
     }
 
     if (token.startsWith("--")) {
-      const value = token.slice(2)
-      if (value.length === 0) {
-        continue
-      }
-
-      const separatorIndex = value.indexOf("=")
-      const rawOptionName = separatorIndex >= 0 ? value.slice(0, separatorIndex) : value
-      const directOptionSpec = optionSpecs.longOptions.get(rawOptionName)
-      const optionNameForNegation = rawOptionName.startsWith("no-") ? rawOptionName.slice(3) : rawOptionName
-      const optionSpec = directOptionSpec ?? optionSpecs.longOptions.get(optionNameForNegation)
-      if (optionSpec === undefined) {
-        throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: --${rawOptionName}` })
-      }
-      const kind = optionSpec.kind
-
-      if (kind === "value") {
-        if (separatorIndex >= 0) {
-          const inlineValue = value.slice(separatorIndex + 1)
-          if (inlineValue.length === 0) {
-            throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
-          }
-        } else {
-          const nextToken = args[index + 1]
-          if (typeof nextToken !== "string" || nextToken.length === 0) {
-            throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
-          }
-          if (nextToken.startsWith("-") && optionSpec.allowOptionLikeValue !== true) {
-            throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
-          }
-          index += 1
-        }
-      }
+      index = validateLongOptionToken({
+        args,
+        index,
+        token,
+        optionSpecs,
+      })
       continue
     }
 
-    const shortFlags = token.slice(1)
-    for (let flagIndex = 0; flagIndex < shortFlags.length; flagIndex += 1) {
-      const option = shortFlags[flagIndex]
-      if (typeof option !== "string" || option.length === 0) {
-        continue
-      }
-
-      const optionSpec = optionSpecs.shortOptions.get(option)
-      if (optionSpec === undefined) {
-        throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: -${option}` })
-      }
-      const kind = optionSpec.kind
-
-      if (kind === "value") {
-        if (flagIndex < shortFlags.length - 1) {
-          break
-        }
-
-        const nextToken = args[index + 1]
-        if (typeof nextToken !== "string" || nextToken.length === 0) {
-          throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: -${option}` })
-        }
-        if (nextToken.startsWith("-") && optionSpec.allowOptionLikeValue !== true) {
-          throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: -${option}` })
-        }
-        index += 1
-        break
-      }
-    }
+    index = validateShortOptionToken({
+      args,
+      index,
+      token,
+      optionSpecs,
+    })
   }
 }
 
@@ -2161,117 +2266,34 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       const parsedArgsRecord = parsedArgs as Record<string, unknown>
       const positionals = getPositionals(parsedArgs)
       command = positionals[0] ?? "unknown"
+      const commandArgs = positionals.slice(1)
       jsonEnabled = parsedArgs.json === true
 
-      if (parsedArgs.help === true) {
-        const commandHelpTarget =
-          typeof command === "string" && command !== "unknown" && command !== "help" ? command : null
-        if (commandHelpTarget !== null) {
-          const entry = findCommandHelp(commandHelpTarget)
-          if (entry !== undefined) {
-            stdout(`${renderCommandHelpText({ entry })}\n`)
-            return EXIT_CODE.OK
-          }
-        }
-        stdout(`${renderGeneralHelpText({ version })}\n`)
-        return EXIT_CODE.OK
-      }
-
-      if (parsedArgs.version === true) {
-        stdout(version)
-        return EXIT_CODE.OK
+      const readOnlyDispatch = await dispatchReadOnlyCommands({
+        command,
+        commandArgs,
+        positionals,
+        parsedArgs: parsedArgsRecord,
+        version,
+        jsonEnabled,
+        availableCommandNames: commandHelpNames,
+        stdout,
+        findCommandHelp,
+        renderGeneralHelpText,
+        renderCommandHelpText,
+        ensureArgumentCount,
+        resolveCompletionShell,
+        loadCompletionScript,
+        resolveCompletionInstallPath,
+        installCompletionScript,
+        readStringOption,
+        buildJsonSuccess,
+      })
+      if (readOnlyDispatch.handled) {
+        return readOnlyDispatch.exitCode
       }
 
       logger = parsedArgs.verbose === true ? createLogger({ level: LogLevel.INFO }) : createLogger()
-
-      if (positionals.length === 0) {
-        stdout(`${renderGeneralHelpText({ version })}\n`)
-        return EXIT_CODE.OK
-      }
-
-      if (command === "help") {
-        const helpTarget = positionals[1]
-        if (typeof helpTarget !== "string" || helpTarget.length === 0) {
-          stdout(`${renderGeneralHelpText({ version })}\n`)
-          return EXIT_CODE.OK
-        }
-
-        const entry = findCommandHelp(helpTarget)
-        if (entry === undefined) {
-          throw createCliError("INVALID_ARGUMENT", {
-            message: `Unknown command for help: ${helpTarget}`,
-            details: {
-              requested: helpTarget,
-              availableCommands: commandHelpEntries.map((item) => item.name),
-            },
-          })
-        }
-
-        stdout(`${renderCommandHelpText({ entry })}\n`)
-        return EXIT_CODE.OK
-      }
-
-      const commandArgs = positionals.slice(1)
-      if (command === "completion") {
-        ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
-        const shell = resolveCompletionShell(commandArgs[0] as string)
-        const script = await loadCompletionScript(shell)
-
-        if (parsedArgs.install === true) {
-          const destinationPath = resolveCompletionInstallPath({
-            shell,
-            requestedPath: readStringOption(parsedArgsRecord, "path"),
-          })
-          await installCompletionScript({
-            content: script,
-            destinationPath,
-          })
-
-          if (jsonEnabled) {
-            stdout(
-              JSON.stringify(
-                buildJsonSuccess({
-                  command,
-                  status: "ok",
-                  repoRoot: null,
-                  details: {
-                    shell,
-                    installed: true,
-                    path: destinationPath,
-                  },
-                }),
-              ),
-            )
-            return EXIT_CODE.OK
-          }
-
-          stdout(`installed completion: ${destinationPath}`)
-          if (shell === "zsh") {
-            stdout("zsh note: ensure completion path is in fpath, then run: autoload -Uz compinit && compinit")
-          }
-          return EXIT_CODE.OK
-        }
-
-        if (jsonEnabled) {
-          stdout(
-            JSON.stringify(
-              buildJsonSuccess({
-                command,
-                status: "ok",
-                repoRoot: null,
-                details: {
-                  shell,
-                  installed: false,
-                  script,
-                },
-              }),
-            ),
-          )
-          return EXIT_CODE.OK
-        }
-        stdout(script)
-        return EXIT_CODE.OK
-      }
 
       const allowUnsafe = parsedArgs.allowUnsafe === true
       if (parsedArgs.hooks === false && allowUnsafe !== true) {
@@ -2346,7 +2368,47 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         )
       }
 
-      if (command === "init") {
+      type WorktreeMutationName = "new" | "switch" | "mv" | "del"
+
+      type WorktreeMutationPlan<TPrecheckResult, TResult> = {
+        readonly name: WorktreeMutationName
+        readonly branch: string | null
+        readonly worktreePath: string
+        readonly extraEnv?: Record<string, string>
+        readonly precheck: () => Promise<TPrecheckResult>
+        readonly runGit: (precheckResult: TPrecheckResult) => Promise<TResult>
+        readonly finalize?: (precheckResult: TPrecheckResult, result: TResult) => Promise<void>
+      }
+
+      const executeWorktreeMutation = async <TPrecheckResult, TResult>({
+        name,
+        branch,
+        worktreePath,
+        extraEnv,
+        precheck,
+        runGit,
+        finalize,
+      }: WorktreeMutationPlan<TPrecheckResult, TResult>): Promise<TResult> => {
+        const precheckResult = await precheck()
+        const hookContext = createHookContext({
+          runtime,
+          repoRoot,
+          action: name,
+          branch,
+          worktreePath,
+          stderr,
+          extraEnv,
+        })
+        await runPreHook({ name, context: hookContext })
+        const result = await runGit(precheckResult)
+        if (finalize !== undefined) {
+          await finalize(precheckResult, result)
+        }
+        await runPostHook({ name, context: hookContext })
+        return result
+      }
+
+      const handleInit = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const result = await runWriteOperation(async () => {
           const hookContext = createHookContext({
@@ -2380,12 +2442,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "list") {
+      const handleList = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         if (runtime.json) {
@@ -2486,7 +2547,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "status") {
+      const handleStatus = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const targetBranch = commandArgs[0]
@@ -2521,7 +2582,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "path") {
+      const handlePath = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const snapshot = await collectWorktreeSnapshot(repoRoot)
@@ -2547,54 +2608,65 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "new") {
+      const earlyRepoCommandHandlers = new Map<string, () => Promise<number>>([
+        ["init", handleInit],
+        ["list", handleList],
+        ["status", handleStatus],
+        ["path", handlePath],
+      ])
+      const earlyRepoCommandHandler = earlyRepoCommandHandlers.get(command)
+      if (earlyRepoCommandHandler !== undefined) {
+        return await earlyRepoCommandHandler()
+      }
+
+      const handleNew = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const branch = commandArgs[0] ?? randomWipBranchName()
+        const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
         const result = await runWriteOperation(async () => {
-          const snapshot = await collectWorktreeSnapshot(repoRoot)
-          if (containsBranch({ branch, worktrees: snapshot.worktrees })) {
-            throw createCliError("BRANCH_ALREADY_ATTACHED", {
-              message: `Branch is already attached to a worktree: ${branch}`,
-              details: { branch },
-            })
-          }
-
-          if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
-            throw createCliError("BRANCH_ALREADY_EXISTS", {
-              message: `Branch already exists locally: ${branch}`,
-              details: { branch },
-            })
-          }
-
-          const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
-          await ensureTargetPathWritable(targetPath)
-          const baseBranch = await resolveBaseBranch({
-            repoRoot,
-            config: resolvedConfig,
-          })
-
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "new",
+          return executeWorktreeMutation({
+            name: "new",
             branch,
             worktreePath: targetPath,
-            stderr,
-          })
-          await runPreHook({ name: "new", context: hookContext })
-          await runGitCommand({
-            cwd: repoRoot,
-            args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
-          })
-          await upsertWorktreeMergeLifecycle({
-            repoRoot,
-            branch,
-            baseBranch,
-            observedDivergedHead: null,
-          })
-          await runPostHook({ name: "new", context: hookContext })
+            precheck: async () => {
+              const snapshot = await collectWorktreeSnapshot(repoRoot)
+              if (containsBranch({ branch, worktrees: snapshot.worktrees })) {
+                throw createCliError("BRANCH_ALREADY_ATTACHED", {
+                  message: `Branch is already attached to a worktree: ${branch}`,
+                  details: { branch },
+                })
+              }
 
-          return { branch, path: targetPath }
+              if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
+                throw createCliError("BRANCH_ALREADY_EXISTS", {
+                  message: `Branch already exists locally: ${branch}`,
+                  details: { branch },
+                })
+              }
+
+              await ensureTargetPathWritable(targetPath)
+              const baseBranch = await resolveBaseBranch({
+                repoRoot,
+                config: resolvedConfig,
+              })
+              return { baseBranch }
+            },
+            runGit: async ({ baseBranch }) => {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
+              })
+              return { branch, path: targetPath }
+            },
+            finalize: async ({ baseBranch }) => {
+              await upsertWorktreeMergeLifecycle({
+                repoRoot,
+                branch,
+                baseBranch,
+                observedDivergedHead: null,
+              })
+            },
+          })
         })
 
         if (runtime.json) {
@@ -2615,7 +2687,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "switch") {
+      const handleSwitch = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const result = await runWriteOperation(async () => {
@@ -2634,45 +2706,45 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           }
 
           const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
-          await ensureTargetPathWritable(targetPath)
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "switch",
+          return executeWorktreeMutation({
+            name: "switch",
             branch,
             worktreePath: targetPath,
-            stderr,
+            precheck: async () => {
+              await ensureTargetPathWritable(targetPath)
+              if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
+                return {
+                  gitArgs: ["worktree", "add", targetPath, branch] as const,
+                  lifecycleBaseBranch: snapshot.baseBranch,
+                }
+              }
+              const baseBranch = await resolveBaseBranch({
+                repoRoot,
+                config: resolvedConfig,
+              })
+              return {
+                gitArgs: ["worktree", "add", "-b", branch, targetPath, baseBranch] as const,
+                lifecycleBaseBranch: baseBranch,
+              }
+            },
+            runGit: async ({ gitArgs }) => {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: [...gitArgs],
+              })
+              return { status: "created" as const, branch, path: targetPath }
+            },
+            finalize: async ({ lifecycleBaseBranch }) => {
+              if (lifecycleBaseBranch !== null) {
+                await upsertWorktreeMergeLifecycle({
+                  repoRoot,
+                  branch,
+                  baseBranch: lifecycleBaseBranch,
+                  observedDivergedHead: null,
+                })
+              }
+            },
           })
-          await runPreHook({ name: "switch", context: hookContext })
-
-          let lifecycleBaseBranch: string | null = snapshot.baseBranch
-          if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
-            await runGitCommand({
-              cwd: repoRoot,
-              args: ["worktree", "add", targetPath, branch],
-            })
-          } else {
-            const baseBranch = await resolveBaseBranch({
-              repoRoot,
-              config: resolvedConfig,
-            })
-            lifecycleBaseBranch = baseBranch
-            await runGitCommand({
-              cwd: repoRoot,
-              args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
-            })
-          }
-
-          if (lifecycleBaseBranch !== null) {
-            await upsertWorktreeMergeLifecycle({
-              repoRoot,
-              branch,
-              baseBranch: lifecycleBaseBranch,
-              observedDivergedHead: null,
-            })
-          }
-          await runPostHook({ name: "switch", context: hookContext })
-          return { status: "created" as const, branch, path: targetPath }
         })
 
         if (runtime.json) {
@@ -2695,7 +2767,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "mv") {
+      const writeCommandHandlers = new Map<string, () => Promise<number>>([
+        ["new", handleNew],
+        ["switch", handleSwitch],
+      ])
+      const writeCommandHandler = writeCommandHandlers.get(command)
+      if (writeCommandHandler !== undefined) {
+        return await writeCommandHandler()
+      }
+
+      const handleMv = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const newBranch = commandArgs[0] as string
         const result = await runWriteOperation(async () => {
@@ -2720,56 +2801,62 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               path: current.path,
             }
           }
-          if (containsBranch({ branch: newBranch, worktrees: snapshot.worktrees })) {
-            throw createCliError("BRANCH_ALREADY_ATTACHED", {
-              message: `Branch is already attached to another worktree: ${newBranch}`,
-              details: { branch: newBranch },
-            })
-          }
-          if (await doesGitRefExist(repoRoot, `refs/heads/${newBranch}`)) {
-            throw createCliError("BRANCH_ALREADY_EXISTS", {
-              message: `Branch already exists locally: ${newBranch}`,
-              details: { branch: newBranch },
-            })
-          }
-
           const newPath = branchToWorktreePath(repoRoot, newBranch, resolvedConfig.paths.worktreeRoot)
-          await ensureTargetPathWritable(newPath)
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "mv",
+          return executeWorktreeMutation({
+            name: "mv",
             branch: newBranch,
             worktreePath: newPath,
-            stderr,
             extraEnv: {
               WT_OLD_BRANCH: oldBranch,
               WT_NEW_BRANCH: newBranch,
             },
+            precheck: async () => {
+              if (containsBranch({ branch: newBranch, worktrees: snapshot.worktrees })) {
+                throw createCliError("BRANCH_ALREADY_ATTACHED", {
+                  message: `Branch is already attached to another worktree: ${newBranch}`,
+                  details: { branch: newBranch },
+                })
+              }
+              if (await doesGitRefExist(repoRoot, `refs/heads/${newBranch}`)) {
+                throw createCliError("BRANCH_ALREADY_EXISTS", {
+                  message: `Branch already exists locally: ${newBranch}`,
+                  details: { branch: newBranch },
+                })
+              }
+
+              await ensureTargetPathWritable(newPath)
+              return {
+                oldBranch,
+                currentPath: current.path,
+                baseBranch: snapshot.baseBranch,
+              }
+            },
+            runGit: async ({ oldBranch: resolvedOldBranch, currentPath }) => {
+              await runGitCommand({
+                cwd: currentPath,
+                args: ["branch", "-m", resolvedOldBranch, newBranch],
+              })
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["worktree", "move", currentPath, newPath],
+              })
+              return {
+                branch: newBranch,
+                path: newPath,
+              }
+            },
+            finalize: async ({ oldBranch: resolvedOldBranch, baseBranch }) => {
+              if (baseBranch !== null) {
+                await moveWorktreeMergeLifecycle({
+                  repoRoot,
+                  fromBranch: resolvedOldBranch,
+                  toBranch: newBranch,
+                  baseBranch,
+                  observedDivergedHead: null,
+                })
+              }
+            },
           })
-          await runPreHook({ name: "mv", context: hookContext })
-          await runGitCommand({
-            cwd: current.path,
-            args: ["branch", "-m", oldBranch, newBranch],
-          })
-          await runGitCommand({
-            cwd: repoRoot,
-            args: ["worktree", "move", current.path, newPath],
-          })
-          if (snapshot.baseBranch !== null) {
-            await moveWorktreeMergeLifecycle({
-              repoRoot,
-              fromBranch: oldBranch,
-              toBranch: newBranch,
-              baseBranch: snapshot.baseBranch,
-              observedDivergedHead: null,
-            })
-          }
-          await runPostHook({ name: "mv", context: hookContext })
-          return {
-            branch: newBranch,
-            path: newPath,
-          }
         })
 
         if (runtime.json) {
@@ -2789,7 +2876,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "del") {
+      const handleDel = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const forceFlags = parseForceFlags(parsedArgsRecord)
         if (hasAnyForceFlag(forceFlags)) {
@@ -2837,42 +2924,48 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               },
             })
           }
+          const targetBranch = target.branch
 
-          validateDeleteSafety({
-            target,
-            forceFlags,
-          })
-
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "del",
-            branch: target.branch,
+          return executeWorktreeMutation({
+            name: "del",
+            branch: targetBranch,
             worktreePath: target.path,
-            stderr,
-          })
-          await runPreHook({ name: "del", context: hookContext })
+            precheck: async () => {
+              validateDeleteSafety({
+                target,
+                forceFlags,
+              })
 
-          const removeArgs = ["worktree", "remove", target.path]
-          if (forceFlags.forceDirty) {
-            removeArgs.push("--force")
-          }
-          await runGitCommand({
-            cwd: repoRoot,
-            args: removeArgs,
+              const removeArgs = ["worktree", "remove", target.path]
+              if (forceFlags.forceDirty) {
+                removeArgs.push("--force")
+              }
+              return {
+                branch: targetBranch,
+                path: target.path,
+                removeArgs,
+                branchDeleteMode: resolveBranchDeleteMode(forceFlags),
+              }
+            },
+            runGit: async ({ branch: targetBranch, removeArgs, branchDeleteMode, path }) => {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: removeArgs,
+              })
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["branch", branchDeleteMode, targetBranch],
+              })
+              return {
+                branch: targetBranch,
+                path,
+              }
+            },
+            finalize: async ({ branch: targetBranch }) => {
+              await deleteWorktreeLock({ repoRoot, branch: targetBranch })
+              await deleteWorktreeMergeLifecycle({ repoRoot, branch: targetBranch })
+            },
           })
-          await runGitCommand({
-            cwd: repoRoot,
-            args: ["branch", resolveBranchDeleteMode(forceFlags), target.branch],
-          })
-          await deleteWorktreeLock({ repoRoot, branch: target.branch })
-          await deleteWorktreeMergeLifecycle({ repoRoot, branch: target.branch })
-
-          await runPostHook({ name: "del", context: hookContext })
-          return {
-            branch: target.branch,
-            path: target.path,
-          }
         })
 
         if (runtime.json) {
@@ -2892,7 +2985,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "gone") {
+      const writeMutationHandlers = new Map<string, () => Promise<number>>([
+        ["mv", handleMv],
+        ["del", handleDel],
+      ])
+      const writeMutationHandler = writeMutationHandlers.get(command)
+      if (writeMutationHandler !== undefined) {
+        return await writeMutationHandler()
+      }
+
+      const handleGone = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         if (parsedArgs.apply === true && parsedArgs.dryRun === true) {
           throw createCliError("INVALID_ARGUMENT", {
@@ -2990,7 +3092,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "get") {
+      const handleGet = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const remoteBranchArg = commandArgs[0] as string
         const { remote, branch } = resolveRemoteAndBranch(remoteBranchArg)
@@ -3100,7 +3202,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "extract") {
+      const handleExtract = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const fromPath = typeof parsedArgs.from === "string" ? parsedArgs.from : undefined
         if (fromPath !== undefined && parsedArgs.current === true) {
@@ -3253,7 +3355,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "absorb") {
+      const worktreeActionHandlers = new Map<string, () => Promise<number>>([
+        ["gone", handleGone],
+        ["get", handleGet],
+        ["extract", handleExtract],
+      ])
+      const worktreeActionHandler = worktreeActionHandlers.get(command)
+      if (worktreeActionHandler !== undefined) {
+        return await worktreeActionHandler()
+      }
+
+      const handleAbsorb = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const fromWorktreeName = typeof parsedArgs.from === "string" ? parsedArgs.from : undefined
@@ -3389,7 +3501,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "unabsorb") {
+      const handleUnabsorb = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const targetWorktreeName = typeof parsedArgs.to === "string" ? parsedArgs.to : undefined
@@ -3531,7 +3643,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "use") {
+      const handleUse = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const allowShared = parsedArgs.allowShared === true
@@ -3636,7 +3748,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "exec") {
+      const synchronizationHandlers = new Map<string, () => Promise<number>>([
+        ["absorb", handleAbsorb],
+        ["unabsorb", handleUnabsorb],
+        ["use", handleUse],
+      ])
+      const synchronizationHandler = synchronizationHandlers.get(command)
+      if (synchronizationHandler !== undefined) {
+        return await synchronizationHandler()
+      }
+
+      const handleExec = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         ensureHasCommandAfterDoubleDash({
           command,
@@ -3699,7 +3821,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return childExitCode === 0 ? EXIT_CODE.OK : EXIT_CODE.CHILD_PROCESS_FAILED
       }
 
-      if (command === "invoke") {
+      const handleInvoke = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const hookName = normalizeHookName(commandArgs[0] as string)
         const snapshot = await collectWorktreeSnapshot(repoRoot)
@@ -3735,12 +3857,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "copy") {
+      const handleCopy = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: Number.MAX_SAFE_INTEGER })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const targetWorktreeRoot = resolveTargetWorktreeRootForCopyLink({
@@ -3778,12 +3899,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "link") {
+      const handleLink = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: Number.MAX_SAFE_INTEGER })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const targetWorktreeRoot = resolveTargetWorktreeRootForCopyLink({
@@ -3837,12 +3957,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "lock") {
+      const handleLock = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const ownerOption = readStringOption(parsedArgsRecord, "owner")
@@ -3893,12 +4012,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "unlock") {
+      const handleUnlock = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const ownerOption = readStringOption(parsedArgsRecord, "owner")
@@ -3946,12 +4064,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "cd") {
+      const handleCd = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const theme = createCatppuccinTheme({
@@ -4004,10 +4121,9 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           cwd: repoRoot,
           isInteractive: () => runtime.isInteractive || process.stderr.isTTY === true,
         }).catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error)
-          if (message.includes("interactive terminal") || message.includes("fzf is required")) {
+          if (error instanceof FzfDependencyError || error instanceof FzfInteractiveRequiredError) {
             throw createCliError("DEPENDENCY_MISSING", {
-              message: `DEPENDENCY_MISSING: ${message}`,
+              message: `DEPENDENCY_MISSING: ${error.message}`,
             })
           }
           throw error
@@ -4035,6 +4151,20 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         }
         stdout(selectedPath)
         return EXIT_CODE.OK
+      }
+
+      const miscCommandHandlers = new Map<string, () => Promise<number>>([
+        ["exec", handleExec],
+        ["invoke", handleInvoke],
+        ["copy", handleCopy],
+        ["link", handleLink],
+        ["lock", handleLock],
+        ["unlock", handleUnlock],
+        ["cd", handleCd],
+      ])
+      const miscCommandHandler = miscCommandHandlers.get(command)
+      if (miscCommandHandler !== undefined) {
+        return await miscCommandHandler()
       }
 
       throw createCliError("UNKNOWN_COMMAND", {

@@ -23,6 +23,67 @@ type RunFzfResult = {
   readonly stdout: string
 }
 
+type FzfErrorCode =
+  | "FZF_DEPENDENCY_MISSING"
+  | "FZF_INTERACTIVE_REQUIRED"
+  | "FZF_INVALID_ARGUMENT"
+  | "FZF_INVALID_SELECTION"
+
+type FzfErrorOptions = {
+  readonly code: FzfErrorCode
+  readonly message: string
+}
+
+class FzfError extends Error {
+  readonly code: FzfErrorCode
+
+  constructor(options: FzfErrorOptions) {
+    super(options.message)
+    this.name = "FzfError"
+    this.code = options.code
+  }
+}
+
+export class FzfDependencyError extends FzfError {
+  constructor(message = "fzf is required for interactive selection") {
+    super({
+      code: "FZF_DEPENDENCY_MISSING",
+      message,
+    })
+    this.name = "FzfDependencyError"
+  }
+}
+
+export class FzfInteractiveRequiredError extends FzfError {
+  constructor(message = "fzf selection requires an interactive terminal") {
+    super({
+      code: "FZF_INTERACTIVE_REQUIRED",
+      message,
+    })
+    this.name = "FzfInteractiveRequiredError"
+  }
+}
+
+class FzfInvalidArgumentError extends FzfError {
+  constructor(message: string) {
+    super({
+      code: "FZF_INVALID_ARGUMENT",
+      message,
+    })
+    this.name = "FzfInvalidArgumentError"
+  }
+}
+
+class FzfInvalidSelectionError extends FzfError {
+  constructor(message: string) {
+    super({
+      code: "FZF_INVALID_SELECTION",
+      message,
+    })
+    this.name = "FzfInvalidSelectionError"
+  }
+}
+
 export type SelectPathWithFzfResult =
   | {
       readonly status: "selected"
@@ -60,7 +121,7 @@ const buildFzfInput = (candidates: ReadonlyArray<string>): string => {
 const validateExtraFzfArgs = (fzfExtraArgs: ReadonlyArray<string>): void => {
   for (const arg of fzfExtraArgs) {
     if (typeof arg !== "string" || arg.length === 0) {
-      throw new Error("Empty value is not allowed for --fzf-arg")
+      throw new FzfInvalidArgumentError("Empty value is not allowed for --fzf-arg")
     }
 
     if (!arg.startsWith("--")) {
@@ -74,7 +135,7 @@ const validateExtraFzfArgs = (fzfExtraArgs: ReadonlyArray<string>): void => {
 
     const optionName = withoutPrefix.split("=")[0]
     if (optionName !== undefined && RESERVED_FZF_ARGS.has(optionName)) {
-      throw new Error(`--fzf-arg cannot override reserved fzf option: --${optionName}`)
+      throw new FzfInvalidArgumentError(`--fzf-arg cannot override reserved fzf option: --${optionName}`)
     }
   }
 }
@@ -138,7 +199,7 @@ const ensureFzfAvailable = async (checkFzfAvailability: () => Promise<boolean>):
     return
   }
 
-  throw new Error("fzf is required for interactive selection")
+  throw new FzfDependencyError()
 }
 
 const shouldTryTmuxPopup = async ({
@@ -192,11 +253,11 @@ export const selectPathWithFzf = async ({
   runFzf = defaultRunFzf,
 }: SelectPathWithFzfInput): Promise<SelectPathWithFzfResult> => {
   if (candidates.length === 0) {
-    throw new Error("No candidates provided for fzf selection")
+    throw new FzfInvalidArgumentError("No candidates provided for fzf selection")
   }
 
   if (isInteractive() !== true) {
-    throw new Error("fzf selection requires an interactive terminal")
+    throw new FzfInteractiveRequiredError()
   }
 
   await ensureFzfAvailable(checkFzfAvailability)
@@ -209,7 +270,7 @@ export const selectPathWithFzf = async ({
   const args = tryTmuxPopup ? [...baseArgs, `--tmux=${tmuxPopupOpts}`] : baseArgs
   const input = buildFzfInput(candidates)
   if (input.length === 0) {
-    throw new Error("All candidates are empty after sanitization")
+    throw new FzfInvalidArgumentError("All candidates are empty after sanitization")
   }
 
   const candidateSet = new Set(input.split("\n").map((candidate) => stripAnsi(candidate)))
@@ -228,7 +289,7 @@ export const selectPathWithFzf = async ({
     }
 
     if (!candidateSet.has(selectedPath)) {
-      throw new Error("fzf returned a value that is not in the candidate list")
+      throw new FzfInvalidSelectionError("fzf returned a value that is not in the candidate list")
     }
 
     return {

@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs"
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { access, rm } from "node:fs/promises"
+import { join } from "node:path"
+import { readJsonRecord, writeJsonAtomically } from "./json-storage"
 import { branchToWorktreeId, getStateDirectoryPath } from "./paths"
 
 export type WorktreeMergeLifecycleRecord = {
@@ -32,52 +33,22 @@ const hasStateDirectory = async (repoRoot: string): Promise<boolean> => {
   }
 }
 
-const parseLifecycle = (content: string): ParsedLifecycle => {
-  try {
-    const parsed = JSON.parse(content) as Partial<WorktreeMergeLifecycleRecord>
-    const isLastDivergedHeadValid =
-      parsed.lastDivergedHead === null ||
-      (typeof parsed.lastDivergedHead === "string" && parsed.lastDivergedHead.length > 0)
+const isWorktreeMergeLifecycleRecord = (
+  parsed: Partial<WorktreeMergeLifecycleRecord>,
+): parsed is WorktreeMergeLifecycleRecord => {
+  const isLastDivergedHeadValid =
+    parsed.lastDivergedHead === null ||
+    (typeof parsed.lastDivergedHead === "string" && parsed.lastDivergedHead.length > 0)
 
-    if (
-      parsed.schemaVersion !== 2 ||
-      typeof parsed.branch !== "string" ||
-      typeof parsed.worktreeId !== "string" ||
-      typeof parsed.baseBranch !== "string" ||
-      typeof parsed.everDiverged !== "boolean" ||
-      isLastDivergedHeadValid !== true ||
-      typeof parsed.createdAt !== "string" ||
-      typeof parsed.updatedAt !== "string"
-    ) {
-      return {
-        valid: false,
-        record: null,
-      }
-    }
-
-    return {
-      valid: true,
-      record: parsed as WorktreeMergeLifecycleRecord,
-    }
-  } catch {
-    return {
-      valid: false,
-      record: null,
-    }
-  }
-}
-
-const writeJsonAtomically = async ({
-  filePath,
-  payload,
-}: {
-  readonly filePath: string
-  readonly payload: Record<string, unknown>
-}): Promise<void> => {
-  await mkdir(dirname(filePath), { recursive: true })
-  const tmpPath = `${filePath}.tmp-${String(process.pid)}-${String(Date.now())}`
-  await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8")
-  await rename(tmpPath, filePath)
+  return (
+    typeof parsed.branch === "string" &&
+    typeof parsed.worktreeId === "string" &&
+    typeof parsed.baseBranch === "string" &&
+    typeof parsed.everDiverged === "boolean" &&
+    isLastDivergedHeadValid &&
+    typeof parsed.createdAt === "string" &&
+    typeof parsed.updatedAt === "string"
+  )
 }
 
 export const readWorktreeMergeLifecycle = async ({
@@ -88,33 +59,11 @@ export const readWorktreeMergeLifecycle = async ({
   readonly branch: string
 }): Promise<ParsedLifecycle & { path: string; exists: boolean }> => {
   const path = lifecycleFilePath(repoRoot, branch)
-  try {
-    await access(path, fsConstants.F_OK)
-  } catch {
-    return {
-      path,
-      exists: false,
-      valid: true,
-      record: null,
-    }
-  }
-
-  try {
-    const content = await readFile(path, "utf8")
-    const parsed = parseLifecycle(content)
-    return {
-      path,
-      exists: true,
-      ...parsed,
-    }
-  } catch {
-    return {
-      path,
-      exists: true,
-      valid: false,
-      record: null,
-    }
-  }
+  return readJsonRecord<WorktreeMergeLifecycleRecord>({
+    path,
+    schemaVersion: 2,
+    validate: isWorktreeMergeLifecycleRecord,
+  })
 }
 
 export const upsertWorktreeMergeLifecycle = async ({
@@ -171,6 +120,7 @@ export const upsertWorktreeMergeLifecycle = async ({
   await writeJsonAtomically({
     filePath: current.path,
     payload: next,
+    ensureDir: true,
   })
   return next
 }
@@ -224,6 +174,7 @@ export const moveWorktreeMergeLifecycle = async ({
   await writeJsonAtomically({
     filePath: targetPath,
     payload: next,
+    ensureDir: true,
   })
 
   if (source.path !== targetPath) {
