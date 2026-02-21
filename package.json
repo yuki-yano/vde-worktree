@@ -30,7 +30,7 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.ts\"",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc --build --noEmit",
     "prepublishOnly": "pnpm clean && pnpm build"
   },
   "keywords": [
