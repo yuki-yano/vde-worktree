@@ -2267,6 +2267,46 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         )
       }
 
+      type WorktreeMutationName = "new" | "switch" | "mv" | "del"
+
+      type WorktreeMutationPlan<TPrecheckResult, TResult> = {
+        readonly name: WorktreeMutationName
+        readonly branch: string | null
+        readonly worktreePath: string
+        readonly extraEnv?: Record<string, string>
+        readonly precheck: () => Promise<TPrecheckResult>
+        readonly runGit: (precheckResult: TPrecheckResult) => Promise<TResult>
+        readonly finalize?: (precheckResult: TPrecheckResult, result: TResult) => Promise<void>
+      }
+
+      const executeWorktreeMutation = async <TPrecheckResult, TResult>({
+        name,
+        branch,
+        worktreePath,
+        extraEnv,
+        precheck,
+        runGit,
+        finalize,
+      }: WorktreeMutationPlan<TPrecheckResult, TResult>): Promise<TResult> => {
+        const precheckResult = await precheck()
+        const hookContext = createHookContext({
+          runtime,
+          repoRoot,
+          action: name,
+          branch,
+          worktreePath,
+          stderr,
+          extraEnv,
+        })
+        await runPreHook({ name, context: hookContext })
+        const result = await runGit(precheckResult)
+        if (finalize !== undefined) {
+          await finalize(precheckResult, result)
+        }
+        await runPostHook({ name, context: hookContext })
+        return result
+      }
+
       const handleInit = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const result = await runWriteOperation(async () => {
@@ -2481,51 +2521,51 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       const handleNew = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const branch = commandArgs[0] ?? randomWipBranchName()
+        const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
         const result = await runWriteOperation(async () => {
-          const snapshot = await collectWorktreeSnapshot(repoRoot)
-          if (containsBranch({ branch, worktrees: snapshot.worktrees })) {
-            throw createCliError("BRANCH_ALREADY_ATTACHED", {
-              message: `Branch is already attached to a worktree: ${branch}`,
-              details: { branch },
-            })
-          }
-
-          if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
-            throw createCliError("BRANCH_ALREADY_EXISTS", {
-              message: `Branch already exists locally: ${branch}`,
-              details: { branch },
-            })
-          }
-
-          const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
-          await ensureTargetPathWritable(targetPath)
-          const baseBranch = await resolveBaseBranch({
-            repoRoot,
-            config: resolvedConfig,
-          })
-
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "new",
+          return executeWorktreeMutation({
+            name: "new",
             branch,
             worktreePath: targetPath,
-            stderr,
-          })
-          await runPreHook({ name: "new", context: hookContext })
-          await runGitCommand({
-            cwd: repoRoot,
-            args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
-          })
-          await upsertWorktreeMergeLifecycle({
-            repoRoot,
-            branch,
-            baseBranch,
-            observedDivergedHead: null,
-          })
-          await runPostHook({ name: "new", context: hookContext })
+            precheck: async () => {
+              const snapshot = await collectWorktreeSnapshot(repoRoot)
+              if (containsBranch({ branch, worktrees: snapshot.worktrees })) {
+                throw createCliError("BRANCH_ALREADY_ATTACHED", {
+                  message: `Branch is already attached to a worktree: ${branch}`,
+                  details: { branch },
+                })
+              }
 
-          return { branch, path: targetPath }
+              if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
+                throw createCliError("BRANCH_ALREADY_EXISTS", {
+                  message: `Branch already exists locally: ${branch}`,
+                  details: { branch },
+                })
+              }
+
+              await ensureTargetPathWritable(targetPath)
+              const baseBranch = await resolveBaseBranch({
+                repoRoot,
+                config: resolvedConfig,
+              })
+              return { baseBranch }
+            },
+            runGit: async ({ baseBranch }) => {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
+              })
+              return { branch, path: targetPath }
+            },
+            finalize: async ({ baseBranch }) => {
+              await upsertWorktreeMergeLifecycle({
+                repoRoot,
+                branch,
+                baseBranch,
+                observedDivergedHead: null,
+              })
+            },
+          })
         })
 
         if (runtime.json) {
@@ -2565,45 +2605,45 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           }
 
           const targetPath = branchToWorktreePath(repoRoot, branch, resolvedConfig.paths.worktreeRoot)
-          await ensureTargetPathWritable(targetPath)
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "switch",
+          return executeWorktreeMutation({
+            name: "switch",
             branch,
             worktreePath: targetPath,
-            stderr,
+            precheck: async () => {
+              await ensureTargetPathWritable(targetPath)
+              if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
+                return {
+                  gitArgs: ["worktree", "add", targetPath, branch] as const,
+                  lifecycleBaseBranch: snapshot.baseBranch,
+                }
+              }
+              const baseBranch = await resolveBaseBranch({
+                repoRoot,
+                config: resolvedConfig,
+              })
+              return {
+                gitArgs: ["worktree", "add", "-b", branch, targetPath, baseBranch] as const,
+                lifecycleBaseBranch: baseBranch,
+              }
+            },
+            runGit: async ({ gitArgs }) => {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: [...gitArgs],
+              })
+              return { status: "created" as const, branch, path: targetPath }
+            },
+            finalize: async ({ lifecycleBaseBranch }) => {
+              if (lifecycleBaseBranch !== null) {
+                await upsertWorktreeMergeLifecycle({
+                  repoRoot,
+                  branch,
+                  baseBranch: lifecycleBaseBranch,
+                  observedDivergedHead: null,
+                })
+              }
+            },
           })
-          await runPreHook({ name: "switch", context: hookContext })
-
-          let lifecycleBaseBranch: string | null = snapshot.baseBranch
-          if (await doesGitRefExist(repoRoot, `refs/heads/${branch}`)) {
-            await runGitCommand({
-              cwd: repoRoot,
-              args: ["worktree", "add", targetPath, branch],
-            })
-          } else {
-            const baseBranch = await resolveBaseBranch({
-              repoRoot,
-              config: resolvedConfig,
-            })
-            lifecycleBaseBranch = baseBranch
-            await runGitCommand({
-              cwd: repoRoot,
-              args: ["worktree", "add", "-b", branch, targetPath, baseBranch],
-            })
-          }
-
-          if (lifecycleBaseBranch !== null) {
-            await upsertWorktreeMergeLifecycle({
-              repoRoot,
-              branch,
-              baseBranch: lifecycleBaseBranch,
-              observedDivergedHead: null,
-            })
-          }
-          await runPostHook({ name: "switch", context: hookContext })
-          return { status: "created" as const, branch, path: targetPath }
         })
 
         if (runtime.json) {
@@ -2660,56 +2700,62 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               path: current.path,
             }
           }
-          if (containsBranch({ branch: newBranch, worktrees: snapshot.worktrees })) {
-            throw createCliError("BRANCH_ALREADY_ATTACHED", {
-              message: `Branch is already attached to another worktree: ${newBranch}`,
-              details: { branch: newBranch },
-            })
-          }
-          if (await doesGitRefExist(repoRoot, `refs/heads/${newBranch}`)) {
-            throw createCliError("BRANCH_ALREADY_EXISTS", {
-              message: `Branch already exists locally: ${newBranch}`,
-              details: { branch: newBranch },
-            })
-          }
-
           const newPath = branchToWorktreePath(repoRoot, newBranch, resolvedConfig.paths.worktreeRoot)
-          await ensureTargetPathWritable(newPath)
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "mv",
+          return executeWorktreeMutation({
+            name: "mv",
             branch: newBranch,
             worktreePath: newPath,
-            stderr,
             extraEnv: {
               WT_OLD_BRANCH: oldBranch,
               WT_NEW_BRANCH: newBranch,
             },
+            precheck: async () => {
+              if (containsBranch({ branch: newBranch, worktrees: snapshot.worktrees })) {
+                throw createCliError("BRANCH_ALREADY_ATTACHED", {
+                  message: `Branch is already attached to another worktree: ${newBranch}`,
+                  details: { branch: newBranch },
+                })
+              }
+              if (await doesGitRefExist(repoRoot, `refs/heads/${newBranch}`)) {
+                throw createCliError("BRANCH_ALREADY_EXISTS", {
+                  message: `Branch already exists locally: ${newBranch}`,
+                  details: { branch: newBranch },
+                })
+              }
+
+              await ensureTargetPathWritable(newPath)
+              return {
+                oldBranch,
+                currentPath: current.path,
+                baseBranch: snapshot.baseBranch,
+              }
+            },
+            runGit: async ({ oldBranch: resolvedOldBranch, currentPath }) => {
+              await runGitCommand({
+                cwd: currentPath,
+                args: ["branch", "-m", resolvedOldBranch, newBranch],
+              })
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["worktree", "move", currentPath, newPath],
+              })
+              return {
+                branch: newBranch,
+                path: newPath,
+              }
+            },
+            finalize: async ({ oldBranch: resolvedOldBranch, baseBranch }) => {
+              if (baseBranch !== null) {
+                await moveWorktreeMergeLifecycle({
+                  repoRoot,
+                  fromBranch: resolvedOldBranch,
+                  toBranch: newBranch,
+                  baseBranch,
+                  observedDivergedHead: null,
+                })
+              }
+            },
           })
-          await runPreHook({ name: "mv", context: hookContext })
-          await runGitCommand({
-            cwd: current.path,
-            args: ["branch", "-m", oldBranch, newBranch],
-          })
-          await runGitCommand({
-            cwd: repoRoot,
-            args: ["worktree", "move", current.path, newPath],
-          })
-          if (snapshot.baseBranch !== null) {
-            await moveWorktreeMergeLifecycle({
-              repoRoot,
-              fromBranch: oldBranch,
-              toBranch: newBranch,
-              baseBranch: snapshot.baseBranch,
-              observedDivergedHead: null,
-            })
-          }
-          await runPostHook({ name: "mv", context: hookContext })
-          return {
-            branch: newBranch,
-            path: newPath,
-          }
         })
 
         if (runtime.json) {
@@ -2777,42 +2823,48 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               },
             })
           }
+          const targetBranch = target.branch
 
-          validateDeleteSafety({
-            target,
-            forceFlags,
-          })
-
-          const hookContext = createHookContext({
-            runtime,
-            repoRoot,
-            action: "del",
-            branch: target.branch,
+          return executeWorktreeMutation({
+            name: "del",
+            branch: targetBranch,
             worktreePath: target.path,
-            stderr,
-          })
-          await runPreHook({ name: "del", context: hookContext })
+            precheck: async () => {
+              validateDeleteSafety({
+                target,
+                forceFlags,
+              })
 
-          const removeArgs = ["worktree", "remove", target.path]
-          if (forceFlags.forceDirty) {
-            removeArgs.push("--force")
-          }
-          await runGitCommand({
-            cwd: repoRoot,
-            args: removeArgs,
+              const removeArgs = ["worktree", "remove", target.path]
+              if (forceFlags.forceDirty) {
+                removeArgs.push("--force")
+              }
+              return {
+                branch: targetBranch,
+                path: target.path,
+                removeArgs,
+                branchDeleteMode: resolveBranchDeleteMode(forceFlags),
+              }
+            },
+            runGit: async ({ branch: targetBranch, removeArgs, branchDeleteMode, path }) => {
+              await runGitCommand({
+                cwd: repoRoot,
+                args: removeArgs,
+              })
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["branch", branchDeleteMode, targetBranch],
+              })
+              return {
+                branch: targetBranch,
+                path,
+              }
+            },
+            finalize: async ({ branch: targetBranch }) => {
+              await deleteWorktreeLock({ repoRoot, branch: targetBranch })
+              await deleteWorktreeMergeLifecycle({ repoRoot, branch: targetBranch })
+            },
           })
-          await runGitCommand({
-            cwd: repoRoot,
-            args: ["branch", resolveBranchDeleteMode(forceFlags), target.branch],
-          })
-          await deleteWorktreeLock({ repoRoot, branch: target.branch })
-          await deleteWorktreeMergeLifecycle({ repoRoot, branch: target.branch })
-
-          await runPostHook({ name: "del", context: hookContext })
-          return {
-            branch: target.branch,
-            path: target.path,
-          }
         })
 
         if (runtime.json) {
