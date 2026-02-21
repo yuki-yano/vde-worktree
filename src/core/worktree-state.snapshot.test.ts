@@ -372,7 +372,7 @@ describe("collectWorktreeSnapshot", () => {
     expect(snapshot.worktrees[0]?.pr.url).toBeNull()
   })
 
-  it("keeps branch unmerged after rebase when no divergence has been observed", async () => {
+  it("returns unknown merged state after rebase when no divergence has been observed", async () => {
     const repoRoot = await createRepoRoot()
     await mkdir(getStateDirectoryPath(repoRoot), { recursive: true })
     const branch = "feature/rebase"
@@ -416,8 +416,8 @@ describe("collectWorktreeSnapshot", () => {
     const beforeRebaseSnapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: false })
     const afterRebaseSnapshot = await collectWorktreeSnapshot(repoRoot, { baseBranch: "main", ghEnabled: false })
 
-    expect(beforeRebaseSnapshot.worktrees[0]?.merged.overall).toBe(false)
-    expect(afterRebaseSnapshot.worktrees[0]?.merged.overall).toBe(false)
+    expect(beforeRebaseSnapshot.worktrees[0]?.merged.overall).toBeNull()
+    expect(afterRebaseSnapshot.worktrees[0]?.merged.overall).toBeNull()
   })
 
   it("marks lifecycle merged when previously diverged head is contained in base", async () => {

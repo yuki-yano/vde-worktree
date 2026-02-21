@@ -257,7 +257,7 @@ const runHook = async ({
       return
     }
 
-    const message = `Hook failed: ${hookName} (exitCode=${String(result.exitCode || 1)})`
+    const message = `Hook failed: ${hookName} (exitCode=${String(result.exitCode)})`
     if (shouldIgnorePostHookFailure({ phase, context })) {
       handleIgnoredPostHookFailure({
         context,

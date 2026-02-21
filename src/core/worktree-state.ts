@@ -212,6 +212,13 @@ const probeLifecycleFromReflog = async ({
   }
 
   const parsedHeads = parseWorkReflogHeads(reflog.stdout)
+  if (parsedHeads.heads.length === 0) {
+    return {
+      merged: null,
+      divergedHead: null,
+    }
+  }
+
   for (const head of parsedHeads.heads) {
     const result = await runGitCommand({
       cwd: repoRoot,

@@ -2274,7 +2274,6 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         commandArgs,
         positionals,
         parsedArgs: parsedArgsRecord,
-        parsedArgsRecord,
         version,
         jsonEnabled,
         availableCommandNames: commandHelpNames,

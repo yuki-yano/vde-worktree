@@ -17,7 +17,6 @@ export type DispatchReadOnlyCommandsInput<CommandHelpEntry, CompletionShell exte
   readonly commandArgs: readonly string[]
   readonly positionals: readonly string[]
   readonly parsedArgs: Record<string, unknown>
-  readonly parsedArgsRecord: Record<string, unknown>
   readonly version: string
   readonly jsonEnabled: boolean
   readonly availableCommandNames: readonly string[]
@@ -65,10 +64,7 @@ export const dispatchReadOnlyCommands = async <CommandHelpEntry, CompletionShell
   input: DispatchReadOnlyCommandsInput<CommandHelpEntry, CompletionShell>,
 ): Promise<DispatchReadOnlyCommandsResult> => {
   if (input.parsedArgs.help === true) {
-    const commandHelpTarget =
-      typeof input.command === "string" && input.command !== "unknown" && input.command !== "help"
-        ? input.command
-        : null
+    const commandHelpTarget = input.command !== "unknown" && input.command !== "help" ? input.command : null
     if (commandHelpTarget !== null) {
       const entry = input.findCommandHelp(commandHelpTarget)
       if (entry !== undefined) {
@@ -126,7 +122,7 @@ export const dispatchReadOnlyCommands = async <CommandHelpEntry, CompletionShell
     if (input.parsedArgs.install === true) {
       const destinationPath = input.resolveCompletionInstallPath({
         shell,
-        requestedPath: input.readStringOption(input.parsedArgsRecord, "path"),
+        requestedPath: input.readStringOption(input.parsedArgs, "path"),
       })
       await input.installCompletionScript({
         content: script,

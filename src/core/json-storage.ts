@@ -91,7 +91,11 @@ export const writeJsonAtomically = async ({
     await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8")
     await rename(tmpPath, filePath)
   } catch (error) {
-    await rm(tmpPath, { force: true })
+    try {
+      await rm(tmpPath, { force: true })
+    } catch {
+      // best-effort cleanup; keep original write error
+    }
     throw error
   }
 }
