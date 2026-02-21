@@ -74,6 +74,7 @@ type OptionValueKind = "boolean" | "value"
 type OptionSpec = {
   readonly kind: OptionValueKind
   readonly allowOptionLikeValue: boolean
+  readonly allowNegation: boolean
 }
 
 type OptionSpecs = {
@@ -576,6 +577,7 @@ const toOptionSpec = (kind: OptionValueKind, optionName: string): OptionSpec => 
   return {
     kind,
     allowOptionLikeValue: optionNamesAllowOptionLikeValue.has(optionName),
+    allowNegation: kind === "boolean",
   }
 }
 
@@ -611,86 +613,180 @@ const buildOptionSpecs = (argsDef: Readonly<ArgsDef>): OptionSpecs => {
   return { longOptions, shortOptions }
 }
 
+const ensureOptionValueToken = ({
+  valueToken,
+  optionLabel,
+  optionSpec,
+}: {
+  readonly valueToken: string
+  readonly optionLabel: string
+  readonly optionSpec: OptionSpec
+}): void => {
+  if (valueToken.length === 0) {
+    throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: ${optionLabel}` })
+  }
+  if (valueToken.startsWith("-") && optionSpec.allowOptionLikeValue !== true) {
+    throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: ${optionLabel}` })
+  }
+}
+
+const resolveLongOption = ({
+  rawOptionName,
+  optionSpecs,
+}: {
+  readonly rawOptionName: string
+  readonly optionSpecs: OptionSpecs
+}):
+  | {
+      readonly optionSpec: OptionSpec
+      readonly optionName: string
+    }
+  | undefined => {
+  const directOptionSpec = optionSpecs.longOptions.get(rawOptionName)
+  if (directOptionSpec !== undefined) {
+    return {
+      optionSpec: directOptionSpec,
+      optionName: rawOptionName,
+    }
+  }
+
+  if (rawOptionName.startsWith("no-")) {
+    const optionName = rawOptionName.slice(3)
+    const negatedOptionSpec = optionSpecs.longOptions.get(optionName)
+    if (negatedOptionSpec?.allowNegation === true) {
+      return {
+        optionSpec: negatedOptionSpec,
+        optionName,
+      }
+    }
+  }
+
+  return undefined
+}
+
+const validateLongOptionToken = ({
+  args,
+  index,
+  token,
+  optionSpecs,
+}: {
+  readonly args: readonly string[]
+  readonly index: number
+  readonly token: string
+  readonly optionSpecs: OptionSpecs
+}): number => {
+  const value = token.slice(2)
+  if (value.length === 0) {
+    return index
+  }
+
+  const separatorIndex = value.indexOf("=")
+  const rawOptionName = separatorIndex >= 0 ? value.slice(0, separatorIndex) : value
+  const resolved = resolveLongOption({
+    rawOptionName,
+    optionSpecs,
+  })
+  if (resolved === undefined) {
+    throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: --${rawOptionName}` })
+  }
+
+  if (resolved.optionSpec.kind !== "value") {
+    return index
+  }
+
+  if (separatorIndex >= 0) {
+    const inlineValue = value.slice(separatorIndex + 1)
+    if (inlineValue.length === 0) {
+      throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
+    }
+    return index
+  }
+
+  const nextToken = args[index + 1]
+  if (typeof nextToken !== "string") {
+    throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
+  }
+  ensureOptionValueToken({
+    valueToken: nextToken,
+    optionLabel: `--${rawOptionName}`,
+    optionSpec: resolved.optionSpec,
+  })
+  return index + 1
+}
+
+const validateShortOptionToken = ({
+  args,
+  index,
+  token,
+  optionSpecs,
+}: {
+  readonly args: readonly string[]
+  readonly index: number
+  readonly token: string
+  readonly optionSpecs: OptionSpecs
+}): number => {
+  const shortFlags = token.slice(1)
+  for (let flagIndex = 0; flagIndex < shortFlags.length; flagIndex += 1) {
+    const option = shortFlags[flagIndex]
+    if (typeof option !== "string" || option.length === 0) {
+      continue
+    }
+
+    const optionSpec = optionSpecs.shortOptions.get(option)
+    if (optionSpec === undefined) {
+      throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: -${option}` })
+    }
+    if (optionSpec.kind !== "value") {
+      continue
+    }
+
+    if (flagIndex < shortFlags.length - 1) {
+      return index
+    }
+
+    const nextToken = args[index + 1]
+    if (typeof nextToken !== "string") {
+      throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: -${option}` })
+    }
+    ensureOptionValueToken({
+      valueToken: nextToken,
+      optionLabel: `-${option}`,
+      optionSpec,
+    })
+    return index + 1
+  }
+  return index
+}
+
 const validateRawOptions = (args: readonly string[], optionSpecs: OptionSpecs): void => {
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index]
     if (typeof token !== "string") {
       continue
     }
-
     if (token === "--") {
       break
     }
-
     if (!token.startsWith("-") || token === "-") {
       continue
     }
 
     if (token.startsWith("--")) {
-      const value = token.slice(2)
-      if (value.length === 0) {
-        continue
-      }
-
-      const separatorIndex = value.indexOf("=")
-      const rawOptionName = separatorIndex >= 0 ? value.slice(0, separatorIndex) : value
-      const directOptionSpec = optionSpecs.longOptions.get(rawOptionName)
-      const optionNameForNegation = rawOptionName.startsWith("no-") ? rawOptionName.slice(3) : rawOptionName
-      const optionSpec = directOptionSpec ?? optionSpecs.longOptions.get(optionNameForNegation)
-      if (optionSpec === undefined) {
-        throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: --${rawOptionName}` })
-      }
-      const kind = optionSpec.kind
-
-      if (kind === "value") {
-        if (separatorIndex >= 0) {
-          const inlineValue = value.slice(separatorIndex + 1)
-          if (inlineValue.length === 0) {
-            throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
-          }
-        } else {
-          const nextToken = args[index + 1]
-          if (typeof nextToken !== "string" || nextToken.length === 0) {
-            throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
-          }
-          if (nextToken.startsWith("-") && optionSpec.allowOptionLikeValue !== true) {
-            throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: --${rawOptionName}` })
-          }
-          index += 1
-        }
-      }
+      index = validateLongOptionToken({
+        args,
+        index,
+        token,
+        optionSpecs,
+      })
       continue
     }
 
-    const shortFlags = token.slice(1)
-    for (let flagIndex = 0; flagIndex < shortFlags.length; flagIndex += 1) {
-      const option = shortFlags[flagIndex]
-      if (typeof option !== "string" || option.length === 0) {
-        continue
-      }
-
-      const optionSpec = optionSpecs.shortOptions.get(option)
-      if (optionSpec === undefined) {
-        throw createCliError("INVALID_ARGUMENT", { message: `Unknown option: -${option}` })
-      }
-      const kind = optionSpec.kind
-
-      if (kind === "value") {
-        if (flagIndex < shortFlags.length - 1) {
-          break
-        }
-
-        const nextToken = args[index + 1]
-        if (typeof nextToken !== "string" || nextToken.length === 0) {
-          throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: -${option}` })
-        }
-        if (nextToken.startsWith("-") && optionSpec.allowOptionLikeValue !== true) {
-          throw createCliError("INVALID_ARGUMENT", { message: `Missing value for option: -${option}` })
-        }
-        index += 1
-        break
-      }
-    }
+    index = validateShortOptionToken({
+      args,
+      index,
+      token,
+      optionSpecs,
+    })
   }
 }
 
