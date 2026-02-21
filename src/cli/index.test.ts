@@ -1216,12 +1216,12 @@ exit 1
     expect(await cli.run(["-vh"])).toBe(0)
 
     stderr.length = 0
-    const noGhExitCode = await cli.run(["list", "--no-gh"])
+    const noGhExitCode = await cli.run(["help", "--no-gh"])
     expect(noGhExitCode).not.toBe(3)
     expect(stderr.some((line) => line.includes("Unknown option"))).toBe(false)
 
     stderr.length = 0
-    const inlineValueExitCode = await cli.run(["list", "--hook-timeout-ms=100"])
+    const inlineValueExitCode = await cli.run(["help", "--hook-timeout-ms=100"])
     expect(inlineValueExitCode).not.toBe(3)
     expect(stderr.some((line) => line.includes("Missing value for option"))).toBe(false)
   })
