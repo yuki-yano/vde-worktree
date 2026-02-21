@@ -5,6 +5,7 @@ import { execa } from "execa"
 import stringWidth from "string-width"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { branchToWorktreeId } from "../core/paths"
+import { FzfDependencyError } from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createCli } from "./index"
 
@@ -1629,7 +1630,7 @@ echo '[{"headRefName":"feature/pr-url","state":"OPEN","mergedAt":null,"updatedAt
     tempDirs.add(repoRoot)
     const stdout: string[] = []
     const selectPathWithFzf = vi.fn<(input: SelectPathWithFzfInput) => Promise<SelectPathWithFzfResult>>(async () => {
-      throw new Error("fzf is required for interactive selection")
+      throw new FzfDependencyError()
     })
 
     const cli = createCli({

@@ -15,6 +15,40 @@ type GhCommandRunner = (input: GhCommandRunnerInput) => Promise<GhCommandRunnerO
 
 type ExecaLikeError = Error & {
   readonly code?: string
+  readonly stderr?: string
+  readonly exitCode?: number
+}
+
+export class GhUnavailableError extends Error {
+  readonly code = "GH_UNAVAILABLE"
+
+  constructor(message = "gh command is unavailable") {
+    super(message)
+    this.name = "GhUnavailableError"
+  }
+}
+
+export class GhCommandError extends Error {
+  readonly code = "GH_COMMAND_FAILED"
+  readonly details: {
+    readonly exitCode: number
+    readonly stderr: string
+  }
+
+  constructor({
+    exitCode,
+    stderr,
+  }: {
+    readonly exitCode: number
+    readonly stderr: string
+  }) {
+    super(`gh command failed with exitCode=${String(exitCode)}`)
+    this.name = "GhCommandError"
+    this.details = {
+      exitCode,
+      stderr,
+    }
+  }
 }
 
 type ResolvePrByBranchBatchInput = {
@@ -40,14 +74,22 @@ type PrSummary = {
 }
 
 const defaultRunGh: GhCommandRunner = async ({ cwd, args }) => {
-  const result = await execa("gh", [...args], {
-    cwd,
-    reject: false,
-  })
-  return {
-    exitCode: result.exitCode ?? 0,
-    stdout: result.stdout,
-    stderr: result.stderr,
+  try {
+    const result = await execa("gh", [...args], {
+      cwd,
+      reject: false,
+    })
+    return {
+      exitCode: result.exitCode ?? 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }
+  } catch (error) {
+    const execaError = error as ExecaLikeError
+    if (execaError.code === "ENOENT") {
+      throw new GhUnavailableError("gh command not found")
+    }
+    throw error
   }
 }
 
@@ -222,7 +264,10 @@ export const resolvePrStateByBranchBatch = async ({
       ],
     })
     if (result.exitCode !== 0) {
-      return buildUnknownPrStateMap(targetBranches)
+      throw new GhCommandError({
+        exitCode: result.exitCode,
+        stderr: result.stderr,
+      })
     }
 
     const prStatusByBranch = parsePrStateByBranch({
@@ -235,6 +280,9 @@ export const resolvePrStateByBranchBatch = async ({
 
     return prStatusByBranch
   } catch (error) {
+    if (error instanceof GhUnavailableError || error instanceof GhCommandError) {
+      return buildUnknownPrStateMap(targetBranches)
+    }
     const execaError = error as ExecaLikeError
     if (execaError.code === "ENOENT") {
       return buildUnknownPrStateMap(targetBranches)

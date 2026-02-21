@@ -46,7 +46,11 @@ import {
   type WorktreeStatus,
 } from "../core/worktree-state"
 import { doesGitRefExist, runGitCommand } from "../git/exec"
-import { selectPathWithFzf as defaultSelectPathWithFzf } from "../integrations/fzf"
+import {
+  FzfDependencyError,
+  FzfInteractiveRequiredError,
+  selectPathWithFzf as defaultSelectPathWithFzf,
+} from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createLogger, LogLevel, type Logger } from "../utils/logger"
 import { dispatchReadOnlyCommands } from "./commands/read/dispatcher"
@@ -4020,10 +4024,9 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           cwd: repoRoot,
           isInteractive: () => runtime.isInteractive || process.stderr.isTTY === true,
         }).catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error)
-          if (message.includes("interactive terminal") || message.includes("fzf is required")) {
+          if (error instanceof FzfDependencyError || error instanceof FzfInteractiveRequiredError) {
             throw createCliError("DEPENDENCY_MISSING", {
-              message: `DEPENDENCY_MISSING: ${message}`,
+              message: `DEPENDENCY_MISSING: ${error.message}`,
             })
           }
           throw error
