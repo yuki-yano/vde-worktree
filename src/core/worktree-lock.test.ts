@@ -1,18 +1,18 @@
 import { constants as fsConstants } from "node:fs"
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { access, mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { cleanupRepoFixtures, createRepoFixture } from "../test-utils/repo-fixture"
 import { branchToWorktreeId, getLocksDirectoryPath } from "./paths"
 import { deleteWorktreeLock, readWorktreeLock, upsertWorktreeLock } from "./worktree-lock"
 
-const tempDirs = new Set<string>()
-
 const createRepoRoot = async (): Promise<string> => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "vde-worktree-lock-"))
-  tempDirs.add(repoRoot)
-  await mkdir(getLocksDirectoryPath(repoRoot), { recursive: true })
-  return repoRoot
+  return createRepoFixture({
+    prefix: "vde-worktree-lock-",
+    setup: async (repoRoot) => {
+      await mkdir(getLocksDirectoryPath(repoRoot), { recursive: true })
+    },
+  })
 }
 
 const fileExists = async (path: string): Promise<boolean> => {
@@ -24,14 +24,7 @@ const fileExists = async (path: string): Promise<boolean> => {
   }
 }
 
-afterEach(async () => {
-  await Promise.all(
-    [...tempDirs].map(async (dir) => {
-      await rm(dir, { recursive: true, force: true })
-    }),
-  )
-  tempDirs.clear()
-})
+afterEach(cleanupRepoFixtures)
 
 describe("worktree lock", () => {
   it("returns not exists when lock file is absent", async () => {

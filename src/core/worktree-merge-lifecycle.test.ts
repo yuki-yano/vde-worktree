@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { cleanupRepoFixtures, createRepoFixture } from "../test-utils/repo-fixture"
 import {
   deleteWorktreeMergeLifecycle,
   moveWorktreeMergeLifecycle,
@@ -10,23 +10,16 @@ import {
 } from "./worktree-merge-lifecycle"
 import { branchToWorktreeId, getStateDirectoryPath } from "./paths"
 
-const tempDirs = new Set<string>()
-
 const createRepoRoot = async (): Promise<string> => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "vde-worktree-merge-lifecycle-"))
-  tempDirs.add(repoRoot)
-  await mkdir(getStateDirectoryPath(repoRoot), { recursive: true })
-  return repoRoot
+  return createRepoFixture({
+    prefix: "vde-worktree-merge-lifecycle-",
+    setup: async (repoRoot) => {
+      await mkdir(getStateDirectoryPath(repoRoot), { recursive: true })
+    },
+  })
 }
 
-afterEach(async () => {
-  await Promise.all(
-    [...tempDirs].map(async (dir) => {
-      await rm(dir, { recursive: true, force: true })
-    }),
-  )
-  tempDirs.clear()
-})
+afterEach(cleanupRepoFixtures)
 
 describe("worktree merge lifecycle", () => {
   it("creates lifecycle record without divergence evidence", async () => {

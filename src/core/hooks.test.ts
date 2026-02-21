@@ -1,16 +1,16 @@
-import { chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { cleanupRepoFixtures, createRepoFixture } from "../test-utils/repo-fixture"
 import { invokeHook, runPostHook, runPreHook, type HookExecutionContext } from "./hooks"
 
-const tempDirs = new Set<string>()
-
 const createRepoRoot = async (): Promise<string> => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "vde-worktree-hooks-"))
-  tempDirs.add(repoRoot)
-  await mkdir(join(repoRoot, ".vde", "worktree", "hooks"), { recursive: true })
-  return repoRoot
+  return createRepoFixture({
+    prefix: "vde-worktree-hooks-",
+    setup: async (repoRoot) => {
+      await mkdir(join(repoRoot, ".vde", "worktree", "hooks"), { recursive: true })
+    },
+  })
 }
 
 const writeHook = async ({
@@ -57,14 +57,7 @@ const buildContext = ({
   }
 }
 
-afterEach(async () => {
-  await Promise.all(
-    [...tempDirs].map(async (dir) => {
-      await rm(dir, { recursive: true, force: true })
-    }),
-  )
-  tempDirs.clear()
-})
+afterEach(cleanupRepoFixtures)
 
 describe("hooks", () => {
   it("returns immediately when hooks are disabled", async () => {
