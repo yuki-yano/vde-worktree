@@ -1,5 +1,6 @@
 import { EXIT_CODE } from "../../../core/constants"
 import { createCliError } from "../../../core/errors"
+import type { CommandContext } from "../../runtime/command-context"
 
 type DispatchHandled = {
   readonly handled: true
@@ -12,13 +13,13 @@ type DispatchNotHandled = {
 
 export type DispatchReadOnlyCommandsResult = DispatchHandled | DispatchNotHandled
 
-export type DispatchReadOnlyCommandsInput<CommandHelpEntry, CompletionShell extends string> = {
-  readonly command: string
-  readonly commandArgs: readonly string[]
-  readonly positionals: readonly string[]
-  readonly parsedArgs: Record<string, unknown>
+type ReadOnlyCommandContext = Pick<
+  CommandContext,
+  "command" | "commandArgs" | "positionals" | "parsedArgs" | "jsonEnabled"
+>
+
+export type DispatchReadOnlyCommandsInput<CommandHelpEntry, CompletionShell extends string> = ReadOnlyCommandContext & {
   readonly version: string
-  readonly jsonEnabled: boolean
   readonly availableCommandNames: readonly string[]
   readonly stdout: (line: string) => void
   readonly findCommandHelp: (commandName: string) => CommandHelpEntry | undefined

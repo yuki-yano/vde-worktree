@@ -53,8 +53,18 @@ import {
 } from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createLogger, LogLevel, type Logger } from "../utils/logger"
+import {
+  createEarlyRepoCommandHandlers,
+  createMiscCommandHandlers,
+  createSynchronizationHandlers,
+  createWorktreeActionHandlers,
+  createWriteCommandHandlers,
+  createWriteMutationHandlers,
+  dispatchCommandHandler,
+} from "./commands/handler-groups"
 import { dispatchReadOnlyCommands } from "./commands/read/dispatcher"
 import { loadPackageVersion } from "./package-version"
+import type { CommandContext } from "./runtime/command-context"
 
 export type CLI = {
   run(args?: string[]): Promise<number>
@@ -2268,14 +2278,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       command = positionals[0] ?? "unknown"
       const commandArgs = positionals.slice(1)
       jsonEnabled = parsedArgs.json === true
-
-      const readOnlyDispatch = await dispatchReadOnlyCommands({
+      const commandContext: CommandContext = {
         command,
         commandArgs,
         positionals,
         parsedArgs: parsedArgsRecord,
-        version,
         jsonEnabled,
+      }
+
+      const readOnlyDispatch = await dispatchReadOnlyCommands({
+        ...commandContext,
+        version,
         availableCommandNames: commandHelpNames,
         stdout,
         findCommandHelp,
@@ -2608,15 +2621,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      const earlyRepoCommandHandlers = new Map<string, () => Promise<number>>([
-        ["init", handleInit],
-        ["list", handleList],
-        ["status", handleStatus],
-        ["path", handlePath],
-      ])
-      const earlyRepoCommandHandler = earlyRepoCommandHandlers.get(command)
-      if (earlyRepoCommandHandler !== undefined) {
-        return await earlyRepoCommandHandler()
+      const earlyRepoExitCode = await dispatchCommandHandler({
+        command,
+        handlers: createEarlyRepoCommandHandlers({
+          initHandler: handleInit,
+          listHandler: handleList,
+          statusHandler: handleStatus,
+          pathHandler: handlePath,
+        }),
+      })
+      if (earlyRepoExitCode !== undefined) {
+        return earlyRepoExitCode
       }
 
       const handleNew = async (): Promise<number> => {
@@ -2767,13 +2782,15 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      const writeCommandHandlers = new Map<string, () => Promise<number>>([
-        ["new", handleNew],
-        ["switch", handleSwitch],
-      ])
-      const writeCommandHandler = writeCommandHandlers.get(command)
-      if (writeCommandHandler !== undefined) {
-        return await writeCommandHandler()
+      const writeCommandExitCode = await dispatchCommandHandler({
+        command,
+        handlers: createWriteCommandHandlers({
+          newHandler: handleNew,
+          switchHandler: handleSwitch,
+        }),
+      })
+      if (writeCommandExitCode !== undefined) {
+        return writeCommandExitCode
       }
 
       const handleMv = async (): Promise<number> => {
@@ -2985,13 +3002,15 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      const writeMutationHandlers = new Map<string, () => Promise<number>>([
-        ["mv", handleMv],
-        ["del", handleDel],
-      ])
-      const writeMutationHandler = writeMutationHandlers.get(command)
-      if (writeMutationHandler !== undefined) {
-        return await writeMutationHandler()
+      const writeMutationExitCode = await dispatchCommandHandler({
+        command,
+        handlers: createWriteMutationHandlers({
+          mvHandler: handleMv,
+          delHandler: handleDel,
+        }),
+      })
+      if (writeMutationExitCode !== undefined) {
+        return writeMutationExitCode
       }
 
       const handleGone = async (): Promise<number> => {
@@ -3355,14 +3374,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      const worktreeActionHandlers = new Map<string, () => Promise<number>>([
-        ["gone", handleGone],
-        ["get", handleGet],
-        ["extract", handleExtract],
-      ])
-      const worktreeActionHandler = worktreeActionHandlers.get(command)
-      if (worktreeActionHandler !== undefined) {
-        return await worktreeActionHandler()
+      const worktreeActionExitCode = await dispatchCommandHandler({
+        command,
+        handlers: createWorktreeActionHandlers({
+          goneHandler: handleGone,
+          getHandler: handleGet,
+          extractHandler: handleExtract,
+        }),
+      })
+      if (worktreeActionExitCode !== undefined) {
+        return worktreeActionExitCode
       }
 
       const handleAbsorb = async (): Promise<number> => {
@@ -3748,14 +3769,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      const synchronizationHandlers = new Map<string, () => Promise<number>>([
-        ["absorb", handleAbsorb],
-        ["unabsorb", handleUnabsorb],
-        ["use", handleUse],
-      ])
-      const synchronizationHandler = synchronizationHandlers.get(command)
-      if (synchronizationHandler !== undefined) {
-        return await synchronizationHandler()
+      const synchronizationExitCode = await dispatchCommandHandler({
+        command,
+        handlers: createSynchronizationHandlers({
+          absorbHandler: handleAbsorb,
+          unabsorbHandler: handleUnabsorb,
+          useHandler: handleUse,
+        }),
+      })
+      if (synchronizationExitCode !== undefined) {
+        return synchronizationExitCode
       }
 
       const handleExec = async (): Promise<number> => {
@@ -4153,18 +4176,20 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      const miscCommandHandlers = new Map<string, () => Promise<number>>([
-        ["exec", handleExec],
-        ["invoke", handleInvoke],
-        ["copy", handleCopy],
-        ["link", handleLink],
-        ["lock", handleLock],
-        ["unlock", handleUnlock],
-        ["cd", handleCd],
-      ])
-      const miscCommandHandler = miscCommandHandlers.get(command)
-      if (miscCommandHandler !== undefined) {
-        return await miscCommandHandler()
+      const miscCommandExitCode = await dispatchCommandHandler({
+        command,
+        handlers: createMiscCommandHandlers({
+          execHandler: handleExec,
+          invokeHandler: handleInvoke,
+          copyHandler: handleCopy,
+          linkHandler: handleLink,
+          lockHandler: handleLock,
+          unlockHandler: handleUnlock,
+          cdHandler: handleCd,
+        }),
+      })
+      if (miscCommandExitCode !== undefined) {
+        return miscCommandExitCode
       }
 
       throw createCliError("UNKNOWN_COMMAND", {
