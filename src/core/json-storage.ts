@@ -1,5 +1,4 @@
-import { constants as fsConstants } from "node:fs"
-import { access, mkdir, open, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
 export type ParsedJsonRecord<T> = {
@@ -44,18 +43,7 @@ export const readJsonRecord = async <T>({
   readonly path: string
   readonly schemaVersion: number
   readonly validate: (candidate: Partial<T>) => candidate is T
-}): Promise<ParsedJsonRecord<T> & { path: string; exists: boolean }> => {
-  try {
-    await access(path, fsConstants.F_OK)
-  } catch {
-    return {
-      path,
-      exists: false,
-      valid: true,
-      record: null,
-    }
-  }
-
+}): Promise<ParsedJsonRecord<T> & { readonly path: string; readonly exists: boolean }> => {
   try {
     const content = await readFile(path, "utf8")
     return {
@@ -67,7 +55,16 @@ export const readJsonRecord = async <T>({
         validate,
       }),
     }
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT") {
+      return {
+        path,
+        exists: false,
+        valid: true,
+        record: null,
+      }
+    }
     return {
       path,
       exists: true,
@@ -90,8 +87,13 @@ export const writeJsonAtomically = async ({
     await mkdir(dirname(filePath), { recursive: true })
   }
   const tmpPath = `${filePath}.tmp-${String(process.pid)}-${String(Date.now())}`
-  await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8")
-  await rename(tmpPath, filePath)
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8")
+    await rename(tmpPath, filePath)
+  } catch (error) {
+    await rm(tmpPath, { force: true })
+    throw error
+  }
 }
 
 export const writeJsonExclusively = async ({
@@ -101,10 +103,10 @@ export const writeJsonExclusively = async ({
   readonly path: string
   readonly payload: Record<string, unknown>
 }): Promise<boolean> => {
+  let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
-    const handle = await open(path, "wx")
+    handle = await open(path, "wx")
     await handle.writeFile(`${JSON.stringify(payload)}\n`, "utf8")
-    await handle.close()
     return true
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
@@ -112,5 +114,9 @@ export const writeJsonExclusively = async ({
       return false
     }
     throw error
+  } finally {
+    if (handle !== undefined) {
+      await handle.close()
+    }
   }
 }

@@ -741,7 +741,9 @@ const validateShortOptionToken = ({
     }
 
     if (flagIndex < shortFlags.length - 1) {
-      return index
+      throw createCliError("INVALID_ARGUMENT", {
+        message: `Missing value for option: -${option}`,
+      })
     }
 
     const nextToken = args[index + 1]

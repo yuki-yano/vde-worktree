@@ -20,10 +20,20 @@ export const createRepoFixture = async ({
 }
 
 export const cleanupRepoFixtures = async (): Promise<void> => {
-  await Promise.all(
-    [...fixtureRoots].map(async (repoRoot) => {
-      await rm(repoRoot, { recursive: true, force: true })
-    }),
-  )
-  fixtureRoots.clear()
+  const roots = [...fixtureRoots]
+  try {
+    const results = await Promise.allSettled(
+      roots.map(async (repoRoot) => {
+        await rm(repoRoot, { recursive: true, force: true })
+      }),
+    )
+    const errors = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason)
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "Failed to clean up some repo fixtures")
+    }
+  } finally {
+    fixtureRoots.clear()
+  }
 }

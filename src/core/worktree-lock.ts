@@ -23,6 +23,7 @@ type ParsedLock = {
 
 export const isWorktreeLockRecord = (parsed: Partial<WorktreeLockRecord>): parsed is WorktreeLockRecord => {
   return (
+    parsed.schemaVersion === 1 &&
     typeof parsed.branch === "string" &&
     typeof parsed.worktreeId === "string" &&
     typeof parsed.reason === "string" &&

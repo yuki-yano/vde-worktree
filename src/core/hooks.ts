@@ -29,6 +29,7 @@ type HookExecutionError = Error & {
 type HookExecutionResult = {
   readonly exitCode: number
   readonly stderr: string
+  readonly timedOut: boolean
   readonly startedAt: string
   readonly endedAt: string
 }
@@ -132,6 +133,7 @@ const executeHookProcess = async ({
   return {
     exitCode: result.exitCode ?? 0,
     stderr: result.stderr ?? "",
+    timedOut: result.timedOut === true,
     startedAt,
     endedAt,
   }
@@ -158,6 +160,7 @@ const writeHookLog = async ({
     `start=${result.startedAt}`,
     `end=${result.endedAt}`,
     `exitCode=${String(result.exitCode)}`,
+    `timedOut=${result.timedOut ? "1" : "0"}`,
     `stderr=${result.stderr}`,
     "",
   ].join("\n")
@@ -237,6 +240,18 @@ const runHook = async ({
       phase,
       result,
     })
+
+    if (result.timedOut) {
+      throw createCliError("HOOK_TIMEOUT", {
+        message: `Hook timed out: ${hookName}`,
+        details: {
+          hook: hookName,
+          timeoutMs: context.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS,
+          exitCode: result.exitCode,
+          stderr: result.stderr,
+        },
+      })
+    }
 
     if (result.exitCode === 0) {
       return
