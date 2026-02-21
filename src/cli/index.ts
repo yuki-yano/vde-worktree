@@ -49,6 +49,7 @@ import { doesGitRefExist, runGitCommand } from "../git/exec"
 import { selectPathWithFzf as defaultSelectPathWithFzf } from "../integrations/fzf"
 import type { SelectPathWithFzfInput, SelectPathWithFzfResult } from "../integrations/fzf"
 import { createLogger, LogLevel, type Logger } from "../utils/logger"
+import { dispatchReadOnlyCommands } from "./commands/read/dispatcher"
 import { loadPackageVersion } from "./package-version"
 
 export type CLI = {
@@ -541,6 +542,8 @@ const commandHelpEntries: readonly CommandHelp[] = [
     options: ["--install", "--path <file>"],
   },
 ] as const
+
+const commandHelpNames = commandHelpEntries.map((entry) => entry.name)
 
 const splitRawArgsByDoubleDash = (
   args: readonly string[],
@@ -2161,117 +2164,35 @@ export const createCli = (options: CLIOptions = {}): CLI => {
       const parsedArgsRecord = parsedArgs as Record<string, unknown>
       const positionals = getPositionals(parsedArgs)
       command = positionals[0] ?? "unknown"
+      const commandArgs = positionals.slice(1)
       jsonEnabled = parsedArgs.json === true
 
-      if (parsedArgs.help === true) {
-        const commandHelpTarget =
-          typeof command === "string" && command !== "unknown" && command !== "help" ? command : null
-        if (commandHelpTarget !== null) {
-          const entry = findCommandHelp(commandHelpTarget)
-          if (entry !== undefined) {
-            stdout(`${renderCommandHelpText({ entry })}\n`)
-            return EXIT_CODE.OK
-          }
-        }
-        stdout(`${renderGeneralHelpText({ version })}\n`)
-        return EXIT_CODE.OK
-      }
-
-      if (parsedArgs.version === true) {
-        stdout(version)
-        return EXIT_CODE.OK
+      const readOnlyDispatch = await dispatchReadOnlyCommands({
+        command,
+        commandArgs,
+        positionals,
+        parsedArgs: parsedArgsRecord,
+        parsedArgsRecord,
+        version,
+        jsonEnabled,
+        availableCommandNames: commandHelpNames,
+        stdout,
+        findCommandHelp,
+        renderGeneralHelpText,
+        renderCommandHelpText,
+        ensureArgumentCount,
+        resolveCompletionShell,
+        loadCompletionScript,
+        resolveCompletionInstallPath,
+        installCompletionScript,
+        readStringOption,
+        buildJsonSuccess,
+      })
+      if (readOnlyDispatch.handled) {
+        return readOnlyDispatch.exitCode
       }
 
       logger = parsedArgs.verbose === true ? createLogger({ level: LogLevel.INFO }) : createLogger()
-
-      if (positionals.length === 0) {
-        stdout(`${renderGeneralHelpText({ version })}\n`)
-        return EXIT_CODE.OK
-      }
-
-      if (command === "help") {
-        const helpTarget = positionals[1]
-        if (typeof helpTarget !== "string" || helpTarget.length === 0) {
-          stdout(`${renderGeneralHelpText({ version })}\n`)
-          return EXIT_CODE.OK
-        }
-
-        const entry = findCommandHelp(helpTarget)
-        if (entry === undefined) {
-          throw createCliError("INVALID_ARGUMENT", {
-            message: `Unknown command for help: ${helpTarget}`,
-            details: {
-              requested: helpTarget,
-              availableCommands: commandHelpEntries.map((item) => item.name),
-            },
-          })
-        }
-
-        stdout(`${renderCommandHelpText({ entry })}\n`)
-        return EXIT_CODE.OK
-      }
-
-      const commandArgs = positionals.slice(1)
-      if (command === "completion") {
-        ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
-        const shell = resolveCompletionShell(commandArgs[0] as string)
-        const script = await loadCompletionScript(shell)
-
-        if (parsedArgs.install === true) {
-          const destinationPath = resolveCompletionInstallPath({
-            shell,
-            requestedPath: readStringOption(parsedArgsRecord, "path"),
-          })
-          await installCompletionScript({
-            content: script,
-            destinationPath,
-          })
-
-          if (jsonEnabled) {
-            stdout(
-              JSON.stringify(
-                buildJsonSuccess({
-                  command,
-                  status: "ok",
-                  repoRoot: null,
-                  details: {
-                    shell,
-                    installed: true,
-                    path: destinationPath,
-                  },
-                }),
-              ),
-            )
-            return EXIT_CODE.OK
-          }
-
-          stdout(`installed completion: ${destinationPath}`)
-          if (shell === "zsh") {
-            stdout("zsh note: ensure completion path is in fpath, then run: autoload -Uz compinit && compinit")
-          }
-          return EXIT_CODE.OK
-        }
-
-        if (jsonEnabled) {
-          stdout(
-            JSON.stringify(
-              buildJsonSuccess({
-                command,
-                status: "ok",
-                repoRoot: null,
-                details: {
-                  shell,
-                  installed: false,
-                  script,
-                },
-              }),
-            ),
-          )
-          return EXIT_CODE.OK
-        }
-        stdout(script)
-        return EXIT_CODE.OK
-      }
 
       const allowUnsafe = parsedArgs.allowUnsafe === true
       if (parsedArgs.hooks === false && allowUnsafe !== true) {
@@ -2346,7 +2267,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         )
       }
 
-      if (command === "init") {
+      const handleInit = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const result = await runWriteOperation(async () => {
           const hookContext = createHookContext({
@@ -2380,12 +2301,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "list") {
+      const handleList = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         if (runtime.json) {
@@ -2486,7 +2406,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "status") {
+      const handleStatus = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const targetBranch = commandArgs[0]
@@ -2521,7 +2441,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "path") {
+      const handlePath = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const snapshot = await collectWorktreeSnapshot(repoRoot)
@@ -2547,7 +2467,18 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "new") {
+      const earlyRepoCommandHandlers = new Map<string, () => Promise<number>>([
+        ["init", handleInit],
+        ["list", handleList],
+        ["status", handleStatus],
+        ["path", handlePath],
+      ])
+      const earlyRepoCommandHandler = earlyRepoCommandHandlers.get(command)
+      if (earlyRepoCommandHandler !== undefined) {
+        return await earlyRepoCommandHandler()
+      }
+
+      const handleNew = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const branch = commandArgs[0] ?? randomWipBranchName()
         const result = await runWriteOperation(async () => {
@@ -2615,7 +2546,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "switch") {
+      const handleSwitch = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const result = await runWriteOperation(async () => {
@@ -2695,7 +2626,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "mv") {
+      const writeCommandHandlers = new Map<string, () => Promise<number>>([
+        ["new", handleNew],
+        ["switch", handleSwitch],
+      ])
+      const writeCommandHandler = writeCommandHandlers.get(command)
+      if (writeCommandHandler !== undefined) {
+        return await writeCommandHandler()
+      }
+
+      const handleMv = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const newBranch = commandArgs[0] as string
         const result = await runWriteOperation(async () => {
@@ -2789,7 +2729,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "del") {
+      const handleDel = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 1 })
         const forceFlags = parseForceFlags(parsedArgsRecord)
         if (hasAnyForceFlag(forceFlags)) {
@@ -2892,7 +2832,16 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "gone") {
+      const writeMutationHandlers = new Map<string, () => Promise<number>>([
+        ["mv", handleMv],
+        ["del", handleDel],
+      ])
+      const writeMutationHandler = writeMutationHandlers.get(command)
+      if (writeMutationHandler !== undefined) {
+        return await writeMutationHandler()
+      }
+
+      const handleGone = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         if (parsedArgs.apply === true && parsedArgs.dryRun === true) {
           throw createCliError("INVALID_ARGUMENT", {
@@ -2990,7 +2939,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "get") {
+      const handleGet = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const remoteBranchArg = commandArgs[0] as string
         const { remote, branch } = resolveRemoteAndBranch(remoteBranchArg)
@@ -3100,7 +3049,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "extract") {
+      const handleExtract = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const fromPath = typeof parsedArgs.from === "string" ? parsedArgs.from : undefined
         if (fromPath !== undefined && parsedArgs.current === true) {
@@ -3253,7 +3202,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "absorb") {
+      const worktreeActionHandlers = new Map<string, () => Promise<number>>([
+        ["gone", handleGone],
+        ["get", handleGet],
+        ["extract", handleExtract],
+      ])
+      const worktreeActionHandler = worktreeActionHandlers.get(command)
+      if (worktreeActionHandler !== undefined) {
+        return await worktreeActionHandler()
+      }
+
+      const handleAbsorb = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const fromWorktreeName = typeof parsedArgs.from === "string" ? parsedArgs.from : undefined
@@ -3389,7 +3348,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "unabsorb") {
+      const handleUnabsorb = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const targetWorktreeName = typeof parsedArgs.to === "string" ? parsedArgs.to : undefined
@@ -3531,7 +3490,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "use") {
+      const handleUse = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const allowShared = parsedArgs.allowShared === true
@@ -3636,7 +3595,17 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
-      if (command === "exec") {
+      const synchronizationHandlers = new Map<string, () => Promise<number>>([
+        ["absorb", handleAbsorb],
+        ["unabsorb", handleUnabsorb],
+        ["use", handleUse],
+      ])
+      const synchronizationHandler = synchronizationHandlers.get(command)
+      if (synchronizationHandler !== undefined) {
+        return await synchronizationHandler()
+      }
+
+      const handleExec = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         ensureHasCommandAfterDoubleDash({
           command,
@@ -3699,7 +3668,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return childExitCode === 0 ? EXIT_CODE.OK : EXIT_CODE.CHILD_PROCESS_FAILED
       }
 
-      if (command === "invoke") {
+      const handleInvoke = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const hookName = normalizeHookName(commandArgs[0] as string)
         const snapshot = await collectWorktreeSnapshot(repoRoot)
@@ -3735,12 +3704,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "copy") {
+      const handleCopy = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: Number.MAX_SAFE_INTEGER })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const targetWorktreeRoot = resolveTargetWorktreeRootForCopyLink({
@@ -3778,12 +3746,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "link") {
+      const handleLink = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: Number.MAX_SAFE_INTEGER })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const targetWorktreeRoot = resolveTargetWorktreeRootForCopyLink({
@@ -3837,12 +3804,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "lock") {
+      const handleLock = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const ownerOption = readStringOption(parsedArgsRecord, "owner")
@@ -3893,12 +3859,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "unlock") {
+      const handleUnlock = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const branch = commandArgs[0] as string
         const ownerOption = readStringOption(parsedArgsRecord, "owner")
@@ -3946,12 +3911,11 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return EXIT_CODE.OK
         }
         return EXIT_CODE.OK
       }
 
-      if (command === "cd") {
+      const handleCd = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
         const snapshot = await collectWorktreeSnapshot(repoRoot)
         const theme = createCatppuccinTheme({
@@ -4035,6 +3999,20 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         }
         stdout(selectedPath)
         return EXIT_CODE.OK
+      }
+
+      const miscCommandHandlers = new Map<string, () => Promise<number>>([
+        ["exec", handleExec],
+        ["invoke", handleInvoke],
+        ["copy", handleCopy],
+        ["link", handleLink],
+        ["lock", handleLock],
+        ["unlock", handleUnlock],
+        ["cd", handleCd],
+      ])
+      const miscCommandHandler = miscCommandHandlers.get(command)
+      if (miscCommandHandler !== undefined) {
+        return await miscCommandHandler()
       }
 
       throw createCliError("UNKNOWN_COMMAND", {
