@@ -275,22 +275,16 @@ describe("loadResolvedConfig", () => {
     })
   })
 
-  it("rejects worktreeRoot under .git", async () => {
+  it("accepts worktreeRoot under .git", async () => {
     const repoRoot = await createTempDir("vde-worktree-config-git-root-")
     await mkdir(join(repoRoot, ".git"), { recursive: true })
     await mkdir(join(repoRoot, ".vde", "worktree"), { recursive: true })
-    await writeFile(
-      join(repoRoot, ".vde", "worktree", "config.yml"),
-      "paths:\n  worktreeRoot: .git/worktrees\n",
-      "utf8",
-    )
+    const configFile = join(repoRoot, ".vde", "worktree", "config.yml")
+    await writeFile(configFile, "paths:\n  worktreeRoot: .git/worktrees\n", "utf8")
 
-    await expect(loadResolvedConfig({ cwd: repoRoot, repoRoot })).rejects.toMatchObject({
-      code: "INVALID_CONFIG",
-      details: {
-        keyPath: "paths.worktreeRoot",
-      },
-    })
+    const result = await loadResolvedConfig({ cwd: repoRoot, repoRoot })
+    expect(result.config.paths.worktreeRoot).toBe(".git/worktrees")
+    expect(result.loadedFiles).toContain(configFile)
   })
 
   it("rejects worktreeRoot when it points to an existing file", async () => {

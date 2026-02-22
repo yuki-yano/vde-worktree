@@ -1,7 +1,7 @@
 import { constants as fsConstants } from "node:fs"
 import { access, lstat, readFile, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
-import { isAbsolute, join, relative, resolve, sep } from "node:path"
+import { isAbsolute, join, resolve } from "node:path"
 import { parse } from "yaml"
 import { createCliError } from "../core/errors"
 import { collectConfigSearchDirectories } from "./git-boundary"
@@ -695,20 +695,6 @@ const resolveExistingConfigFiles = async ({
   return [...deduped.values()].sort((a, b) => a.order - b.order).map((entry) => entry.path)
 }
 
-const isPathInsideOrEqual = ({
-  parentPath,
-  childPath,
-}: {
-  readonly parentPath: string
-  readonly childPath: string
-}): boolean => {
-  const rel = relative(parentPath, childPath)
-  if (rel.length === 0) {
-    return true
-  }
-  return rel !== ".." && rel.startsWith(`..${sep}`) !== true
-}
-
 const validateWorktreeRoot = async ({
   repoRoot,
   config,
@@ -720,20 +706,6 @@ const validateWorktreeRoot = async ({
   const resolvedWorktreeRoot = isAbsolute(rawWorktreeRoot)
     ? resolve(rawWorktreeRoot)
     : resolve(repoRoot, rawWorktreeRoot)
-
-  const gitDirPath = resolve(repoRoot, ".git")
-  if (
-    isPathInsideOrEqual({
-      parentPath: gitDirPath,
-      childPath: resolvedWorktreeRoot,
-    })
-  ) {
-    throwInvalidConfig({
-      file: "<resolved>",
-      keyPath: "paths.worktreeRoot",
-      reason: "must not point inside .git",
-    })
-  }
 
   try {
     const stat = await lstat(resolvedWorktreeRoot)
