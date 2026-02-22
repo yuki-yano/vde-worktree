@@ -3159,7 +3159,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           const snapshot = await collectWorktreeSnapshot(repoRoot)
           const candidates: AdoptCandidate[] = []
           const skipped: AdoptSkipped[] = []
-          const reservedTargetPaths = new Set<string>()
+          const unresolvedCandidates: AdoptCandidate[] = []
           const sortedWorktrees = [...snapshot.worktrees].sort((a, b) => a.path.localeCompare(b.path))
 
           for (const worktree of sortedWorktrees) {
@@ -3194,31 +3194,43 @@ export const createCli = (options: CLIOptions = {}): CLI => {
             }
 
             const toPath = branchToWorktreePath(repoRoot, worktree.branch, resolvedConfig.paths.worktreeRoot)
-            if (reservedTargetPaths.has(toPath)) {
-              skipped.push({
-                branch: worktree.branch,
-                fromPath: worktree.path,
-                toPath,
-                reason: "target_conflict",
-              })
-              continue
-            }
-            if (await doesPathExist(toPath)) {
-              skipped.push({
-                branch: worktree.branch,
-                fromPath: worktree.path,
-                toPath,
-                reason: "target_exists",
-              })
-              continue
-            }
-
-            reservedTargetPaths.add(toPath)
-            candidates.push({
+            unresolvedCandidates.push({
               branch: worktree.branch,
               fromPath: worktree.path,
               toPath,
             })
+          }
+          const uniqueTargetPaths = [...new Set(unresolvedCandidates.map((candidate) => candidate.toPath))]
+          const targetPathExistenceEntries = await Promise.all(
+            uniqueTargetPaths.map(async (path) => {
+              return [path, await doesPathExist(path)] as const
+            }),
+          )
+          const targetPathExistsMap = new Map<string, boolean>(targetPathExistenceEntries)
+          const reservedTargetPaths = new Set<string>()
+
+          for (const candidate of unresolvedCandidates) {
+            if (targetPathExistsMap.get(candidate.toPath) === true) {
+              skipped.push({
+                branch: candidate.branch,
+                fromPath: candidate.fromPath,
+                toPath: candidate.toPath,
+                reason: "target_exists",
+              })
+              continue
+            }
+            if (reservedTargetPaths.has(candidate.toPath)) {
+              skipped.push({
+                branch: candidate.branch,
+                fromPath: candidate.fromPath,
+                toPath: candidate.toPath,
+                reason: "target_conflict",
+              })
+              continue
+            }
+
+            reservedTargetPaths.add(candidate.toPath)
+            candidates.push(candidate)
           }
 
           if (dryRun) {
@@ -3276,6 +3288,20 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         const hasFailures = result.failed.length > 0
 
         if (runtime.json) {
+          if (hasFailures) {
+            stdout(
+              JSON.stringify({
+                schemaVersion: SCHEMA_VERSION,
+                command,
+                status: "error",
+                repoRoot,
+                code: "SAFETY_REJECTED",
+                message: "adopt completed with failures",
+                details: result,
+              }),
+            )
+            return EXIT_CODE.SAFETY_REJECTED
+          }
           stdout(
             JSON.stringify(
               buildJsonSuccess({
@@ -3286,7 +3312,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
               }),
             ),
           )
-          return hasFailures ? EXIT_CODE.SAFETY_REJECTED : EXIT_CODE.OK
+          return EXIT_CODE.OK
         }
 
         if (result.candidates.length === 0 && result.skipped.length === 0) {
@@ -3306,9 +3332,10 @@ export const createCli = (options: CLIOptions = {}): CLI => {
           return `${formatMoveLine("failed", entry)} [${entry.code}] ${entry.message}`
         }
 
-        for (const candidate of result.candidates) {
-          const prefix = result.dryRun ? "candidate" : "planned"
-          stdout(formatMoveLine(prefix, candidate))
+        if (result.dryRun) {
+          for (const candidate of result.candidates) {
+            stdout(formatMoveLine("candidate", candidate))
+          }
         }
         for (const moved of result.moved) {
           stdout(formatMoveLine("moved", moved))
