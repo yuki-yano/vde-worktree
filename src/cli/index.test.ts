@@ -746,6 +746,123 @@ echo invoked > "${marker}"
     expect(payload.candidates).not.toContain("feature/gone-unmanaged")
   })
 
+  it("adopt dry-run then apply moves unmanaged worktrees into managed root", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    await runGit(repoRoot, ["branch", "feature/adopt", "main"])
+    const unmanagedPath = join(unmanagedRoot, "feature-adopt")
+    await runGit(repoRoot, ["worktree", "add", unmanagedPath, "feature/adopt"])
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--json"])).toBe(0)
+    const dryPayload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      candidates: Array<{ branch: string; fromPath: string; toPath: string }>
+      moved: Array<{ branch: string; fromPath: string; toPath: string }>
+      failed: Array<{ branch: string; fromPath: string; toPath: string; code: string; message: string }>
+    }
+    expect(dryPayload.dryRun).toBe(true)
+    expect(dryPayload.moved).toEqual([])
+    expect(dryPayload.failed).toEqual([])
+    expect(dryPayload.candidates).toEqual([
+      {
+        branch: "feature/adopt",
+        fromPath: unmanagedPath,
+        toPath: join(repoRoot, ".worktree", "feature", "adopt"),
+      },
+    ])
+
+    const listBeforeApply = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
+    expect(listBeforeApply.includes(`worktree ${unmanagedPath}`)).toBe(true)
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--apply", "--json"])).toBe(0)
+    const applyPayload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      moved: Array<{ branch: string; fromPath: string; toPath: string }>
+      failed: Array<{ branch: string; fromPath: string; toPath: string; code: string; message: string }>
+    }
+    expect(applyPayload.dryRun).toBe(false)
+    expect(applyPayload.failed).toEqual([])
+    expect(applyPayload.moved).toEqual([
+      {
+        branch: "feature/adopt",
+        fromPath: unmanagedPath,
+        toPath: join(repoRoot, ".worktree", "feature", "adopt"),
+      },
+    ])
+
+    const listAfterApply = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
+    expect(listAfterApply.includes(`worktree ${join(repoRoot, ".worktree", "feature", "adopt")}`)).toBe(true)
+    expect(listAfterApply.includes(`worktree ${unmanagedPath}`)).toBe(false)
+  })
+
+  it("adopt dry-run reports skipped reasons for detached, locked, and target conflicts", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-skip-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+
+    await runGit(repoRoot, ["branch", "feature/adopt-locked", "main"])
+    const lockedPath = join(unmanagedRoot, "locked")
+    await runGit(repoRoot, ["worktree", "add", lockedPath, "feature/adopt-locked"])
+    expect(await cli.run(["lock", "feature/adopt-locked", "--owner", "tester", "--reason", "protect"])).toBe(0)
+
+    const detachedPath = join(unmanagedRoot, "detached")
+    await runGit(repoRoot, ["worktree", "add", "--detach", detachedPath, "main"])
+
+    await runGit(repoRoot, ["branch", "feature/adopt-conflict", "main"])
+    const conflictPath = join(unmanagedRoot, "conflict")
+    await runGit(repoRoot, ["worktree", "add", conflictPath, "feature/adopt-conflict"])
+    const conflictTargetPath = join(repoRoot, ".worktree", "feature", "adopt-conflict")
+    await mkdir(conflictTargetPath, { recursive: true })
+    await writeFile(join(conflictTargetPath, "already.txt"), "x\n", "utf8")
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      candidates: Array<{ branch: string; fromPath: string; toPath: string }>
+      skipped: Array<{ branch: string | null; fromPath: string; toPath: string | null; reason: string }>
+    }
+    expect(payload.dryRun).toBe(true)
+    expect(payload.candidates).toEqual([])
+
+    const lockedSkip = payload.skipped.find((entry) => entry.branch === "feature/adopt-locked")
+    expect(lockedSkip).toBeDefined()
+    expect(lockedSkip?.reason).toBe("locked")
+    expect(lockedSkip?.fromPath).toBe(lockedPath)
+
+    const detachedSkip = payload.skipped.find((entry) => entry.fromPath === detachedPath)
+    expect(detachedSkip).toBeDefined()
+    expect(detachedSkip?.branch).toBeNull()
+    expect(detachedSkip?.reason).toBe("detached")
+
+    const conflictSkip = payload.skipped.find((entry) => entry.branch === "feature/adopt-conflict")
+    expect(conflictSkip).toBeDefined()
+    expect(conflictSkip?.reason).toBe("target_exists")
+    expect(conflictSkip?.fromPath).toBe(conflictPath)
+    expect(conflictSkip?.toPath).toBe(conflictTargetPath)
+  })
+
   it("get creates tracked local branch worktree from remote branch", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)

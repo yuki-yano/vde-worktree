@@ -67,15 +67,18 @@ export const createWriteMutationHandlers = ({
 
 export const createWorktreeActionHandlers = ({
   goneHandler,
+  adoptHandler,
   getHandler,
   extractHandler,
 }: {
   readonly goneHandler: CommandHandler
+  readonly adoptHandler: CommandHandler
   readonly getHandler: CommandHandler
   readonly extractHandler: CommandHandler
 }): CommandHandlerMap => {
   return createHandlerMap([
     ["gone", goneHandler],
+    ["adopt", adoptHandler],
     ["get", getHandler],
     ["extract", extractHandler],
   ])

@@ -461,6 +461,12 @@ const commandHelpEntries: readonly CommandHelp[] = [
     details: ["Default mode is dry-run. Use --apply to delete candidates."],
   },
   {
+    name: "adopt",
+    usage: "vw adopt [--json] [--apply|--dry-run]",
+    summary: "Move unmanaged non-primary worktrees into managed worktree root.",
+    details: ["Default mode is dry-run. Use --apply to move candidates with git worktree move."],
+  },
+  {
     name: "get",
     usage: "vw get <remote/branch>",
     summary: "Fetch remote branch, create tracking local branch if needed, then attach worktree.",
@@ -978,6 +984,15 @@ const ensureTargetPathWritable = async (targetPath: string): Promise<void> => {
       message: `Target path is not empty: ${targetPath}`,
       details: { path: targetPath },
     })
+  }
+}
+
+const doesPathExist = async (path: string): Promise<boolean> => {
+  try {
+    await access(path, fsConstants.F_OK)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -3111,6 +3126,202 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         return EXIT_CODE.OK
       }
 
+      const handleAdopt = async (): Promise<number> => {
+        ensureArgumentCount({ command, args: commandArgs, min: 0, max: 0 })
+        if (parsedArgs.apply === true && parsedArgs.dryRun === true) {
+          throw createCliError("INVALID_ARGUMENT", {
+            message: "Cannot use --apply and --dry-run together",
+          })
+        }
+
+        type AdoptCandidate = {
+          readonly branch: string
+          readonly fromPath: string
+          readonly toPath: string
+        }
+
+        type AdoptSkippedReason = "detached" | "locked" | "target_exists" | "target_conflict"
+
+        type AdoptSkipped = {
+          readonly branch: string | null
+          readonly fromPath: string
+          readonly toPath: string | null
+          readonly reason: AdoptSkippedReason
+        }
+
+        type AdoptFailed = AdoptCandidate & {
+          readonly code: string
+          readonly message: string
+        }
+
+        const dryRun = parsedArgs.apply !== true
+        const result = await runWriteOperation(async () => {
+          const snapshot = await collectWorktreeSnapshot(repoRoot)
+          const candidates: AdoptCandidate[] = []
+          const skipped: AdoptSkipped[] = []
+          const reservedTargetPaths = new Set<string>()
+          const sortedWorktrees = [...snapshot.worktrees].sort((a, b) => a.path.localeCompare(b.path))
+
+          for (const worktree of sortedWorktrees) {
+            if (worktree.path === repoRoot) {
+              continue
+            }
+            if (
+              isManagedWorktreePath({
+                worktreePath: worktree.path,
+                managedWorktreeRoot,
+              })
+            ) {
+              continue
+            }
+            if (worktree.branch === null) {
+              skipped.push({
+                branch: null,
+                fromPath: worktree.path,
+                toPath: null,
+                reason: "detached",
+              })
+              continue
+            }
+            if (worktree.locked.value) {
+              skipped.push({
+                branch: worktree.branch,
+                fromPath: worktree.path,
+                toPath: null,
+                reason: "locked",
+              })
+              continue
+            }
+
+            const toPath = branchToWorktreePath(repoRoot, worktree.branch, resolvedConfig.paths.worktreeRoot)
+            if (reservedTargetPaths.has(toPath)) {
+              skipped.push({
+                branch: worktree.branch,
+                fromPath: worktree.path,
+                toPath,
+                reason: "target_conflict",
+              })
+              continue
+            }
+            if (await doesPathExist(toPath)) {
+              skipped.push({
+                branch: worktree.branch,
+                fromPath: worktree.path,
+                toPath,
+                reason: "target_exists",
+              })
+              continue
+            }
+
+            reservedTargetPaths.add(toPath)
+            candidates.push({
+              branch: worktree.branch,
+              fromPath: worktree.path,
+              toPath,
+            })
+          }
+
+          if (dryRun) {
+            return {
+              dryRun: true as const,
+              managedWorktreeRoot,
+              candidates,
+              moved: [] as AdoptCandidate[],
+              skipped,
+              failed: [] as AdoptFailed[],
+            }
+          }
+
+          const hookContext = createHookContext({
+            runtime,
+            repoRoot,
+            action: "adopt",
+            branch: null,
+            worktreePath: managedWorktreeRoot,
+            stderr,
+          })
+          await runPreHook({ name: "adopt", context: hookContext })
+
+          const moved: AdoptCandidate[] = []
+          const failed: AdoptFailed[] = []
+          for (const candidate of candidates) {
+            try {
+              await mkdir(dirname(candidate.toPath), { recursive: true })
+              await runGitCommand({
+                cwd: repoRoot,
+                args: ["worktree", "move", candidate.fromPath, candidate.toPath],
+              })
+              moved.push(candidate)
+            } catch (error) {
+              const cliError = ensureCliError(error)
+              failed.push({
+                ...candidate,
+                code: cliError.code,
+                message: cliError.message,
+              })
+            }
+          }
+
+          await runPostHook({ name: "adopt", context: hookContext })
+          return {
+            dryRun: false as const,
+            managedWorktreeRoot,
+            candidates,
+            moved,
+            skipped,
+            failed,
+          }
+        })
+
+        const hasFailures = result.failed.length > 0
+
+        if (runtime.json) {
+          stdout(
+            JSON.stringify(
+              buildJsonSuccess({
+                command,
+                status: "ok",
+                repoRoot,
+                details: result,
+              }),
+            ),
+          )
+          return hasFailures ? EXIT_CODE.SAFETY_REJECTED : EXIT_CODE.OK
+        }
+
+        if (result.candidates.length === 0 && result.skipped.length === 0) {
+          stdout("no unmanaged worktree candidates")
+          return EXIT_CODE.OK
+        }
+
+        const formatMoveLine = (prefix: string, candidate: AdoptCandidate): string => {
+          return `${prefix}: ${candidate.branch}\t${candidate.fromPath} -> ${candidate.toPath}`
+        }
+        const formatSkipLine = (entry: AdoptSkipped): string => {
+          const branch = entry.branch ?? "(detached)"
+          const toPart = entry.toPath === null ? "" : ` -> ${entry.toPath}`
+          return `skipped(${entry.reason}): ${branch}\t${entry.fromPath}${toPart}`
+        }
+        const formatFailedLine = (entry: AdoptFailed): string => {
+          return `${formatMoveLine("failed", entry)} [${entry.code}] ${entry.message}`
+        }
+
+        for (const candidate of result.candidates) {
+          const prefix = result.dryRun ? "candidate" : "planned"
+          stdout(formatMoveLine(prefix, candidate))
+        }
+        for (const moved of result.moved) {
+          stdout(formatMoveLine("moved", moved))
+        }
+        for (const skipped of result.skipped) {
+          stdout(formatSkipLine(skipped))
+        }
+        for (const failed of result.failed) {
+          stderr(formatFailedLine(failed))
+        }
+        return hasFailures ? EXIT_CODE.SAFETY_REJECTED : EXIT_CODE.OK
+      }
+
       const handleGet = async (): Promise<number> => {
         ensureArgumentCount({ command, args: commandArgs, min: 1, max: 1 })
         const remoteBranchArg = commandArgs[0] as string
@@ -3378,6 +3589,7 @@ export const createCli = (options: CLIOptions = {}): CLI => {
         command,
         handlers: createWorktreeActionHandlers({
           goneHandler: handleGone,
+          adoptHandler: handleAdopt,
           getHandler: handleGet,
           extractHandler: handleExtract,
         }),

@@ -178,7 +178,7 @@ function __vw_hook_names
   end
 end
 
-set -l __vw_commands init list status path new switch mv del gone get extract absorb unabsorb use exec invoke copy link lock unlock cd completion help
+set -l __vw_commands init list status path new switch mv del gone adopt get extract absorb unabsorb use exec invoke copy link lock unlock cd completion help
 
 for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a init -d "Initialize directories, hooks, and managed exclude entries"
@@ -190,6 +190,7 @@ for __vw_bin in vw vde-worktree
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a mv -d "Rename current non-primary worktree branch"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a del -d "Delete worktree + branch with safety checks"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a gone -d "Bulk cleanup by safety-filtered candidate selection"
+  complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a adopt -d "Move unmanaged non-primary worktrees into managed worktree root"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a get -d "Fetch remote branch and attach worktree"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a extract -d "Extract current primary branch into .worktree"
   complete -c $__vw_bin -f -n "not __fish_seen_subcommand_from $__vw_commands" -a absorb -d "Bring non-primary worktree changes into primary worktree"
@@ -240,6 +241,8 @@ for __vw_bin in vw vde-worktree
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from gone" -l apply -d "Apply deletion"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from gone" -l dry-run -d "Dry-run mode"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from adopt" -l apply -d "Apply worktree moves"
+  complete -c $__vw_bin -n "__fish_seen_subcommand_from adopt" -l dry-run -d "Dry-run mode"
 
   complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l current -d "Extract current worktree branch"
   complete -c $__vw_bin -n "__fish_seen_subcommand_from extract" -l from -r -d "Path used by extract --from"
