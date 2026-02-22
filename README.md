@@ -11,7 +11,7 @@ Japanese documentation: [README.ja.md](./README.ja.md)
 
 ## Goals
 
-- Keep all worktrees in one repo-local location: `.worktree/`
+- Keep managed worktrees under a configurable root (default: `.worktree/`)
 - Provide idempotent branch-to-worktree operations
 - Prevent accidental destructive actions by default
 - Expose stable JSON output for automation
@@ -89,7 +89,7 @@ autoload -Uz compinit && compinit
 
 After `vw init`, the tool manages:
 
-- `.worktree/` (worktree roots)
+- `<worktreeRoot>/` (managed worktree root; default: `.worktree/`)
 - `.vde/worktree/hooks/`
 - `.vde/worktree/logs/`
 - `.vde/worktree/locks/`
@@ -125,7 +125,7 @@ vw init
 
 What it does:
 
-- Creates `.worktree/` and `.vde/worktree/*`
+- Creates `<worktreeRoot>/` and `.vde/worktree/*`
 - Appends managed entries to `.git/info/exclude`
 - Creates default hook templates
 
@@ -181,7 +181,7 @@ vw new feature/foo
 
 What it does:
 
-- Creates a new branch + worktree under `.worktree/`
+- Creates a new branch + worktree under configured managed worktree root (`paths.worktreeRoot`)
 - Without argument, generates `wip-xxxxxx`
 
 ### `switch`
@@ -241,6 +241,20 @@ What it does:
 - Default mode is dry-run
 - `--apply` actually deletes eligible branches/worktrees
 
+### `adopt`
+
+```bash
+vw adopt
+vw adopt --json
+vw adopt --apply
+```
+
+What it does:
+
+- Finds unmanaged non-primary worktrees and plans moves into the managed worktree root
+- Default mode is dry-run; `--apply` runs `git worktree move`
+- Reports skipped entries with reasons (`detached`, `locked`, `target_exists`, `target_conflict`)
+
 ### `get`
 
 ```bash
@@ -262,7 +276,7 @@ vw extract --current --stash
 
 What it does:
 
-- Extracts current primary worktree branch into `.worktree/`
+- Extracts current primary worktree branch into managed worktree root (`paths.worktreeRoot`)
 - Switches primary worktree back to base branch
 - `--stash` allows extraction when primary is dirty
 
@@ -281,7 +295,7 @@ What it does:
 
 - Moves changes from non-primary worktree to primary worktree, including uncommitted files
 - Stashes source worktree changes, checks out branch in primary, then applies stash
-- `--from` accepts vw-managed worktree name only (`.worktree/` prefix is rejected)
+- `--from` accepts vw-managed worktree name only (`<worktreeRoot>/...` path prefix is rejected)
 
 Safety:
 
@@ -300,7 +314,7 @@ What it does:
 
 - Pushes changes from primary worktree to non-primary worktree, including uncommitted files
 - Stashes primary worktree changes, applies stash in target worktree
-- `--to` accepts vw-managed worktree name only (`.worktree/` prefix is rejected)
+- `--to` accepts vw-managed worktree name only (`<worktreeRoot>/...` path prefix is rejected)
 
 Safety:
 
@@ -495,6 +509,12 @@ selector:
     surface: auto # auto | inline | tmux-popup
     tmuxPopupOpts: "80%,70%"
 ```
+
+Notes:
+
+- `paths.worktreeRoot` accepts repo-relative and absolute paths
+- Paths under `.git` are allowed (for example: `.git/worktrees`)
+- If `paths.worktreeRoot` points to an existing file, config loading fails
 
 ## Current Scope
 
