@@ -264,6 +264,7 @@ _vw() {
     "mv:Rename current non-primary worktree branch and move its directory"
     "del:Delete worktree + branch with safety checks"
     "gone:Bulk cleanup by safety-filtered candidate selection"
+    "adopt:Move unmanaged non-primary worktrees into managed worktree root"
     "get:Fetch remote branch and attach worktree"
     "extract:Extract current primary branch into .worktree"
     "absorb:Bring non-primary worktree changes into primary worktree"
@@ -339,6 +340,11 @@ _vw() {
         gone)
           _arguments \
             "--apply[Apply deletion]" \
+            "--dry-run[Dry-run mode]"
+          ;;
+        adopt)
+          _arguments \
+            "--apply[Apply worktree moves]" \
             "--dry-run[Dry-run mode]"
           ;;
         get)

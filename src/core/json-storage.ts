@@ -1,6 +1,13 @@
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
+let atomicWriteSequence = 0
+
+const nextAtomicWriteSuffix = (): string => {
+  atomicWriteSequence += 1
+  return `${String(process.pid)}-${process.hrtime.bigint().toString(36)}-${String(atomicWriteSequence)}`
+}
+
 export type ParsedJsonRecord<T> = {
   readonly valid: boolean
   readonly record: T | null
@@ -86,7 +93,7 @@ export const writeJsonAtomically = async ({
   if (ensureDir) {
     await mkdir(dirname(filePath), { recursive: true })
   }
-  const tmpPath = `${filePath}.tmp-${String(process.pid)}-${String(Date.now())}`
+  const tmpPath = `${filePath}.tmp-${nextAtomicWriteSuffix()}`
   try {
     await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8")
     await rename(tmpPath, filePath)

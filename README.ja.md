@@ -11,7 +11,7 @@
 
 ## このツールで解決すること
 
-- worktree をリポジトリ配下 `.worktree/` に統一配置
+- 管理対象 worktree を設定可能なルート配下に集約（デフォルト: `.worktree/`）
 - `switch` を冪等にして、同じ指示を繰り返しても破綻しにくくする
 - `del` / `gone` の破壊操作に安全ガードを入れる
 - Agent 向けに安定した JSON 出力を提供
@@ -89,7 +89,7 @@ autoload -Uz compinit && compinit
 
 `vw init` 実行後に次を管理します:
 
-- `.worktree/`（worktree 実体）
+- `<worktreeRoot>/`（管理対象 worktree ルート、デフォルト: `.worktree/`）
 - `.vde/worktree/hooks/`
 - `.vde/worktree/logs/`
 - `.vde/worktree/locks/`
@@ -125,7 +125,7 @@ vw init
 
 機能:
 
-- `.worktree/` と `.vde/worktree/*` を作成
+- `<worktreeRoot>/` と `.vde/worktree/*` を作成
 - `.git/info/exclude` に管理エントリ追加
 - デフォルト hook テンプレートを作成
 
@@ -181,7 +181,7 @@ vw new feature/foo
 
 機能:
 
-- 新しい branch + worktree を `.worktree/` に作成
+- 新しい branch + worktree を管理対象ルート（`paths.worktreeRoot`）に作成
 - branch 省略時は `wip-xxxxxx` を自動生成
 
 ### `switch`
@@ -241,6 +241,20 @@ vw gone --json
 - デフォルトは dry-run
 - `--apply` で削除実行
 
+### `adopt`
+
+```bash
+vw adopt
+vw adopt --json
+vw adopt --apply
+```
+
+機能:
+
+- 管理外の非 primary worktree を検出し、管理対象ルートへの移動候補を作成
+- デフォルトは dry-run、`--apply` で `git worktree move` を実行
+- スキップ理由（`detached` / `locked` / `target_exists` / `target_conflict`）を出力
+
 ### `get`
 
 ```bash
@@ -262,7 +276,7 @@ vw extract --current --stash
 
 機能:
 
-- primary worktree の現在 branch を `.worktree/` 側へ切り出し
+- primary worktree の現在 branch を管理対象ルート（`paths.worktreeRoot`）へ切り出し
 - primary を base branch に戻す
 - dirty 状態で切り出す場合は `--stash` を使用
 
@@ -281,7 +295,7 @@ vw absorb feature/foo --from feature/foo --keep-stash --allow-agent --allow-unsa
 
 - 非 primary worktree の変更（未コミット含む）を primary worktree に移す
 - source worktree を stash し、primary で checkout 後に stash を apply する
-- `--from` は vw 管理 worktree 名のみ指定可能（`.worktree/` プレフィックスは不可）
+- `--from` は vw 管理 worktree 名のみ指定可能（`<worktreeRoot>/...` の path 指定は不可）
 
 安全条件:
 
@@ -300,7 +314,7 @@ vw unabsorb feature/foo --to feature/foo --keep-stash --allow-agent --allow-unsa
 
 - primary worktree の変更（未コミット含む）を非 primary worktree に戻す
 - primary の変更を stash し、target worktree に stash を apply する
-- `--to` は vw 管理 worktree 名のみ指定可能（`.worktree/` プレフィックスは不可）
+- `--to` は vw 管理 worktree 名のみ指定可能（`<worktreeRoot>/...` の path 指定は不可）
 
 安全条件:
 
@@ -501,6 +515,12 @@ selector:
     surface: auto # auto | inline | tmux-popup
     tmuxPopupOpts: "80%,70%"
 ```
+
+補足:
+
+- `paths.worktreeRoot` は repo 相対 path / 絶対 path の両方を指定可能
+- `.git` 配下（例: `.git/worktrees`）も指定可能
+- `paths.worktreeRoot` が既存ファイルを指す場合は設定エラー
 
 ## 現在のスコープ
 

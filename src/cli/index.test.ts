@@ -746,6 +746,236 @@ echo invoked > "${marker}"
     expect(payload.candidates).not.toContain("feature/gone-unmanaged")
   })
 
+  it("adopt dry-run then apply moves unmanaged worktrees into managed root", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    await runGit(repoRoot, ["branch", "feature/adopt", "main"])
+    const unmanagedPath = join(unmanagedRoot, "feature-adopt")
+    await runGit(repoRoot, ["worktree", "add", unmanagedPath, "feature/adopt"])
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--json"])).toBe(0)
+    const dryPayload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      candidates: Array<{ branch: string; fromPath: string; toPath: string }>
+      moved: Array<{ branch: string; fromPath: string; toPath: string }>
+      failed: Array<{ branch: string; fromPath: string; toPath: string; code: string; message: string }>
+    }
+    expect(dryPayload.dryRun).toBe(true)
+    expect(dryPayload.moved).toEqual([])
+    expect(dryPayload.failed).toEqual([])
+    expect(dryPayload.candidates).toEqual([
+      {
+        branch: "feature/adopt",
+        fromPath: unmanagedPath,
+        toPath: join(repoRoot, ".worktree", "feature", "adopt"),
+      },
+    ])
+
+    const listBeforeApply = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
+    expect(listBeforeApply.includes(`worktree ${unmanagedPath}`)).toBe(true)
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--apply", "--json"])).toBe(0)
+    const applyPayload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      moved: Array<{ branch: string; fromPath: string; toPath: string }>
+      failed: Array<{ branch: string; fromPath: string; toPath: string; code: string; message: string }>
+    }
+    expect(applyPayload.dryRun).toBe(false)
+    expect(applyPayload.failed).toEqual([])
+    expect(applyPayload.moved).toEqual([
+      {
+        branch: "feature/adopt",
+        fromPath: unmanagedPath,
+        toPath: join(repoRoot, ".worktree", "feature", "adopt"),
+      },
+    ])
+
+    const listAfterApply = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
+    expect(listAfterApply.includes(`worktree ${join(repoRoot, ".worktree", "feature", "adopt")}`)).toBe(true)
+    expect(listAfterApply.includes(`worktree ${unmanagedPath}`)).toBe(false)
+  })
+
+  it("adopt apply prints moved entries without duplicate planned lines", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-output-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    await runGit(repoRoot, ["branch", "feature/adopt-output", "main"])
+    const unmanagedPath = join(unmanagedRoot, "feature-adopt-output")
+    await runGit(repoRoot, ["worktree", "add", unmanagedPath, "feature/adopt-output"])
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--apply"])).toBe(0)
+    expect(stdout.some((line) => line.startsWith("planned: "))).toBe(false)
+    expect(stdout.filter((line) => line.startsWith("moved: "))).toHaveLength(1)
+  })
+
+  it("adopt dry-run reports skipped reasons for detached, locked, and target_exists", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-skip-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+
+    await runGit(repoRoot, ["branch", "feature/adopt-locked", "main"])
+    const lockedPath = join(unmanagedRoot, "locked")
+    await runGit(repoRoot, ["worktree", "add", lockedPath, "feature/adopt-locked"])
+    expect(await cli.run(["lock", "feature/adopt-locked", "--owner", "tester", "--reason", "protect"])).toBe(0)
+
+    const detachedPath = join(unmanagedRoot, "detached")
+    await runGit(repoRoot, ["worktree", "add", "--detach", detachedPath, "main"])
+
+    await runGit(repoRoot, ["branch", "feature/adopt-existing", "main"])
+    const existingPath = join(unmanagedRoot, "existing")
+    await runGit(repoRoot, ["worktree", "add", existingPath, "feature/adopt-existing"])
+    const existingTargetPath = join(repoRoot, ".worktree", "feature", "adopt-existing")
+    await mkdir(existingTargetPath, { recursive: true })
+    await writeFile(join(existingTargetPath, "already.txt"), "x\n", "utf8")
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      candidates: Array<{ branch: string; fromPath: string; toPath: string }>
+      skipped: Array<{ branch: string | null; fromPath: string; toPath: string | null; reason: string }>
+    }
+    expect(payload.dryRun).toBe(true)
+    expect(payload.candidates).toEqual([])
+
+    const lockedSkip = payload.skipped.find((entry) => entry.branch === "feature/adopt-locked")
+    expect(lockedSkip).toBeDefined()
+    expect(lockedSkip?.reason).toBe("locked")
+    expect(lockedSkip?.fromPath).toBe(lockedPath)
+
+    const detachedSkip = payload.skipped.find((entry) => entry.fromPath === detachedPath)
+    expect(detachedSkip).toBeDefined()
+    expect(detachedSkip?.branch).toBeNull()
+    expect(detachedSkip?.reason).toBe("detached")
+
+    const existingSkip = payload.skipped.find((entry) => entry.branch === "feature/adopt-existing")
+    expect(existingSkip).toBeDefined()
+    expect(existingSkip?.reason).toBe("target_exists")
+    expect(existingSkip?.fromPath).toBe(existingPath)
+    expect(existingSkip?.toPath).toBe(existingTargetPath)
+  })
+
+  it("adopt dry-run reports target_conflict when multiple worktrees map to one target path", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-conflict-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    await runGit(repoRoot, ["branch", "feature/adopt-target-conflict", "main"])
+    const conflictPathA = join(unmanagedRoot, "conflict-a")
+    await runGit(repoRoot, ["worktree", "add", conflictPathA, "feature/adopt-target-conflict"])
+    const conflictPathB = join(unmanagedRoot, "conflict-b")
+    await runGit(repoRoot, ["worktree", "add", "--force", conflictPathB, "feature/adopt-target-conflict"])
+    const targetConflictPath = join(repoRoot, ".worktree", "feature", "adopt-target-conflict")
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--json"])).toBe(0)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      dryRun: boolean
+      candidates: Array<{ branch: string; fromPath: string; toPath: string }>
+      skipped: Array<{ branch: string | null; fromPath: string; toPath: string | null; reason: string }>
+    }
+    expect(payload.dryRun).toBe(true)
+    expect(payload.candidates).toEqual([
+      {
+        branch: "feature/adopt-target-conflict",
+        fromPath: conflictPathA,
+        toPath: targetConflictPath,
+      },
+    ])
+
+    const targetConflictSkip = payload.skipped.find((entry) => entry.fromPath === conflictPathB)
+    expect(targetConflictSkip).toBeDefined()
+    expect(targetConflictSkip?.branch).toBe("feature/adopt-target-conflict")
+    expect(targetConflictSkip?.reason).toBe("target_conflict")
+    expect(targetConflictSkip?.toPath).toBe(targetConflictPath)
+  })
+
+  it("adopt --apply --json returns error status when move failures are present", async () => {
+    const repoRoot = await setupRepo()
+    tempDirs.add(repoRoot)
+    const unmanagedRootRaw = await mkdtemp(join(tmpdir(), "vde-worktree-unmanaged-adopt-fail-"))
+    tempDirs.add(unmanagedRootRaw)
+    const unmanagedRoot = await realpath(unmanagedRootRaw)
+    const stdout: string[] = []
+    const cli = createCli({
+      cwd: repoRoot,
+      stdout: (line) => stdout.push(line),
+    })
+
+    expect(await cli.run(["init"])).toBe(0)
+    await runGit(repoRoot, ["branch", "feature/adopt-fail", "main"])
+    const unmanagedPath = join(unmanagedRoot, "feature-adopt-fail")
+    await runGit(repoRoot, ["worktree", "add", unmanagedPath, "feature/adopt-fail"])
+
+    await writeExecutableHook({
+      repoRoot,
+      hookName: "pre-adopt",
+      body: `#!/usr/bin/env bash
+set -eu
+mkdir -p "$WT_REPO_ROOT/.worktree/feature"
+echo block > "$WT_REPO_ROOT/.worktree/feature/adopt-fail"
+`,
+    })
+
+    stdout.length = 0
+    expect(await cli.run(["adopt", "--apply", "--json"])).toBe(4)
+    const payload = JSON.parse(expectSingleStdoutLine(stdout)) as {
+      status: string
+      code: string
+      details: {
+        moved: Array<{ branch: string; fromPath: string; toPath: string }>
+        failed: Array<{ branch: string; fromPath: string; toPath: string; code: string; message: string }>
+      }
+    }
+    expect(payload.status).toBe("error")
+    expect(payload.code).toBe("SAFETY_REJECTED")
+    expect(payload.details.moved).toEqual([])
+    expect(payload.details.failed).toHaveLength(1)
+    expect(payload.details.failed[0]?.branch).toBe("feature/adopt-fail")
+
+    const listAfter = await runGit(repoRoot, ["worktree", "list", "--porcelain"])
+    expect(listAfter.includes(`worktree ${unmanagedPath}`)).toBe(true)
+  })
+
   it("get creates tracked local branch worktree from remote branch", async () => {
     const repoRoot = await setupRepo()
     tempDirs.add(repoRoot)
