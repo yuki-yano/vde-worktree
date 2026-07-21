@@ -977,6 +977,9 @@ fn completion_identity_at(
 }
 
 #[cfg(unix)]
+// libc stat field widths vary across Unix targets, so these conversions are
+// redundant on Linux but required on macOS.
+#[allow(clippy::useless_conversion)]
 fn completion_identity_from_stat(stat: FileStat) -> CompletionIdentity {
     CompletionIdentity {
         device: stat.st_dev.try_into().unwrap_or_default(),

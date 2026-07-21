@@ -1566,6 +1566,9 @@ fn optional_identity_at(
 }
 
 #[cfg(unix)]
+// libc stat field widths vary across Unix targets, so this conversion is
+// redundant on Linux but required on macOS.
+#[allow(clippy::useless_conversion)]
 fn metadata_identity_from_stat(stat: &FileStat) -> MetadataIdentity {
     let kind = SFlag::from_bits_truncate(stat.st_mode);
     MetadataIdentity {
