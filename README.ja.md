@@ -19,31 +19,55 @@
 
 ## 動作要件
 
-- Node.js 22+
-- pnpm 10+
+- Rust 1.89以降（sourceから導入する場合）
 - `fzf`（`cd` に必須）
 - `gh`（PR 状態判定に任意）
 
+対応platformはmacOS arm64、macOS x86_64、Linux x86_64です。
+
 ## インストール / ビルド
 
-グローバルインストール:
+crates.ioからインストール:
 
 ```bash
-npm install -g vde-worktree
+cargo install vde-worktree --locked
 ```
+
+このrepositoryの現在のsourceからローカルインストール:
+
+```bash
+cargo install --path . --locked
+```
+
+すでにインストール済みのlocal buildを置き換える場合:
+
+```bash
+cargo install --path . --locked --force
+```
+
+通常は`~/.cargo/bin`に`vw`と`vde-worktree`が配置されます。
+
+```bash
+~/.cargo/bin/vw --version
+```
+
+`vw`が見つからない場合は、`~/.cargo/bin`を`PATH`へ追加してshellを`rehash`してください。
 
 ローカルビルド:
 
 ```bash
-pnpm install
-pnpm run build
+cargo build --locked
 ```
 
 開発時の検証:
 
 ```bash
-pnpm run ci
+cargo fmt --all --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
 ```
+
+実行時にJavaScript runtimeは不要です。
 
 ## クイックスタート
 
@@ -85,6 +109,10 @@ fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
 
+補完スクリプトはRust binaryだけで動的候補を取得します。
+
+`--install`は同一filesystemのtransaction directoryを経由して補完ファイルをatomic replaceします。rename後のdirectory syncが失敗した場合は、errorを返す前に以前のfileを復元します。
+
 ## 管理ディレクトリ
 
 `vw init` 実行後に次を管理します:
@@ -95,12 +123,12 @@ autoload -Uz compinit && compinit
 - `.vde/worktree/locks/`
 - `.vde/worktree/state/`
 
-また `.git/info/exclude` に管理対象エントリを冪等で追記します。
+またGit common directoryの`info/exclude`（通常は`.git/info/exclude`）に管理対象エントリを冪等で追記します。
 
 ## 全体ルール
 
 - 多くの書き込み系コマンドは `init` 実行済みが前提
-- 書き込み時は内部の repo lock で排他制御
+- Git ref、worktree、repository local stateを変更するworktree lifecycle commandは内部のrepo lockで排他制御（`exec`、`invoke`、`copy`、`link`は取得しない）
 - `--json` 指定時、stdout は単一 JSON オブジェクトのみ
 - ログや警告は stderr に出力
 - 非TTYで unsafe 操作を行う場合は `--allow-unsafe` が必要
@@ -109,11 +137,15 @@ autoload -Uz compinit && compinit
 
 - `--json`: 機械可読の単一 JSON 出力
 - `--verbose`: 詳細ログ
-- `--no-hooks`: 今回のみ hook 無効化（`--allow-unsafe` 必須）
+- `--hooks` / `--no-hooks`: hookを有効/無効化（無効化は`--allow-unsafe`必須）
+- `--gh` / `--no-gh`: `gh`によるPR状態判定を有効/無効化
+- `--full-path`: `list`のpath省略を無効化
 - `--allow-unsafe`: unsafe 操作の明示同意
-- `--no-gh`: 今回の実行で `gh` による PR 状態判定を無効化
+- `--strict-post-hooks`: post-hook失敗をwarningではなくerrorにする
 - `--hook-timeout-ms <ms>`: hook timeout 上書き
 - `--lock-timeout-ms <ms>`: repo lock timeout 上書き
+- `--prompt <text>`: `cd`のfzf promptを上書き
+- `--fzf-arg <arg>`: 予約option以外のfzf引数を追加（複数回指定可）
 
 ## コマンド詳細
 
@@ -147,6 +179,7 @@ vw list --full-path
 - `--full-path` でテーブル表示の path 省略を無効化
 - `--no-gh` 指定時は PR 状態判定をスキップ（`pr.status` は `unknown`、`merged.byPR` は `null`）
 - 対話ターミナルでは Catppuccin 風の ANSI 色で表示
+- `NO_COLOR`指定時と非TTYではANSI色を出力しない
 
 ### `status`
 
@@ -346,14 +379,16 @@ vw use feature/foo --allow-agent --allow-unsafe
 ### `exec`
 
 ```bash
-vw exec feature/foo -- pnpm test
-vw exec feature/foo --json -- pnpm test
+vw exec feature/foo -- cargo test
+vw exec feature/foo --json -- cargo test
 ```
 
 機能:
 
 - 指定 branch の worktree を `cwd` にしてコマンド実行
 - shell 展開は使わず引数配列で実行
+- human modeは子processのstdin、stdout、stderrを継承
+- JSON modeは子processのstdoutとstderrを`data.childStdout`と`data.childStderr`へ格納
 
 終了コード:
 
@@ -372,6 +407,27 @@ vw invoke pre-new -- --arg1 --arg2
 - `pre-*` / `post-*` hook を手動実行
 - hook デバッグ用
 
+## Hook契約
+
+hookは`.vde/worktree/hooks/pre-<action>`または`post-<action>`の実行可能ファイルとして配置します。
+
+pre-hookは操作前に存在するsource worktreeまたはrepository root、post-hookは操作後のtarget worktreeをcwdにします。
+
+共通環境変数:
+
+- `WT_REPO_ROOT`: repository root。
+- `WT_ACTION`: `new`、`switch`などのaction名。
+- `WT_BRANCH`: preflightで確定したtarget branch。対象がなければ空文字。
+- `WT_WORKTREE_PATH`: preflightで確定したtarget path。対象がなければ空文字。
+- `WT_IS_TTY`: TTYなら`1`、それ以外は`0`。
+- `WT_TOOL`: `vde-worktree`。
+
+`mv`は`WT_OLD_BRANCH`と`WT_NEW_BRANCH`、`absorb` / `unabsorb`は`WT_SOURCE`と`WT_TARGET`も渡します。
+
+実行ログは`.vde/worktree/logs/`に保存し、`hook`、`phase`、`start`、`end`、`exitCode`、`timedOut`、`stderr`を記録します。
+
+pre-hook失敗は操作を中止します。post-hook失敗は既定でwarningとし、`--strict-post-hooks`時はerrorにします。timeoutは`--hook-timeout-ms`で指定できます。
+
 ### `copy`
 
 ```bash
@@ -382,18 +438,20 @@ vw copy .envrc .claude/settings.local.json
 
 - repo 相対パスのファイル/ディレクトリを target worktree にコピー
 - 主に hook 内で `WT_WORKTREE_PATH` と合わせて使う想定
+- path batch全体をprivateなrandom transaction directoryへstagingしてからtargetを変更
+- 後続pathのcommitが失敗した場合は、それ以前に反映した全pathをrollback
 
 ### `link`
 
 ```bash
 vw link .envrc
-vw link .envrc --no-fallback
 ```
 
 機能:
 
 - target worktree 側に symlink を作成
-- Windows では `--no-fallback` がない場合、copy にフォールバック可
+- repository rootのsourceを指すrelative symlinkだけを作成
+- symlink作成に失敗した場合はerrorを返し、copyへ暗黙に切り替えない
 
 ### `lock` / `unlock`
 
@@ -433,7 +491,9 @@ vw completion zsh --install
 機能:
 
 - zsh / fish 向け補完スクリプトを出力
-- `--install` 指定時はデフォルトまたは `--path` に補完ファイルを書き込む
+- `--install` 指定時はデフォルトまたは `--path` に補完ファイルをatomic replaceする
+- branch、remote branch、hook、管理worktree名の動的候補はRust binaryから取得する
+- rename後のdirectory syncが失敗した場合は以前のcompletionを復元する
 
 ## merged 判定（ローカル + PR）
 
@@ -466,7 +526,7 @@ vw completion zsh --install
 
 ## JSON 契約
 
-`--json` 指定時、stdout は常に単一 JSON オブジェクトです。
+`--json` 指定時、stdout はschema version 2の単一 JSON objectです。
 
 共通成功フィールド:
 
@@ -474,13 +534,16 @@ vw completion zsh --install
 - `command`
 - `status`
 - `repoRoot`
+- `data`
+- `error`
 
 エラー時:
 
 - `status: "error"`
-- `code`
-- `message`
-- `details`
+- `data`は通常`null`で、部分成功を返すcommandでは完了済みresultを保持
+- `error.code`
+- `error.message`
+- `error.details`
 
 ## 設定（config.yml）
 
@@ -519,9 +582,11 @@ selector:
 補足:
 
 - `paths.worktreeRoot` は repo 相対 path / 絶対 path の両方を指定可能
-- `.git` 配下（例: `.git/worktrees`）も指定可能
+- 通常repositoryでは`.git`配下（例: `.git/worktrees`）も指定可能
+- submoduleでは`.git`がfileになるため、`.git`配下ではなくデフォルトの`.worktree`などを使用する
 - `paths.worktreeRoot` が既存ファイルを指す場合は設定エラー
 
 ## 現在のスコープ
 
-- Ink ベースの `tui` は未実装
+- built-in TUIは初回Rust releaseに含まない
+- `fzf`による対話選択、preview、tmux popupをgraphical表示として提供

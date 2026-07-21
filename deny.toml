@@ -1,0 +1,23 @@
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "MIT",
+  "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+skip = [
+  { crate = "syn@2.0.119", reason = "clap derive still uses syn 2 while serde and thiserror use syn 3" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

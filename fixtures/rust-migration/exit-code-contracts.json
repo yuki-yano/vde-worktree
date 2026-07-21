@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "contracts": [
+    { "exitCode": 0, "classification": "OK", "representative": "path resolves a managed worktree", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 2, "classification": "NOT_GIT_REPOSITORY", "representative": "repository command runs outside Git", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 3, "classification": "INVALID_ARGUMENT", "representative": "completion receives an unsupported shell", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 4, "classification": "SAFETY_REJECTED", "representative": "del rejects an unmerged worktree", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 5, "classification": "DEPENDENCY_MISSING", "representative": "cd cannot start fzf", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 6, "classification": "LOCK_FAILED", "representative": "repo mutation lock times out", "coverage": "src/core/repo-lock.test.ts; Rust CLI acceptance required" },
+    { "exitCode": 10, "classification": "HOOK_FAILED", "representative": "pre-absorb hook fails after a stash", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 20, "classification": "GIT_COMMAND_FAILED", "representative": "Git subprocess returns non-zero without a more specific mapping", "coverage": "src/git/exec.test.ts; Rust CLI acceptance required" },
+    { "exitCode": 21, "classification": "CHILD_PROCESS_FAILED", "representative": "exec child returns non-zero", "coverage": "src/cli/index.test.ts" },
+    { "exitCode": 30, "classification": "INTERNAL_ERROR", "representative": "unexpected non-CliError reaches the boundary", "coverage": "src/core/errors.test.ts; Rust CLI acceptance required" },
+    { "exitCode": 130, "classification": "CANCELLED", "representative": "cd selection is cancelled", "coverage": "src/cli/index.test.ts" }
+  ]
+}

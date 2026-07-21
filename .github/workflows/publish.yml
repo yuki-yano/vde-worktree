@@ -1,55 +1,43 @@
-name: Publish
+name: Cargo release validation
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  validate:
+    name: Validate crates.io package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Install Rust 1.89
+        uses: dtolnay/rust-toolchain@451ce45ce31d200b52705aadd15ce75018b006de # 1.89.0
         with:
-          node-version: 24.13.0
-          registry-url: "https://registry.npmjs.org"
+          components: clippy, rustfmt
 
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Show toolchain
+        run: rustc --version && cargo --version
 
-      - name: Use pnpm
-        run: corepack prepare pnpm@10.28.2 --activate
+      - name: Check formatting
+        run: cargo fmt --all --check
 
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Lint all targets
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-pnpm-
+      - name: Test all targets
+        run: cargo test --locked --all-targets --all-features
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Verify package contents and build
+        run: |
+          cargo package --locked --list | LC_ALL=C sort | diff -u .github/package-allowlist.txt -
+          cargo package --locked
 
-      - name: Run CI
-        run: pnpm run ci
-
-      - name: Build package
-        run: pnpm build
-
-      - name: Ensure npm version
-        run: npm install -g npm@11.5.1
-
-      - name: Publish
-        run: npm publish
+      - name: Verify packaged binaries
+        run: |
+          package_root="target/package/vde-worktree-$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          cargo install --path "$package_root" --locked --root "$RUNNER_TEMP/vde-worktree-install"
+          "$RUNNER_TEMP/vde-worktree-install/bin/vw" --version
+          "$RUNNER_TEMP/vde-worktree-install/bin/vde-worktree" --version

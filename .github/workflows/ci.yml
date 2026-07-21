@@ -5,35 +5,76 @@ on:
   pull_request:
 
 jobs:
-  ci:
+  rust-quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Install Rust 1.89
+        uses: dtolnay/rust-toolchain@451ce45ce31d200b52705aadd15ce75018b006de # 1.89.0
         with:
-          node-version: 24.13.0
+          components: clippy, rustfmt
 
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Check formatting
+        run: cargo fmt --check
 
-      - name: Use pnpm
-        run: corepack prepare pnpm@10.28.2 --activate
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Run tests
+        run: cargo test --locked --all-targets --all-features
 
-      - name: Cache pnpm store
-        uses: actions/cache@v4
+      - name: Check MSRV build
+        run: cargo check --locked --all-targets
+
+  rust-platforms:
+    name: Rust platform (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+          - platform: macos-arm64
+            runner: macos-15
+          - platform: macos-x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Rust 1.89
+        uses: dtolnay/rust-toolchain@451ce45ce31d200b52705aadd15ce75018b006de # 1.89.0
+
+      - name: Record platform
+        run: rustc -vV && uname -a
+
+      - name: Build and test
+        run: cargo test --locked --all-targets --all-features
+
+      - name: Install packaged binaries
+        run: |
+          cargo install --path . --locked --root "$RUNNER_TEMP/vde-worktree-install"
+          "$RUNNER_TEMP/vde-worktree-install/bin/vw" --version
+          "$RUNNER_TEMP/vde-worktree-install/bin/vde-worktree" --version
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
-          path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-pnpm-
+          rust-version: "1.89.0"
+          command: check
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run CI
-        run: pnpm run ci
+  cargo-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

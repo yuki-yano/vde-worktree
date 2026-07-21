@@ -1,432 +1,1008 @@
 #compdef vw vde-worktree
 
-_vw_worktree_branches_raw() {
-  command git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  command git worktree list --porcelain 2>/dev/null \
-    | command sed -n 's/^branch refs\/heads\///p' \
-    | command sort -u
-}
-
-_vw_default_branch_raw() {
-  command git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+# Dynamic candidates are emitted as shell-safe TSV by the Rust binary.
+_vw_dynamic_candidates() {
+  local kind="$1" row value description
   local vw_bin="${words[1]:-vw}"
-  if command -v "$vw_bin" >/dev/null 2>&1; then
-    local configured
-    configured="$(
-      command "$vw_bin" list --json 2>/dev/null | command node -e '
-const fs = require("fs")
-let payload
-try {
-  payload = JSON.parse(fs.readFileSync(0, "utf8"))
-} catch {
-  process.exit(0)
-}
-if (typeof payload?.baseBranch === "string" && payload.baseBranch.length > 0) {
-  process.stdout.write(payload.baseBranch)
-}
-' 2>/dev/null
-    )"
-    if [[ -n "${configured}" ]]; then
-      print -r -- "${configured}"
-      return 0
-    fi
-  fi
-  if command git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
-    print -r -- "main"
-    return 0
-  fi
-  if command git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
-    print -r -- "master"
-    return 0
-  fi
-}
-
-_vw_worktree_candidate_rows_raw() {
-  command git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local vw_bin="${words[1]:-vw}"
+  local -a values
   command -v "$vw_bin" >/dev/null 2>&1 || return 0
-
-  command "$vw_bin" list --json 2>/dev/null | command node -e '
-const fs = require("fs")
-const home = process.env.HOME || ""
-const toDisplayPath = (path) => {
-  if (typeof path !== "string" || path.length === 0) return ""
-  if (home.length === 0) return path
-  if (path === home) return "~"
-  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`
-  return path
-}
-const toFlag = (value) => {
-  if (value === true) return "yes"
-  if (value === false) return "no"
-  return "unknown"
-}
-const toPrStatus = (value) => {
-  if (typeof value !== "string" || value.length === 0) return "n/a"
-  return value
-}
-let payload
-try {
-  payload = JSON.parse(fs.readFileSync(0, "utf8"))
-} catch {
-  process.exit(0)
-}
-const worktrees = Array.isArray(payload.worktrees) ? payload.worktrees : []
-for (const worktree of worktrees) {
-  if (typeof worktree?.branch !== "string" || worktree.branch.length === 0) continue
-  const merged = toFlag(worktree?.merged?.overall)
-  const pr = toPrStatus(worktree?.pr?.status)
-  const dirty = worktree?.dirty === true ? "yes" : "no"
-  const locked = worktree?.locked?.value === true ? "yes" : "no"
-  const path = toDisplayPath(worktree?.path)
-  const summary = `merged=${merged} pr=${pr} dirty=${dirty} locked=${locked}${path ? ` path=${path}` : ""}`
-  const sanitized = summary.replace(/[\t\r\n]+/g, " ").trim()
-  process.stdout.write(`${worktree.branch}\t${sanitized}\n`)
-}
-' 2>/dev/null
+  while IFS=$'\t' read -r value description; do
+    [[ -n "$value" ]] || continue
+    values+=("${value}:${description}")
+  done < <(command "$vw_bin" __complete "$kind" 2>/dev/null)
+  (( ${#values} > 0 )) && _describe -t "$kind" "$kind" values
 }
 
-_vw_managed_worktree_name_rows_raw() {
-  command git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local vw_bin="${words[1]:-vw}"
-  command -v "$vw_bin" >/dev/null 2>&1 || return 0
+_vw_complete_worktrees() { _vw_dynamic_candidates worktrees }
+_vw_complete_use_branches() { _vw_dynamic_candidates use-branches }
+_vw_complete_remote_branches() { _vw_dynamic_candidates remote-branches }
+_vw_complete_hooks() { _vw_dynamic_candidates hooks }
+_vw_complete_managed_worktrees() { _vw_dynamic_candidates managed-worktrees }
 
-  command "$vw_bin" list --json 2>/dev/null | command node -e '
-const fs = require("fs")
-const path = require("path")
-const toFlag = (value) => {
-  if (value === true) return "yes"
-  if (value === false) return "no"
-  return "unknown"
-}
-const toPrStatus = (value) => {
-  if (typeof value !== "string" || value.length === 0) return "n/a"
-  return value
-}
-let payload
-try {
-  payload = JSON.parse(fs.readFileSync(0, "utf8"))
-} catch {
-  process.exit(0)
-}
-const repoRoot = typeof payload?.repoRoot === "string" ? payload.repoRoot : ""
-const managedWorktreeRoot =
-  typeof payload?.managedWorktreeRoot === "string" && payload.managedWorktreeRoot.length > 0
-    ? payload.managedWorktreeRoot
-    : repoRoot.length > 0
-      ? path.join(repoRoot, ".worktree")
-      : ""
-if (managedWorktreeRoot.length === 0) process.exit(0)
-const worktrees = Array.isArray(payload.worktrees) ? payload.worktrees : []
-for (const worktree of worktrees) {
-  if (typeof worktree?.path !== "string" || worktree.path.length === 0) continue
-  const rel = path.relative(managedWorktreeRoot, worktree.path)
-  if (!rel || rel === "." || rel === ".." || rel.startsWith(`..${path.sep}`)) continue
-  const name = rel.split(path.sep).join("/")
-  const branch = typeof worktree?.branch === "string" && worktree.branch.length > 0 ? worktree.branch : "(detached)"
-  const merged = toFlag(worktree?.merged?.overall)
-  const pr = toPrStatus(worktree?.pr?.status)
-  const dirty = worktree?.dirty === true ? "yes" : "no"
-  const locked = worktree?.locked?.value === true ? "yes" : "no"
-  const summary = `branch=${branch} merged=${merged} pr=${pr} dirty=${dirty} locked=${locked}`
-  const sanitized = summary.replace(/[\t\r\n]+/g, " ").trim()
-  process.stdout.write(`${name}\t${sanitized}\n`)
-}
-' 2>/dev/null
-}
 
-_vw_remote_branches_raw() {
-  command git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  command git for-each-ref --format='%(refname:short)' refs/remotes 2>/dev/null \
-    | command sed '/\/HEAD$/d' \
-    | command sort -u
-}
-
-_vw_hook_names_raw() {
-  command git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local repo_root
-  repo_root="$(command git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  command ls -1 "$repo_root/.vde/worktree/hooks" 2>/dev/null \
-    | command grep -E '^(pre|post)-' \
-    | command sort -u
-}
-
-_vw_describe_values() {
-  local label="$1"
-  shift
-  local -a values
-  values=("$@")
-  if (( ${#values} == 0 )); then
-    _message "no ${label} candidates"
-    return 0
-  fi
-  _describe -t "${label}" "${label}" values
-}
-
-_vw_complete_worktree_branches() {
-  local -a values
-  values=("${(@f)$(_vw_worktree_branches_raw)}")
-  _vw_describe_values "worktree-branch" "${values[@]}"
-}
-
-_vw_complete_worktree_branches_with_meta() {
-  local -a rows branches descriptions
-  local row branch summary
-  rows=("${(@f)$(_vw_worktree_candidate_rows_raw)}")
-
-  for row in "${rows[@]}"; do
-    branch="${row%%$'\t'*}"
-    summary="${row#*$'\t'}"
-    if [[ -z "${branch}" ]]; then
-      continue
-    fi
-
-    branches+=("${branch}")
-    descriptions+=("${summary}")
-  done
-
-  if (( ${#branches} > 0 )); then
-    compadd -Ql -d descriptions -a branches
-    return 0
-  fi
-
-  _vw_complete_worktree_branches
-}
-
-_vw_complete_use_branches() {
-  local -a branches
-  local default_branch
-  branches=("${(@f)$(_vw_worktree_branches_raw)}")
-  default_branch="$(_vw_default_branch_raw | command head -n 1)"
-  if [[ -n "${default_branch}" ]]; then
-    branches+=("${default_branch}")
-  fi
-
-  branches=("${(@u)branches}")
-
-  if (( ${#branches} > 0 )); then
-    _vw_describe_values "branch" "${branches[@]}"
-    return 0
-  fi
-
-  _vw_complete_worktree_branches
-}
-
-_vw_complete_managed_worktree_names() {
-  local -a rows names descriptions
-  local row name summary
-  rows=("${(@f)$(_vw_managed_worktree_name_rows_raw)}")
-
-  for row in "${rows[@]}"; do
-    name="${row%%$'\t'*}"
-    summary="${row#*$'\t'}"
-    if [[ -z "${name}" ]]; then
-      continue
-    fi
-
-    names+=("${name}")
-    descriptions+=("${summary}")
-  done
-
-  if (( ${#names} > 0 )); then
-    compadd -Ql -d descriptions -a names
-    return 0
-  fi
-
-  _message "no managed-worktree-name candidates"
-}
-
-_vw_complete_remote_branches() {
-  local -a values
-  values=("${(@f)$(_vw_remote_branches_raw)}")
-  _vw_describe_values "remote-branch" "${values[@]}"
-}
-
-_vw_complete_hooks() {
-  local -a values
-  values=("${(@f)$(_vw_hook_names_raw)}")
-  _vw_describe_values "hook" "${values[@]}"
-}
+autoload -U is-at-least
 
 _vw() {
-  local curcontext="$curcontext" state
-  local -a line
-  typeset -a commands
-  typeset -a global_options
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
 
-  commands=(
-    "init:Initialize directories, hooks, and managed exclude entries"
-    "list:List worktrees with status metadata"
-    "status:Show a single worktree status"
-    "path:Print absolute worktree path for branch"
-    "new:Create branch + worktree under .worktree"
-    "switch:Idempotent branch entrypoint"
-    "mv:Rename current non-primary worktree branch and move its directory"
-    "del:Delete worktree + branch with safety checks"
-    "gone:Bulk cleanup by safety-filtered candidate selection"
-    "adopt:Move unmanaged non-primary worktrees into managed worktree root"
-    "get:Fetch remote branch and attach worktree"
-    "extract:Extract current primary branch into .worktree"
-    "absorb:Bring non-primary worktree changes into primary worktree"
-    "unabsorb:Push primary worktree changes into non-primary worktree"
-    "use:Checkout target branch in primary worktree"
-    "exec:Run command in target branch worktree"
-    "invoke:Manually run hook script"
-    "copy:Copy repo-root files/dirs to target worktree"
-    "link:Create symlink from target worktree to repo-root file"
-    "lock:Create or update lock metadata"
-    "unlock:Remove lock metadata"
-    "cd:Interactive fzf picker that prints selected worktree path"
-    "completion:Print or install shell completion scripts"
-    "help:Show help"
-  )
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
 
-  global_options=(
-    "--json[Output machine-readable JSON]"
-    "--verbose[Enable verbose logs]"
-    "--no-hooks[Disable hooks for this run]"
-    "--no-gh[Disable GitHub CLI based PR status checks for this run]"
-    "--full-path[Disable list table path truncation]"
-    "--allow-unsafe[Allow unsafe behavior in non-TTY mode]"
-    "--strict-post-hooks[Fail when post hooks fail]"
-    "--hook-timeout-ms[Override hook timeout]:ms:"
-    "--lock-timeout-ms[Override repository lock timeout]:ms:"
-    "--help[Show help]"
-    "--version[Show version]"
-  )
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_vw_commands" \
+"*::: :->vw" \
+&& ret=0
+    case $state in
+    (vw)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:vw-command-$line[1]:"
+        case $line[1] in
+            (init)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(path)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(switch)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(new)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(mv)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':new_branch:_default' \
+&& ret=0
+;;
+(del)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--force[]' \
+'--force-dirty[]' \
+'--allow-unpushed[]' \
+'--force-unmerged[]' \
+'--force-locked[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(gone)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'(--dry-run)--apply[]' \
+'(--apply)--dry-run[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(adopt)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'(--dry-run)--apply[]' \
+'(--apply)--dry-run[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':remote_branch:_vw_complete_remote_branches' \
+&& ret=0
+;;
+(extract)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--current[]' \
+'--stash[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(absorb)
+_arguments "${_arguments_options[@]}" : \
+'--from=[]:FROM:_vw_complete_managed_worktrees' \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--keep-stash[]' \
+'--allow-agent[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(unabsorb)
+_arguments "${_arguments_options[@]}" : \
+'--to=[]:TO:_vw_complete_managed_worktrees' \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--keep-stash[]' \
+'--allow-agent[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_use_branches' \
+&& ret=0
+;;
+(use)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--allow-agent[]' \
+'--allow-shared[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_use_branches' \
+&& ret=0
+;;
+(exec)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_worktrees' \
+'*::argv:_default' \
+&& ret=0
+;;
+(invoke)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':hook:_vw_complete_hooks' \
+'*::argv:_default' \
+&& ret=0
+;;
+(copy)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::paths:_files' \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::paths:_files' \
+&& ret=0
+;;
+(lock)
+_arguments "${_arguments_options[@]}" : \
+'--owner=[]:OWNER:_default' \
+'--reason=[]:REASON:_default' \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(unlock)
+_arguments "${_arguments_options[@]}" : \
+'--owner=[]:OWNER:_default' \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--force[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':branch:_vw_complete_worktrees' \
+&& ret=0
+;;
+(cd)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(completion)
+_arguments "${_arguments_options[@]}" : \
+'--path=[]:PATH:_files' \
+'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[]:PROMPT:_default' \
+'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--install[]' \
+'--json[]' \
+'*--verbose[]' \
+'-v[]' \
+'--version[]' \
+'--hooks[]' \
+'--no-hooks[]' \
+'--gh[]' \
+'--no-gh[]' \
+'--full-path[]' \
+'--allow-unsafe[]' \
+'--strict-post-hooks[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(zsh fish)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_vw__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
 
-  _arguments -C \
-    $global_options \
-    "1:command:->command" \
-    "*:: :->arguments"
-
-  case $state in
-    command)
-      _describe -t commands "vw command" commands
-      return
-      ;;
-    arguments)
-      local current_command="${line[1]:-${words[2]}}"
-      case "${current_command}" in
-        list)
-          _arguments \
-            "--full-path[Disable list table path truncation]"
-          ;;
-        status)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta"
-          ;;
-        path)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta"
-          ;;
-        switch)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta"
-          ;;
-        mv)
-          _arguments \
-            "1:new-branch:"
-          ;;
-        del)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta" \
-            "--force-dirty[Allow dirty worktree for del]" \
-            "--allow-unpushed[Allow unpushed commits for del]" \
-            "--force-unmerged[Allow unmerged worktree for del]" \
-            "--force-locked[Allow deleting locked worktree]" \
-            "--force[Enable all del force flags]"
-          ;;
-        gone)
-          _arguments \
-            "--apply[Apply deletion]" \
-            "--dry-run[Dry-run mode]"
-          ;;
-        adopt)
-          _arguments \
-            "--apply[Apply worktree moves]" \
-            "--dry-run[Dry-run mode]"
-          ;;
-        get)
-          _arguments \
-            "1:remote-branch:_vw_complete_remote_branches"
-          ;;
-        extract)
-          _arguments \
-            "--current[Extract current worktree branch]" \
-            "--from[Path used by extract --from]:path:_files" \
-            "--stash[Allow stash when dirty]"
-          ;;
-        absorb)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta" \
-            "--from[Source managed worktree name]:worktree-name:_vw_complete_managed_worktree_names" \
-            "--keep-stash[Keep stash entry after absorb]" \
-            "--allow-agent[Allow non-TTY execution for absorb]" \
-            "--allow-unsafe[Allow unsafe behavior in non-TTY mode]"
-          ;;
-        unabsorb)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta" \
-            "--to[Target managed worktree name]:worktree-name:_vw_complete_managed_worktree_names" \
-            "--keep-stash[Keep stash entry after unabsorb]" \
-            "--allow-agent[Allow non-TTY execution for unabsorb]" \
-            "--allow-unsafe[Allow unsafe behavior in non-TTY mode]"
-          ;;
-        use)
-          _arguments \
-            "1:branch:_vw_complete_use_branches" \
-            "--allow-shared[Allow checkout when branch is attached by another worktree]" \
-            "--allow-agent[Allow non-TTY execution for use]" \
-            "--allow-unsafe[Allow unsafe behavior in non-TTY mode]"
-          ;;
-        exec)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta"
-          ;;
-        invoke)
-          _arguments \
-            "1:hook:_vw_complete_hooks"
-          ;;
-        copy)
-          _arguments \
-            "*:repo-relative-path:_files"
-          ;;
-        link)
-          _arguments \
-            "*:repo-relative-path:_files" \
-            "--no-fallback[Disable copy fallback when symlink fails]"
-          ;;
-        lock)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta" \
-            "--owner[Lock owner]:owner:" \
-            "--reason[Lock reason]:reason:"
-          ;;
-        unlock)
-          _arguments \
-            "1:branch:_vw_complete_worktree_branches_with_meta" \
-            "--owner[Unlock owner]:owner:" \
-            "--force[Force unlock]"
-          ;;
-        cd)
-          _arguments \
-            "--prompt[Custom fzf prompt]:prompt:" \
-            "--fzf-arg[Extra argument passed to fzf]:arg:"
-          ;;
-        completion)
-          _arguments \
-            "1:shell:(zsh fish)" \
-            "--install[Install completion file to default or --path]" \
-            "--path[Install destination file path]:path:_files"
-          ;;
-        help)
-          _arguments \
-            "1:command:(${(j: :)${commands%%:*}})"
-          ;;
-      esac
-      ;;
-  esac
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:vw-help-command-$line[1]:"
+        case $line[1] in
+            (init)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(path)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(switch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(new)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mv)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(del)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(gone)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(adopt)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(extract)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(absorb)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unabsorb)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(use)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(exec)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(invoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(copy)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(lock)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unlock)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cd)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(completion)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 }
 
-compdef _vw vw vde-worktree
+(( $+functions[_vw_commands] )) ||
+_vw_commands() {
+    local commands; commands=(
+'init:Initialize repository-local vde-worktree state' \
+'list:List worktrees and status metadata' \
+'status:Show a single worktree status' \
+'path:Print the absolute path for a branch worktree' \
+'switch:Reuse or create a worktree for a branch' \
+'new:Create a branch and its worktree' \
+'mv:Rename the current linked worktree branch' \
+'del:Delete a linked worktree and branch' \
+'gone:Find or delete stale merged worktrees' \
+'adopt:Find or move unmanaged worktrees into the managed root' \
+'get:Fetch and attach a remote branch' \
+'extract:Extract the current primary branch into the managed root' \
+'absorb:Transfer linked worktree changes into the primary worktree' \
+'unabsorb:Transfer primary worktree changes into a linked worktree' \
+'use:Check out a branch in the primary worktree' \
+'exec:Run an argv command in a branch worktree' \
+'invoke:Invoke a named hook' \
+'copy:Copy repository-relative paths into the target worktree' \
+'link:Link repository-relative paths into the target worktree' \
+'lock:Protect a worktree with persistent lock metadata' \
+'unlock:Remove persistent lock metadata' \
+'cd:Select a worktree path interactively' \
+'completion:Generate or install shell completions' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'vw commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__absorb_commands] )) ||
+_vw__subcmd__absorb_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw absorb commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__adopt_commands] )) ||
+_vw__subcmd__adopt_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw adopt commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__cd_commands] )) ||
+_vw__subcmd__cd_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw cd commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__completion_commands] )) ||
+_vw__subcmd__completion_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw completion commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__copy_commands] )) ||
+_vw__subcmd__copy_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw copy commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__del_commands] )) ||
+_vw__subcmd__del_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw del commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__exec_commands] )) ||
+_vw__subcmd__exec_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw exec commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__extract_commands] )) ||
+_vw__subcmd__extract_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw extract commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__get_commands] )) ||
+_vw__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw get commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__gone_commands] )) ||
+_vw__subcmd__gone_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw gone commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help_commands] )) ||
+_vw__subcmd__help_commands() {
+    local commands; commands=(
+'init:Initialize repository-local vde-worktree state' \
+'list:List worktrees and status metadata' \
+'status:Show a single worktree status' \
+'path:Print the absolute path for a branch worktree' \
+'switch:Reuse or create a worktree for a branch' \
+'new:Create a branch and its worktree' \
+'mv:Rename the current linked worktree branch' \
+'del:Delete a linked worktree and branch' \
+'gone:Find or delete stale merged worktrees' \
+'adopt:Find or move unmanaged worktrees into the managed root' \
+'get:Fetch and attach a remote branch' \
+'extract:Extract the current primary branch into the managed root' \
+'absorb:Transfer linked worktree changes into the primary worktree' \
+'unabsorb:Transfer primary worktree changes into a linked worktree' \
+'use:Check out a branch in the primary worktree' \
+'exec:Run an argv command in a branch worktree' \
+'invoke:Invoke a named hook' \
+'copy:Copy repository-relative paths into the target worktree' \
+'link:Link repository-relative paths into the target worktree' \
+'lock:Protect a worktree with persistent lock metadata' \
+'unlock:Remove persistent lock metadata' \
+'cd:Select a worktree path interactively' \
+'completion:Generate or install shell completions' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'vw help commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__absorb_commands] )) ||
+_vw__subcmd__help__subcmd__absorb_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help absorb commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__adopt_commands] )) ||
+_vw__subcmd__help__subcmd__adopt_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help adopt commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__cd_commands] )) ||
+_vw__subcmd__help__subcmd__cd_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help cd commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__completion_commands] )) ||
+_vw__subcmd__help__subcmd__completion_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help completion commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__copy_commands] )) ||
+_vw__subcmd__help__subcmd__copy_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help copy commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__del_commands] )) ||
+_vw__subcmd__help__subcmd__del_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help del commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__exec_commands] )) ||
+_vw__subcmd__help__subcmd__exec_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help exec commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__extract_commands] )) ||
+_vw__subcmd__help__subcmd__extract_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help extract commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__get_commands] )) ||
+_vw__subcmd__help__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help get commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__gone_commands] )) ||
+_vw__subcmd__help__subcmd__gone_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help gone commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__help_commands] )) ||
+_vw__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help help commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__init_commands] )) ||
+_vw__subcmd__help__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help init commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__invoke_commands] )) ||
+_vw__subcmd__help__subcmd__invoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help invoke commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__link_commands] )) ||
+_vw__subcmd__help__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help link commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__list_commands] )) ||
+_vw__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help list commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__lock_commands] )) ||
+_vw__subcmd__help__subcmd__lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help lock commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__mv_commands] )) ||
+_vw__subcmd__help__subcmd__mv_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help mv commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__new_commands] )) ||
+_vw__subcmd__help__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help new commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__path_commands] )) ||
+_vw__subcmd__help__subcmd__path_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help path commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__status_commands] )) ||
+_vw__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help status commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__switch_commands] )) ||
+_vw__subcmd__help__subcmd__switch_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help switch commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__unabsorb_commands] )) ||
+_vw__subcmd__help__subcmd__unabsorb_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help unabsorb commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__unlock_commands] )) ||
+_vw__subcmd__help__subcmd__unlock_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help unlock commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__use_commands] )) ||
+_vw__subcmd__help__subcmd__use_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help use commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__init_commands] )) ||
+_vw__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw init commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__invoke_commands] )) ||
+_vw__subcmd__invoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw invoke commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__link_commands] )) ||
+_vw__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw link commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__list_commands] )) ||
+_vw__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw list commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__lock_commands] )) ||
+_vw__subcmd__lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw lock commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__mv_commands] )) ||
+_vw__subcmd__mv_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw mv commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__new_commands] )) ||
+_vw__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw new commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__path_commands] )) ||
+_vw__subcmd__path_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw path commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__status_commands] )) ||
+_vw__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw status commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__switch_commands] )) ||
+_vw__subcmd__switch_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw switch commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__unabsorb_commands] )) ||
+_vw__subcmd__unabsorb_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw unabsorb commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__unlock_commands] )) ||
+_vw__subcmd__unlock_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw unlock commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__use_commands] )) ||
+_vw__subcmd__use_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw use commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_vw" ]; then
+    _vw "$@"
+else
+    compdef _vw vw
+fi
