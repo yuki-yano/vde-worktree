@@ -55,8 +55,8 @@
       "repoLock": false,
       "hooks": [],
       "tty": "ANSI colors only when interactive; width-aware path truncation",
-      "options": ["--json", "--no-gh", "--full-path"],
-      "normal": { "exitCode": 0, "stdout": "colorized table or JSON", "effects": ["atomically merge lifecycle observations"], "evidence": "list applies catppuccin colors in interactive mode" },
+      "options": ["--json", "--no-gh", "--full-path", "--monitor"],
+      "normal": { "exitCode": 0, "stdout": "colorized table or JSON", "effects": ["atomically merge lifecycle observations", "monitor mode skips upstream probes and lifecycle observation writes"], "evidence": "list applies catppuccin colors in interactive mode; monitor mode preserves schema v2 with unknown upstream state" },
       "failure": { "exitCode": 2, "code": "NOT_GIT_REPOSITORY", "evidence": "returns a JSON NOT_GIT_REPOSITORY failure for every repository command" },
       "jsonDataFields": ["baseBranch", "managedWorktreeRoot", "worktrees"]
     },

@@ -168,6 +168,7 @@ vw list
 vw list --json
 vw list --no-gh
 vw list --full-path
+vw list --json --no-gh --monitor
 ```
 
 機能:
@@ -178,6 +179,7 @@ vw list --full-path
 - テーブル表示では長い `path` は端末幅に合わせて `…` で省略
 - `--full-path` でテーブル表示の path 省略を無効化
 - `--no-gh` 指定時は PR 状態判定をスキップ（`pr.status` は `unknown`、`merged.byPR` は `null`）
+- `--monitor` はmonitor連携向けの内部用・機械可読snapshot profile。`--json --no-gh` が必須で、`--gh` とは併用不可。upstream probeを省略してupstream各fieldをunknown（`null`）にし、lifecycle observationを永続化しない
 - 対話ターミナルでは Catppuccin 風の ANSI 色で表示
 - `NO_COLOR`指定時と非TTYではANSI色を出力しない
 

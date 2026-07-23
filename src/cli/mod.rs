@@ -127,7 +127,15 @@ pub enum Command {
     /// Initialize repository-local vde-worktree state.
     Init,
     /// List worktrees and status metadata.
-    List,
+    List {
+        /// Emit a lightweight internal snapshot for monitor integrations.
+        #[arg(
+            long,
+            requires_all = ["json", "no_gh"],
+            conflicts_with = "gh"
+        )]
+        monitor: bool,
+    },
     /// Show a single worktree status.
     Status { branch: Option<String> },
     /// Print the absolute path for a branch worktree.
@@ -260,7 +268,7 @@ impl Command {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Init => "init",
-            Self::List => "list",
+            Self::List { .. } => "list",
             Self::Status { .. } => "status",
             Self::Path { .. } => "path",
             Self::Switch { .. } => "switch",
@@ -498,6 +506,26 @@ mod tests {
             .map(|args| request(args).command.name())
             .collect();
         assert_eq!(parsed_names, COMMAND_NAMES);
+    }
+
+    #[test]
+    fn monitor_mode_requires_its_machine_only_option_contract() {
+        let parsed = request(&["list", "--json", "--no-gh", "--monitor"]);
+        assert!(matches!(parsed.command, Command::List { monitor: true }));
+
+        for args in [
+            &["list", "--monitor"][..],
+            &["list", "--json", "--monitor"],
+            &["list", "--json", "--no-gh", "--gh", "--monitor"],
+            &["status", "--json", "--no-gh", "--monitor"],
+        ] {
+            let mut full_args = vec!["vw"];
+            full_args.extend_from_slice(args);
+            let CliParseResult::Invalid { error, .. } = parse_from(full_args) else {
+                panic!("expected validation failure for {args:?}");
+            };
+            assert_eq!(error.code, ErrorCode::InvalidArgument, "{args:?}");
+        }
     }
 
     #[test]

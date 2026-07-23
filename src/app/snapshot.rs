@@ -93,10 +93,34 @@ impl fmt::Display for WorktreePorcelainError {
 
 impl std::error::Error for WorktreePorcelainError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotCollectionOptions {
+    persist_lifecycle_observations: bool,
+    include_upstream: bool,
+}
+
+impl SnapshotCollectionOptions {
+    pub const fn monitor() -> Self {
+        Self {
+            persist_lifecycle_observations: false,
+            include_upstream: false,
+        }
+    }
+}
+
+impl Default for SnapshotCollectionOptions {
+    fn default() -> Self {
+        Self {
+            persist_lifecycle_observations: true,
+            include_upstream: true,
+        }
+    }
+}
+
 pub struct SnapshotCollector<'a, G, P> {
     git: &'a G,
     pr_lookup: &'a P,
-    persist_lifecycle_observations: bool,
+    options: SnapshotCollectionOptions,
 }
 
 impl<'a, G, P> SnapshotCollector<'a, G, P>
@@ -108,13 +132,22 @@ where
         Self {
             git,
             pr_lookup,
-            persist_lifecycle_observations: true,
+            options: SnapshotCollectionOptions {
+                persist_lifecycle_observations: true,
+                include_upstream: true,
+            },
         }
     }
 
     #[must_use]
+    pub const fn with_options(mut self, options: SnapshotCollectionOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    #[must_use]
     pub const fn without_lifecycle_observations(mut self) -> Self {
-        self.persist_lifecycle_observations = false;
+        self.options.persist_lifecycle_observations = false;
         self
     }
 
@@ -230,7 +263,11 @@ where
         );
         let pr = resolve_pr(worktree.branch.as_deref(), base_branch, pr_states);
         let merged = self.resolve_merged(repo_root, base_branch, worktree, &pr, warnings)?;
-        let upstream = self.resolve_upstream(&worktree.path)?;
+        let upstream = if self.options.include_upstream {
+            self.resolve_upstream(&worktree.path)?
+        } else {
+            unknown_upstream()
+        };
         Ok(WorktreeStatus {
             branch: worktree.branch.clone(),
             path: worktree.path.clone(),
@@ -335,7 +372,7 @@ where
                 };
                 let observed_diverged_head =
                     (by_ancestry == Some(false)).then_some(worktree.head.as_str());
-                let lifecycle = if self.persist_lifecycle_observations {
+                let lifecycle = if self.options.persist_lifecycle_observations {
                     self.persist_lifecycle_observation(
                         repo_root,
                         lifecycle_target,
@@ -389,7 +426,7 @@ where
             return Ok(None);
         }
         let reflog = self.probe_lifecycle_from_reflog(repo_root, target.branch, base_branch)?;
-        if self.persist_lifecycle_observations
+        if self.options.persist_lifecycle_observations
             && let Some(diverged_head) = reflog.diverged_head.as_deref()
         {
             let _ = self.persist_lifecycle_observation(
@@ -915,7 +952,7 @@ mod tests {
     use std::fs;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, Mutex};
 
     use super::*;
     use crate::adapters::git_cli::GitCli;
@@ -950,6 +987,39 @@ mod tests {
         active: AtomicUsize,
         maximum: AtomicUsize,
         failure_index: Option<usize>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct RecordedGitCommand {
+        cwd: PathBuf,
+        args: Vec<String>,
+    }
+
+    struct RecordingGit {
+        worktree_output: Vec<u8>,
+        commands: Mutex<Vec<RecordedGitCommand>>,
+    }
+
+    impl RecordingGit {
+        fn with_two_worktrees(repo_root: &Path) -> Self {
+            let feature_path = repo_root.join("feature");
+            Self {
+                worktree_output: format!(
+                    "worktree {}\0HEAD {:040}\0branch refs/heads/main\0\0\
+                     worktree {}\0HEAD {:040}\0branch refs/heads/feature/monitor\0\0",
+                    repo_root.display(),
+                    1,
+                    feature_path.display(),
+                    2
+                )
+                .into_bytes(),
+                commands: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn commands(&self) -> Vec<RecordedGitCommand> {
+            self.commands.lock().unwrap().clone()
+        }
     }
 
     #[derive(Debug)]
@@ -1014,6 +1084,37 @@ mod tests {
         }
     }
 
+    impl GitSnapshotPort for RecordingGit {
+        type Error = FakeSnapshotError;
+
+        fn run_git<I, S>(&self, cwd: &Path, args: I) -> Result<ProcessOutput, Self::Error>
+        where
+            I: IntoIterator<Item = S>,
+            S: AsRef<OsStr>,
+        {
+            let args = args
+                .into_iter()
+                .map(|arg| arg.as_ref().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            self.commands.lock().unwrap().push(RecordedGitCommand {
+                cwd: cwd.to_path_buf(),
+                args: args.clone(),
+            });
+            match args.first().map(String::as_str) {
+                Some("worktree") => Ok(success(self.worktree_output.clone())),
+                Some("status") => Ok(success(Vec::new())),
+                Some("merge-base") => Ok(failure(1)),
+                Some("rev-parse") if args.last().is_some_and(|arg| arg == "@{upstream}") => {
+                    Ok(success(b"origin/main\n".to_vec()))
+                }
+                Some("rev-list") if args.last().is_some_and(|arg| arg == "@{upstream}...HEAD") => {
+                    Ok(success(b"0\t0\n".to_vec()))
+                }
+                _ => unreachable!("unexpected Git probe: {args:?}"),
+            }
+        }
+    }
+
     fn success(stdout: Vec<u8>) -> ProcessOutput {
         ProcessOutput {
             stdout,
@@ -1021,6 +1122,137 @@ mod tests {
             exit_code: Some(0),
             timed_out: false,
         }
+    }
+
+    fn failure(exit_code: i32) -> ProcessOutput {
+        ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: Some(exit_code),
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn monitor_profile_skips_exactly_two_upstream_probes_per_worktree() {
+        let directory = tempfile::tempdir().unwrap();
+        let repo_root = directory.path();
+        let normal_git = RecordingGit::with_two_worktrees(repo_root);
+        let normal = SnapshotCollector::new(&normal_git, &NoPrLookup)
+            .without_lifecycle_observations()
+            .collect(repo_root, "main", false)
+            .unwrap();
+        let monitor_git = RecordingGit::with_two_worktrees(repo_root);
+        let monitor = SnapshotCollector::new(&monitor_git, &NoPrLookup)
+            .with_options(SnapshotCollectionOptions::monitor())
+            .collect(repo_root, "main", false)
+            .unwrap();
+
+        let normal_commands = normal_git.commands();
+        let mut monitor_commands = monitor_git.commands();
+        assert_eq!(normal_commands.len(), monitor_commands.len() + 4);
+        assert_eq!(
+            normal_commands
+                .iter()
+                .filter(|command| {
+                    command.args.first().is_some_and(|arg| arg == "rev-parse")
+                        && command.args.last().is_some_and(|arg| arg == "@{upstream}")
+                })
+                .count(),
+            2
+        );
+        assert_eq!(
+            normal_commands
+                .iter()
+                .filter(|command| {
+                    command.args.first().is_some_and(|arg| arg == "rev-list")
+                        && command
+                            .args
+                            .last()
+                            .is_some_and(|arg| arg == "@{upstream}...HEAD")
+                })
+                .count(),
+            2
+        );
+        assert!(
+            monitor_commands
+                .iter()
+                .all(|command| { !command.args.iter().any(|arg| arg.contains("@{upstream}")) })
+        );
+        assert!(
+            normal
+                .worktrees
+                .iter()
+                .all(|worktree| worktree.upstream.remote.as_deref() == Some("origin/main"))
+        );
+        assert!(
+            monitor
+                .worktrees
+                .iter()
+                .all(|worktree| worktree.upstream == unknown_upstream())
+        );
+
+        monitor_commands.sort();
+        let feature_path = repo_root.join("feature");
+        let mut expected = vec![
+            RecordedGitCommand {
+                cwd: repo_root.to_path_buf(),
+                args: vec![
+                    "worktree".into(),
+                    "list".into(),
+                    "--porcelain".into(),
+                    "-z".into(),
+                ],
+            },
+            RecordedGitCommand {
+                cwd: repo_root.to_path_buf(),
+                args: vec!["status".into(), "--porcelain".into()],
+            },
+            RecordedGitCommand {
+                cwd: repo_root.to_path_buf(),
+                args: vec![
+                    "merge-base".into(),
+                    "--is-ancestor".into(),
+                    "main".into(),
+                    "main".into(),
+                ],
+            },
+            RecordedGitCommand {
+                cwd: feature_path.clone(),
+                args: vec!["status".into(), "--porcelain".into()],
+            },
+            RecordedGitCommand {
+                cwd: repo_root.to_path_buf(),
+                args: vec![
+                    "merge-base".into(),
+                    "--is-ancestor".into(),
+                    "feature/monitor".into(),
+                    "main".into(),
+                ],
+            },
+        ];
+        expected.sort();
+        assert_eq!(monitor_commands, expected);
+    }
+
+    #[test]
+    fn monitor_profile_does_not_write_lifecycle_observations_when_state_exists() {
+        let directory = tempfile::tempdir().unwrap();
+        let repo_root = directory.path();
+        let state_root = repo_root.join(".vde/worktree/state");
+        fs::create_dir_all(&state_root).unwrap();
+        let git = RecordingGit::with_two_worktrees(repo_root);
+
+        SnapshotCollector::new(&git, &NoPrLookup)
+            .with_options(SnapshotCollectionOptions::monitor())
+            .collect(repo_root, "main", false)
+            .unwrap();
+
+        assert_eq!(fs::read_dir(&state_root).unwrap().count(), 0);
+        assert!(git.commands().iter().all(|command| {
+            !(command.args.first().is_some_and(|arg| arg == "rev-parse")
+                && command.args.iter().any(|arg| arg == "--verify"))
+        }));
     }
 
     #[test]

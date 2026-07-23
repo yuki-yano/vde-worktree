@@ -82,6 +82,7 @@ complete -c vw -n "__fish_vw_using_subcommand list" -l hook-timeout-ms -r
 complete -c vw -n "__fish_vw_using_subcommand list" -l lock-timeout-ms -r
 complete -c vw -n "__fish_vw_using_subcommand list" -l prompt -r
 complete -c vw -n "__fish_vw_using_subcommand list" -l fzf-arg -r
+complete -c vw -n "__fish_vw_using_subcommand list" -l monitor -d 'Emit a lightweight internal snapshot for monitor integrations'
 complete -c vw -n "__fish_vw_using_subcommand list" -l json
 complete -c vw -n "__fish_vw_using_subcommand list" -l verbose
 complete -c vw -n "__fish_vw_using_subcommand list" -s v -l version
@@ -516,6 +517,7 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l hook-timeout-ms
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l lock-timeout-ms -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l prompt -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l fzf-arg -r
+complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l monitor -d 'Emit a lightweight internal snapshot for monitor integrations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l json
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l verbose
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -s v -l version

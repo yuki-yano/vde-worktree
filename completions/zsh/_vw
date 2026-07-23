@@ -88,6 +88,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[]:PROMPT:_default' \
 '*--fzf-arg=[]:FZF_ARGS:_default' \
+'(--gh)--monitor[Emit a lightweight internal snapshot for monitor integrations]' \
 '--json[]' \
 '*--verbose[]' \
 '-v[]' \

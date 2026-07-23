@@ -74,8 +74,176 @@ fn run_vw(repo: &Path, args: &[&str]) -> Output {
         .expect("run vw")
 }
 
+fn run_vw_with_git_wrapper(
+    repo: &Path,
+    args: &[&str],
+    wrapper_directory: &Path,
+    command_log: &Path,
+) -> Output {
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout).expect("real git path");
+    let path = std::env::join_paths(std::iter::once(wrapper_directory.to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("git wrapper PATH");
+    Command::new(env!("CARGO_BIN_EXE_vw"))
+        .current_dir(repo)
+        .args(args)
+        .env("HOME", repo.join("isolated-home"))
+        .env("XDG_CONFIG_HOME", repo.join("isolated-config"))
+        .env("GIT_CONFIG_GLOBAL", repo.join("isolated-gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("PATH", path)
+        .env("REAL_GIT", real_git.trim())
+        .env("GIT_COMMAND_LOG", command_log)
+        .env_remove("NO_COLOR")
+        .output()
+        .expect("run vw with git wrapper")
+}
+
 fn json_stdout(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("one JSON stdout object")
+}
+
+#[test]
+fn monitor_list_rejects_every_invalid_option_combination() {
+    let (_fixture, repo) = repository();
+    for args in [
+        &["list", "--monitor"][..],
+        &["list", "--json", "--monitor"],
+        &["list", "--json", "--no-gh", "--gh", "--monitor"],
+        &["status", "--json", "--no-gh", "--monitor"],
+    ] {
+        let output = run_vw(&repo, args);
+        assert_eq!(output.status.code(), Some(3), "{args:?}");
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn monitor_list_keeps_schema_v2_and_skips_upstream_and_lifecycle_writes() {
+    let (fixture, repo) = repository();
+    let feature_path = fixture.path().join("feature-monitor");
+    git(
+        &repo,
+        [
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "feature/monitor",
+            feature_path.to_str().unwrap(),
+        ],
+    );
+    let remote = fixture.path().join("remote.git");
+    git(
+        fixture.path(),
+        ["init", "--quiet", "--bare", remote.to_str().unwrap()],
+    );
+    git(&repo, ["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(&repo, ["push", "--quiet", "-u", "origin", "main"]);
+    git(
+        &feature_path,
+        ["push", "--quiet", "-u", "origin", "feature/monitor"],
+    );
+
+    let state_root = repo.join(".vde/worktree/state");
+    fs::create_dir_all(&state_root).expect("state root");
+    let wrapper_directory = fixture.path().join("git-wrapper");
+    fs::create_dir(&wrapper_directory).expect("wrapper directory");
+    let wrapper = wrapper_directory.join("git");
+    fs::write(
+        &wrapper,
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> \"$GIT_COMMAND_LOG\"\nexec \"$REAL_GIT\" \"$@\"\n",
+    )
+    .expect("git wrapper");
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755))
+        .expect("executable git wrapper");
+    let command_log = fixture.path().join("git-commands.log");
+
+    let monitor = run_vw_with_git_wrapper(
+        &repo,
+        &["list", "--json", "--no-gh", "--monitor"],
+        &wrapper_directory,
+        &command_log,
+    );
+    assert!(
+        monitor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&monitor.stderr)
+    );
+    let value = json_stdout(&monitor);
+    assert_eq!(value["schemaVersion"], 2);
+    assert_eq!(value["command"], "list");
+    assert_eq!(value["status"], "ok");
+    assert_eq!(value["repoRoot"], repo.to_string_lossy().as_ref());
+    assert!(value["error"].is_null());
+    assert_eq!(value["data"]["baseBranch"], "main");
+    assert!(value["data"]["managedWorktreeRoot"].is_string());
+    let worktrees = value["data"]["worktrees"].as_array().unwrap();
+    assert_eq!(worktrees.len(), 2);
+    for worktree in worktrees {
+        for field in ["path", "branch", "head", "dirty", "locked", "merged", "pr"] {
+            assert!(worktree.get(field).is_some(), "{field}");
+        }
+        assert!(worktree["upstream"]["ahead"].is_null());
+        assert!(worktree["upstream"]["behind"].is_null());
+        assert!(worktree["upstream"]["remote"].is_null());
+    }
+    let feature = worktrees
+        .iter()
+        .find(|worktree| worktree["branch"] == "feature/monitor")
+        .unwrap();
+    assert_eq!(feature["pr"]["status"], "unknown");
+    let monitor_commands = fs::read_to_string(&command_log).expect("monitor command log");
+    assert!(!monitor_commands.contains("@{upstream}"));
+    assert_eq!(fs::read_dir(&state_root).unwrap().count(), 0);
+
+    fs::write(&command_log, "").expect("clear command log");
+    let normal = run_vw_with_git_wrapper(
+        &repo,
+        &["list", "--json", "--no-gh"],
+        &wrapper_directory,
+        &command_log,
+    );
+    assert!(
+        normal.status.success(),
+        "{}",
+        String::from_utf8_lossy(&normal.stderr)
+    );
+    let normal_value = json_stdout(&normal);
+    assert!(
+        normal_value["data"]["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|worktree| worktree["upstream"]["remote"].is_string())
+    );
+    let normal_commands = fs::read_to_string(&command_log).expect("normal command log");
+    assert_eq!(
+        normal_commands
+            .lines()
+            .filter(|line| line.contains("rev-parse") && line.contains("@{upstream}"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        normal_commands
+            .lines()
+            .filter(|line| line.contains("rev-list") && line.contains("@{upstream}...HEAD"))
+            .count(),
+        2
+    );
+    assert!(
+        normal_commands.lines().count() >= monitor_commands.lines().count() + 4,
+        "normal={} monitor={}",
+        normal_commands.lines().count(),
+        monitor_commands.lines().count()
+    );
 }
 
 #[test]

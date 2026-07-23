@@ -7,7 +7,9 @@ use crate::adapters::fzf::{FzfAdapter, FzfRequest, FzfSelection};
 use crate::app::dispatch::CommandOutput;
 use crate::app::error_mapper::MapToCliError;
 use crate::app::result::TerminalCapabilities;
-use crate::app::snapshot::{SnapshotCollector, resolve_base_branch, resolve_distance_from_base};
+use crate::app::snapshot::{
+    SnapshotCollectionOptions, SnapshotCollector, resolve_base_branch, resolve_distance_from_base,
+};
 use crate::cli::{Command, ParsedRequest};
 use crate::domain::error::{CliError, ErrorCode};
 use crate::domain::repo::RepoContext;
@@ -45,7 +47,7 @@ where
 {
     if !matches!(
         request.command,
-        Command::List | Command::Status { .. } | Command::Path { .. } | Command::Cd
+        Command::List { .. } | Command::Status { .. } | Command::Path { .. } | Command::Cd
     ) {
         return None;
     }
@@ -70,7 +72,12 @@ where
         &config.git.base_remote,
     )
     .map_err(MapToCliError::map_to_cli_error)?;
+    let collection_options = match request.command {
+        Command::List { monitor: true } => SnapshotCollectionOptions::monitor(),
+        _ => SnapshotCollectionOptions::default(),
+    };
     let snapshot = SnapshotCollector::new(runtime.git, runtime.pr_lookup)
+        .with_options(collection_options)
         .collect(
             &context.repo_root,
             &base_branch,
@@ -81,7 +88,9 @@ where
     let warning_text = render_warnings(&snapshot.warnings);
 
     match &request.command {
-        Command::List => list_output(request, context, config, runtime, &snapshot, warning_text),
+        Command::List { .. } => {
+            list_output(request, context, config, runtime, &snapshot, warning_text)
+        }
         Command::Status { branch } => status_output(
             context,
             &snapshot,

@@ -1394,6 +1394,10 @@ mod tests {
             assert!(script.contains("vw"));
             assert!(script.contains("vde-worktree"));
             assert!(script.contains("__complete"));
+            match shell {
+                CompletionShell::Zsh => assert!(script.contains("--monitor")),
+                CompletionShell::Fish => assert!(script.contains("-l monitor")),
+            }
         }
     }
 

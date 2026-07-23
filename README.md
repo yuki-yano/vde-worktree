@@ -168,6 +168,7 @@ vw list
 vw list --json
 vw list --no-gh
 vw list --full-path
+vw list --json --no-gh --monitor
 ```
 
 What it does:
@@ -178,6 +179,7 @@ What it does:
 - In table output, long `path` values are truncated with `…` to fit terminal width by default
 - Use `--full-path` to disable path truncation in table output
 - With `--no-gh`, skips PR status checks (`pr.status` becomes `unknown`, `merged.byPR` becomes `null`)
+- `--monitor` is an internal, machine-only snapshot profile for monitor integrations. It requires `--json --no-gh`, cannot be combined with `--gh`, skips upstream probes, returns unknown (`null`) upstream fields, and does not persist lifecycle observations.
 - In interactive terminal, uses Catppuccin-style ANSI colors
 - Disables all ANSI colors when `NO_COLOR` is set or stdout is not a TTY
 
