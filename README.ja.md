@@ -125,6 +125,18 @@ autoload -Uz compinit && compinit
 
 またGit common directoryの`info/exclude`（通常は`.git/info/exclude`）に管理対象エントリを冪等で追記します。
 
+## `.worktreeinclude`
+
+`new`、`switch`、`get`でworktreeを新規作成するとき、repository rootのregular file
+`.worktreeinclude`に指定したlocal fileをprimary worktreeからコピーします。patternは否定を含む
+`.gitignore`構文です。未追跡かつGit ignoredで、`.worktreeinclude`に一致するsymlinkではないregular
+fileだけが対象です。tracked file、symlink、既存destination、destinationの親が非directoryであるpath、
+管理worktree root、`.vde/worktree/`配下は除外します。既存worktreeを再利用するときは処理しません。
+
+コピーはtransactionalです。コピーまたはcleanupが失敗すると、新規worktreeと、安全に削除できる
+場合はこの操作で作成したbranchをロールバックします。実行中に対象fileが変化すると作成全体が失敗して
+ロールバックされるため、安定したlocal設定fileを指定してください。
+
 ## 全体ルール
 
 - 多くの書き込み系コマンドは `init` 実行済みが前提

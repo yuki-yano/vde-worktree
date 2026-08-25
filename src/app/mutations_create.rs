@@ -9,6 +9,7 @@ use serde_json::json;
 
 use crate::adapters::git_cli::GitCli;
 use crate::app::error_mapper::MapToCliError;
+use crate::app::misc_commands::copy_worktree_include_paths;
 use crate::domain::error::{CliError, ErrorCode};
 use crate::domain::path::{ValidatedManagedPath, ValidatedPathOperationError};
 use crate::domain::repo::RepoContext;
@@ -17,6 +18,7 @@ use crate::ports::process::{ProcessOutput, ProcessRunner};
 use crate::state::lifecycle::merge_lifecycle_observation;
 
 const EXCLUDE_MARKER: &str = "# vde-worktree (managed)";
+const WORKTREE_INCLUDE_PATH: &str = ".worktreeinclude";
 const POST_NEW_HOOK: &str = "#!/usr/bin/env bash\nset -eu\n\n# example:\n#   vde-worktree copy .envrc .claude/settings.local.json\n\nexit 0\n";
 const POST_SWITCH_HOOK: &str =
     "#!/usr/bin/env bash\nset -eu\n\n# example:\n#   vde-worktree link .envrc\n\nexit 0\n";
@@ -640,6 +642,25 @@ pub fn finalize_worktree_state<G: CreateMutationGit>(
     git: &G,
     applied: WorktreeGitApplied,
 ) -> Result<WorktreeMutationResult, CliError> {
+    if applied.remove_worktree_on_state_failure {
+        let managed_root = applied
+            .managed_worktree_root
+            .as_deref()
+            .expect("created worktree always records its managed root");
+        if let Err(error) =
+            copy_worktree_include(git, &applied.repo_root, managed_root, &applied.path)
+        {
+            return Err(rollback_created_worktree(
+                git,
+                &applied.repo_root,
+                &applied.path,
+                managed_root,
+                &applied.branch,
+                applied.created_branch_oid.as_deref(),
+                error,
+            ));
+        }
+    }
     if let Err(error) = merge_lifecycle_observation(
         &applied.repo_root,
         &applied.branch,
@@ -670,6 +691,85 @@ pub fn finalize_worktree_state<G: CreateMutationGit>(
         path: applied.path,
         disposition: applied.disposition,
     })
+}
+
+fn copy_worktree_include<G: CreateMutationGit>(
+    git: &G,
+    repo_root: &Path,
+    managed_root: &Path,
+    target_root: &Path,
+) -> Result<(), CliError> {
+    let include_path = repo_root.join(WORKTREE_INCLUDE_PATH);
+    let result = (|| {
+        let metadata = match fs::symlink_metadata(&include_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(io_error(&include_path, &error)),
+        };
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(CliError::new(
+                ErrorCode::InvalidArgument,
+                ".worktreeinclude must be a regular file in the repository root",
+            ));
+        }
+
+        let included_args = os_args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-from=.worktreeinclude",
+            "-z",
+            "--",
+        ]);
+        let included = git
+            .run_git_checked(repo_root, &included_args)
+            .map(|output| paths_from_nul(&output.stdout))?;
+        let ignored_args = os_args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+        ]);
+        let ignored = git
+            .run_git_checked(repo_root, &ignored_args)
+            .map(|output| paths_from_nul(&output.stdout))?;
+
+        let mut paths = Vec::new();
+        for relative in included.intersection(&ignored) {
+            let source = repo_root.join(relative);
+            if source.starts_with(managed_root)
+                || source.starts_with(repo_root.join(".vde/worktree"))
+            {
+                continue;
+            }
+            match fs::symlink_metadata(&source) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    paths.push(relative.clone());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(io_error(&source, &error)),
+            }
+        }
+        copy_worktree_include_paths(repo_root, target_root, &paths)
+    })();
+    result.map_err(|mut error| {
+        error.details.insert(
+            "worktreeIncludePath".to_owned(),
+            json!(include_path.to_string_lossy()),
+        );
+        error
+    })
+}
+
+fn paths_from_nul(output: &[u8]) -> BTreeSet<PathBuf> {
+    output
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(path_from_bytes)
+        .collect()
 }
 
 pub fn prepare_adopt(
@@ -1171,11 +1271,36 @@ fn rollback_created_worktree<G: CreateMutationGit>(
     mut original: CliError,
 ) -> CliError {
     let mut failures = Vec::new();
-    if let Err(error) = git.run_git_checked(
+    let worktree_removed = match git.run_git_checked(
         repo_root,
         &os_args(["worktree", "remove", "--force", &target.to_string_lossy()]),
     ) {
-        failures.push(error.message);
+        Ok(_) => true,
+        Err(error) => {
+            failures.push(error.message);
+            false
+        }
+    };
+    if worktree_removed {
+        for key in [
+            "backupPath",
+            "committed",
+            "committedState",
+            "recoveryPath",
+            "recoveryPathError",
+            "recoveryPathUnavailable",
+            "recoveryRequired",
+            "rollbackFailed",
+            "rollbackFailures",
+            "stagedPath",
+            "transactionCleanupError",
+            "transactionCleanupFailed",
+        ] {
+            original.details.remove(key);
+        }
+        original
+            .details
+            .insert("worktreeRolledBack".to_owned(), json!(true));
     }
     if let Some(oid) = created_branch_oid
         && let Err(error) = delete_local_branch_if_unchanged(git, repo_root, branch, oid)
@@ -1185,7 +1310,7 @@ fn rollback_created_worktree<G: CreateMutationGit>(
     if !failures.is_empty() {
         original
             .details
-            .insert("rollbackFailures".to_owned(), json!(failures));
+            .insert("worktreeRollbackFailures".to_owned(), json!(failures));
     }
     prune_empty_target_parents(target, managed_root);
     original
@@ -1355,6 +1480,9 @@ fn io_error(path: &Path, error: &io::Error) -> CliError {
 #[cfg(test)]
 mod tests {
     use std::process::Command;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     use tempfile::TempDir;
 
@@ -1634,6 +1762,258 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn worktree_include_copies_only_matching_ignored_regular_files_on_switch_create() {
+        let (_temporary, context, adapter) = fixture();
+        fs::write(
+            context.repo_root.join(".gitignore"),
+            ".env*\n!.env.visible\nlocal/\nlink.env\n.vde/worktree/\n",
+        )
+        .expect("gitignore");
+        fs::write(
+            context.repo_root.join(WORKTREE_INCLUDE_PATH),
+            ".env*\n!.env.skip\nlocal/**\ntracked.txt\nlink.env\n.vde/worktree/**\n",
+        )
+        .expect("worktree include");
+        fs::write(context.repo_root.join("tracked.txt"), "committed\n").expect("tracked file");
+        git(
+            &context.repo_root,
+            &["add", ".gitignore", WORKTREE_INCLUDE_PATH, "tracked.txt"],
+        );
+        git(
+            &context.repo_root,
+            &["commit", "-m", "worktree include fixture"],
+        );
+
+        fs::write(context.repo_root.join("tracked.txt"), "dirty primary\n")
+            .expect("dirty tracked file");
+        fs::write(context.repo_root.join(".env"), "primary env\n").expect("env file");
+        fs::write(context.repo_root.join(".env.local"), "local env\n").expect("local env file");
+        fs::write(context.repo_root.join(".env.skip"), "include-negated\n")
+            .expect("include-negated env file");
+        fs::write(
+            context.repo_root.join(".env.visible"),
+            "gitignore-negated\n",
+        )
+        .expect("gitignore-negated env file");
+        fs::create_dir(context.repo_root.join("local")).expect("local directory");
+        fs::write(
+            context.repo_root.join("local/config.json"),
+            "local config\n",
+        )
+        .expect("local config");
+        symlink(".env.local", context.repo_root.join("link.env")).expect("source symlink");
+
+        let managed = context.repo_root.join(".worktree");
+        fs::create_dir_all(managed.join("stale")).expect("managed fixture");
+        fs::write(managed.join("stale/.env.local"), "stale worktree\n")
+            .expect("managed ignored file");
+        fs::create_dir_all(context.repo_root.join(".vde/worktree/state/branches"))
+            .expect("state root");
+        fs::write(
+            context.repo_root.join(".vde/worktree/private.env"),
+            "internal metadata\n",
+        )
+        .expect("internal metadata file");
+        let plan = prepare_switch(
+            &adapter,
+            &context.repo_root,
+            &managed,
+            &snapshot(&context.repo_root, Vec::new()),
+            "feature/include",
+            "main",
+        )
+        .expect("switch plan");
+        let applied = apply_switch_git(&adapter, &plan).expect("Git phase");
+        fs::write(applied.path.join(".env"), "existing destination\n")
+            .expect("existing destination");
+        let created = finalize_worktree_state(&adapter, applied).expect("state phase");
+
+        assert_eq!(
+            fs::read_to_string(created.path.join(".env")).unwrap(),
+            "existing destination\n"
+        );
+        assert_eq!(
+            fs::read_to_string(created.path.join(".env.local")).unwrap(),
+            "local env\n"
+        );
+        assert_eq!(
+            fs::read_to_string(created.path.join("local/config.json")).unwrap(),
+            "local config\n"
+        );
+        assert_eq!(
+            fs::read_to_string(created.path.join("tracked.txt")).unwrap(),
+            "committed\n"
+        );
+        assert!(!created.path.join("link.env").exists());
+        assert!(!created.path.join(".env.skip").exists());
+        assert!(!created.path.join(".env.visible").exists());
+        assert!(!created.path.join(".worktree/stale/.env.local").exists());
+        assert!(!created.path.join(".vde/worktree/private.env").exists());
+
+        fs::remove_file(created.path.join(".env.local")).expect("remove copied file");
+        let existing = prepare_switch(
+            &adapter,
+            &context.repo_root,
+            &managed,
+            &snapshot(
+                &context.repo_root,
+                vec![status(Some("feature/include"), created.path.clone(), false)],
+            ),
+            "feature/include",
+            "main",
+        )
+        .expect("existing switch plan");
+        finalize_worktree_state(
+            &adapter,
+            apply_switch_git(&adapter, &existing).expect("existing switch Git phase"),
+        )
+        .expect("existing switch state phase");
+        assert!(!created.path.join(".env.local").exists());
+    }
+
+    #[test]
+    fn worktree_include_skips_a_path_when_the_destination_parent_is_a_file() {
+        let (_temporary, context, adapter) = fixture();
+        fs::write(context.repo_root.join(".gitignore"), "local/\n").expect("gitignore");
+        fs::write(context.repo_root.join(WORKTREE_INCLUDE_PATH), "local/**\n")
+            .expect("worktree include");
+        git(
+            &context.repo_root,
+            &["add", ".gitignore", WORKTREE_INCLUDE_PATH],
+        );
+        git(&context.repo_root, &["commit", "-m", "include fixture"]);
+        git(&context.repo_root, &["checkout", "-b", "collision-base"]);
+        fs::write(context.repo_root.join("local"), "tracked destination\n")
+            .expect("tracked destination");
+        git(&context.repo_root, &["add", "local"]);
+        git(
+            &context.repo_root,
+            &["commit", "-m", "destination collision"],
+        );
+        git(&context.repo_root, &["checkout", "main"]);
+        fs::create_dir(context.repo_root.join("local")).expect("local source directory");
+        fs::write(
+            context.repo_root.join("local/config.json"),
+            "ignored source\n",
+        )
+        .expect("ignored source");
+
+        let managed = context.repo_root.join(".worktree");
+        fs::create_dir_all(&managed).expect("managed root");
+        let plan = prepare_new(
+            &adapter,
+            &context.repo_root,
+            &managed,
+            &snapshot(&context.repo_root, Vec::new()),
+            "feature/parent-collision",
+            "collision-base",
+        )
+        .expect("new plan");
+        let created =
+            finalize_worktree_state(&adapter, apply_new_git(&adapter, &plan).expect("Git phase"))
+                .expect("state phase");
+
+        assert_eq!(
+            fs::read_to_string(created.path.join("local")).unwrap(),
+            "tracked destination\n"
+        );
+    }
+
+    #[test]
+    fn invalid_worktree_include_rolls_back_the_created_worktree_and_branch() {
+        let (_temporary, context, adapter) = fixture();
+        fs::create_dir(context.repo_root.join(WORKTREE_INCLUDE_PATH))
+            .expect("invalid worktree include directory");
+        let managed = context.repo_root.join(".worktree");
+        fs::create_dir_all(&managed).expect("managed root");
+        let plan = prepare_new(
+            &adapter,
+            &context.repo_root,
+            &managed,
+            &snapshot(&context.repo_root, Vec::new()),
+            "feature/invalid-include",
+            "main",
+        )
+        .expect("new plan");
+        let target = plan.target_path.clone();
+        let applied = apply_new_git(&adapter, &plan).expect("Git phase");
+
+        let error = finalize_worktree_state(&adapter, applied).expect_err("invalid include");
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.details["worktreeRolledBack"], true);
+        assert_eq!(
+            error.details["worktreeIncludePath"],
+            json!(context.repo_root.join(WORKTREE_INCLUDE_PATH))
+        );
+        assert!(!target.exists());
+        assert!(
+            !local_branch_exists(&adapter, &context.repo_root, "feature/invalid-include").unwrap()
+        );
+    }
+
+    #[test]
+    fn successful_worktree_rollback_removes_stale_copy_recovery_details() {
+        let (_temporary, context, adapter) = fixture();
+        let managed = context.repo_root.join(".worktree");
+        fs::create_dir_all(&managed).expect("managed root");
+        let plan = prepare_new(
+            &adapter,
+            &context.repo_root,
+            &managed,
+            &snapshot(&context.repo_root, Vec::new()),
+            "feature/stale-recovery-details",
+            "main",
+        )
+        .expect("new plan");
+        let applied = apply_new_git(&adapter, &plan).expect("Git phase");
+        let original = CliError::new(ErrorCode::InternalError, "copy cleanup failed").with_details(
+            BTreeMap::from([
+                ("committed".to_owned(), json!(true)),
+                (
+                    "recoveryPath".to_owned(),
+                    json!(applied.path.join("recovery")),
+                ),
+                ("recoveryRequired".to_owned(), json!(true)),
+                ("rollbackFailed".to_owned(), json!(true)),
+                ("transactionCleanupFailed".to_owned(), json!(true)),
+            ]),
+        );
+        let error = rollback_created_worktree(
+            &adapter,
+            &applied.repo_root,
+            &applied.path,
+            applied
+                .managed_worktree_root
+                .as_deref()
+                .expect("managed root in applied plan"),
+            &applied.branch,
+            applied.created_branch_oid.as_deref(),
+            original,
+        );
+
+        assert_eq!(error.details["worktreeRolledBack"], true);
+        for key in [
+            "committed",
+            "recoveryPath",
+            "recoveryRequired",
+            "rollbackFailed",
+            "transactionCleanupFailed",
+        ] {
+            assert!(!error.details.contains_key(key), "stale detail: {key}");
+        }
+        assert!(!applied.path.exists());
+        assert!(
+            !local_branch_exists(
+                &adapter,
+                &context.repo_root,
+                "feature/stale-recovery-details"
+            )
+            .unwrap()
+        );
+    }
+
     #[test]
     fn state_failure_compensation_preserves_a_branch_changed_after_git_apply() {
         let (_temporary, context, adapter) = fixture();
@@ -1738,6 +2118,10 @@ mod tests {
         git(&context.repo_root, &["push", "origin", "feature/get"]);
         git(&context.repo_root, &["checkout", "main"]);
         git(&context.repo_root, &["branch", "-D", "feature/get"]);
+        fs::write(context.repo_root.join(".gitignore"), ".env.get\n").expect("get gitignore");
+        fs::write(context.repo_root.join(WORKTREE_INCLUDE_PATH), ".env.get\n")
+            .expect("get worktree include");
+        fs::write(context.repo_root.join(".env.get"), "get-local\n").expect("get ignored file");
 
         let managed = context.repo_root.join(".worktree");
         fs::create_dir_all(&managed).expect("managed root");
@@ -1802,6 +2186,10 @@ mod tests {
         )
         .expect("get state apply");
         assert_eq!(created.disposition, Some(WorktreeDisposition::Created));
+        assert_eq!(
+            fs::read_to_string(created.path.join(".env.get")).unwrap(),
+            "get-local\n"
+        );
         let upstream = adapter
             .execute_checked(&created.path, ["rev-parse", "--abbrev-ref", "@{upstream}"])
             .expect("upstream");

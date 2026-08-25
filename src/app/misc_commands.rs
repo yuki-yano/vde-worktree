@@ -256,6 +256,29 @@ enum FilePlacement {
     Link,
 }
 
+/// Copies repository-relative files into a freshly-created worktree without replacing files
+/// that already exist there. The batch uses the same transactional placement path as `vw copy`.
+pub(crate) fn copy_worktree_include_paths(
+    repo_root: &Path,
+    target_root: &Path,
+    paths: &[PathBuf],
+) -> Result<(), CliError> {
+    let plans = paths
+        .iter()
+        .filter_map(|path| {
+            PlacementPlan::validate_if_destination_absent(repo_root, target_root, path).transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if plans.is_empty() {
+        return Ok(());
+    }
+    validate_disjoint_destinations(&plans)?;
+    match execute_placement_batch(&plans, FilePlacement::Copy, &NoopPlacementObserver) {
+        Ok(None) => Ok(()),
+        Ok(Some(cleanup_error)) | Err(cleanup_error) => Err(cleanup_error),
+    }
+}
+
 fn copy_or_link<R: ProcessRunner>(
     context: &RepoContext,
     git: &GitCli<R>,
@@ -365,6 +388,39 @@ impl PlacementPlan {
         })
     }
 
+    fn validate_if_destination_absent(
+        repo_root: &Path,
+        target_root: &Path,
+        relative: &Path,
+    ) -> Result<Option<Self>, CliError> {
+        validate_relative(relative)?;
+        let repo_root = canonicalize(repo_root, ErrorCode::PathOutsideRepo)?;
+        let target_root = canonicalize(target_root, ErrorCode::PathOutsideRepo)?;
+        let source = repo_root.join(relative);
+        let destination = target_root.join(relative);
+        validate_source(&source, &repo_root, &target_root)?;
+        reject_same_source_and_destination(&source, &destination)?;
+        let source_guard = capture_source_tree(&source, &repo_root)?;
+        if destination_has_collision(&target_root, relative)? {
+            return Ok(None);
+        }
+        let destination_guard = match DestinationGuard::capture(&destination, &target_root) {
+            Ok(guard) => guard,
+            Err(_) if destination_has_collision(&target_root, relative)? => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if destination_guard.destination_identity.is_some() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            repo_root,
+            target_root,
+            relative: relative.to_path_buf(),
+            source_guard,
+            destination_guard,
+        }))
+    }
+
     fn revalidate_source(&self) -> Result<PathBuf, CliError> {
         let source = self.repo_root.join(&self.relative);
         validate_source(&source, &self.repo_root, &self.target_root)?;
@@ -404,6 +460,39 @@ impl PlacementPlan {
         )?
         .map_or(Ok(()), Err)
     }
+}
+
+fn destination_has_collision(target_root: &Path, relative: &Path) -> Result<bool, CliError> {
+    let mut current = target_root.to_path_buf();
+    let component_count = relative.components().count();
+    for (index, component) in relative.components().enumerate() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                let is_destination = index + 1 == component_count;
+                if is_destination || !metadata.is_dir() || metadata.file_type().is_symlink() {
+                    return Ok(true);
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(error.kind() == std::io::ErrorKind::NotADirectory);
+            }
+            Err(error) => {
+                return Err(io_error(
+                    ErrorCode::PathOutsideRepo,
+                    "failed to inspect .worktreeinclude destination",
+                    &current,
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn reject_same_source_and_destination(source: &Path, destination: &Path) -> Result<(), CliError> {

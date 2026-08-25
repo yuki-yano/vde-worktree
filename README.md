@@ -125,6 +125,19 @@ After `vw init`, the tool manages:
 
 `init` updates `info/exclude` in the Git common directory (normally `.git/info/exclude`) idempotently.
 
+## `.worktreeinclude`
+
+When `new`, `switch`, or `get` creates a worktree, a `.worktreeinclude` regular file in the
+repository root copies selected local files from the primary worktree. Its patterns use
+`.gitignore` syntax, including negation. A file is copied only when it is untracked, Git-ignored,
+matched by `.worktreeinclude`, and a regular non-symlink file. Tracked files, symlinks, existing
+destinations, paths with a non-directory destination parent, the managed worktree root, and
+`.vde/worktree/` are excluded. Reusing an existing worktree does not process the file.
+
+The copy is transactional. A copy or cleanup failure removes the newly-created worktree and any
+branch created by the operation when it is still safe to do so. Keep included files stable while
+the command runs; concurrent changes can therefore make worktree creation fail and roll back.
+
 ## Global Behavior
 
 - Most write commands require prior `init`.

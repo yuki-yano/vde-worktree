@@ -425,6 +425,45 @@ fn repo_lock_stress_child() {
 }
 
 #[test]
+fn new_copies_gitignored_files_matched_by_worktree_include() {
+    let (_fixture, repository) = create_repository();
+    git_ok(&repository, &["config", "user.email", "test@example.com"]);
+    git_ok(&repository, &["config", "user.name", "Test"]);
+    fs::write(repository.join("README.md"), "fixture\n").expect("write README");
+    fs::write(repository.join(".gitignore"), ".env.local\n").expect("write gitignore");
+    fs::write(repository.join(".worktreeinclude"), ".env.local\n").expect("write worktree include");
+    git_ok(
+        &repository,
+        &["add", "README.md", ".gitignore", ".worktreeinclude"],
+    );
+    git_ok(&repository, &["commit", "--quiet", "-m", "initial"]);
+    fs::write(repository.join(".env.local"), "local secret\n").expect("write ignored file");
+
+    let initialized = run_vw(&repository, &["init", "--json"]);
+    assert!(
+        initialized.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&initialized.stderr)
+    );
+    let created = run_vw(
+        &repository,
+        &["new", "feature/include", "--json", "--no-gh"],
+    );
+    assert!(
+        created.status.success(),
+        "new failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let created = parse_json(&created);
+    let worktree = PathBuf::from(created["data"]["path"].as_str().expect("worktree path"));
+    assert_eq!(
+        fs::read_to_string(worktree.join(".env.local")).unwrap(),
+        "local secret\n"
+    );
+}
+
+#[test]
 fn cli_hook_timeout_stops_the_command_before_dispatch() {
     let (_fixture, repository) = create_repository();
     for args in [
