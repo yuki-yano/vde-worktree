@@ -96,6 +96,34 @@ vw describe exec --json
 明示的な `--help` と `--version` は常にテキスト表示です。
 `vw --json` のように option だけでコマンドがない入力は、終了コード3の引数エラーになります。
 
+## 実行ディレクトリと worktree の指定
+
+`-C DIRECTORY`（`--directory`）で、repository と設定を解決するディレクトリを指定できます。
+相対指定の `--worktree` と補完のインストール先も、このディレクトリを基準にします。
+hook は対象 repository / worktree のコンテキストで動作し、動的なシェル補完にも `-C` が伝わります。
+
+```bash
+vw -C /projects/repo status --json
+vw -C /projects/repo path --worktree .worktree/topic --json
+vw -C /projects/repo exec --worktree .worktree/topic -- cargo test
+vw -C /projects/repo copy --worktree .worktree/topic .env.local
+```
+
+`status`・`path`・`exec`・`copy`・`link` は `--worktree PATH` を受け付けます。
+登録済み worktree の内部ディレクトリも指定できます。
+branch と path は同時に指定できません。
+同じ branch に複数の worktree がある場合は、`details.candidates` に候補を含むエラーを返します。
+`switch` と `get` も曖昧な既存の割り当てを拒否します。
+`lock` と `unlock` は branch 単位のメタデータを保護するため、その branch の全 worktree に所有権が適用されます。
+
+`path` は worktree 一覧だけを読み、base branch や GitHub の照会を必要としません。
+`status` は選択した1件だけを詳しく調べます。
+削除は最新の一覧で branch の一意性を確認してから、対象1件のガードを再検証します。
+明示 path では detached worktree も選択でき、その場合の `path` / `exec` JSON の `branch` は `null` です。
+末尾を含む UTF-8 の空白は保持し、非 UTF-8 と制御文字は1行 path の契約で拒否します。
+`copy` / `link` の対象は、明示 `--worktree`、`WT_WORKTREE_PATH`、現在の worktree の順で決まります。
+環境変数の相対 path は実行ディレクトリを基準にします。
+
 ## シェル補完
 
 コマンドから補完スクリプトを出力:

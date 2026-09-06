@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::adapters::git_cli::GitCli;
 use crate::app::error_mapper::MapToCliError;
 use crate::app::misc_commands::copy_worktree_include_paths;
+use crate::app::target::WorktreeIdentity;
 use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionReport, ExecutionState};
 use crate::domain::path::{ValidatedManagedPath, ValidatedPathOperationError};
 use crate::domain::repo::RepoContext;
@@ -335,19 +336,18 @@ pub fn apply_init(plan: &InitPlan) -> Result<InitResult, CliError> {
     })
 }
 
-pub fn prepare_new<G: CreateMutationGit>(
+pub fn prepare_new<G: CreateMutationGit, T: WorktreeIdentity>(
     git: &G,
     repo_root: &Path,
     managed_worktree_root: &Path,
-    snapshot: &WorktreeSnapshot,
+    worktrees: &[T],
     branch: &str,
     base_branch: &str,
 ) -> Result<NewPlan, CliError> {
     validate_branch(git, repo_root, branch)?;
-    if snapshot
-        .worktrees
+    if worktrees
         .iter()
-        .any(|worktree| worktree.branch.as_deref() == Some(branch))
+        .any(|worktree| worktree.branch() == Some(branch))
     {
         return Err(branch_already_attached(branch));
     }
@@ -400,24 +400,20 @@ pub fn apply_new_git<G: CreateMutationGit>(
     })
 }
 
-pub fn prepare_switch<G: CreateMutationGit>(
+pub fn prepare_switch<G: CreateMutationGit, T: WorktreeIdentity>(
     git: &G,
     repo_root: &Path,
     managed_worktree_root: &Path,
-    snapshot: &WorktreeSnapshot,
+    worktrees: &[T],
     branch: &str,
     base_branch: &str,
 ) -> Result<SwitchPlan, CliError> {
     validate_branch(git, repo_root, branch)?;
-    if let Some(existing) = snapshot
-        .worktrees
-        .iter()
-        .find(|worktree| worktree.branch.as_deref() == Some(branch))
-    {
+    if let Some(existing) = crate::app::target::optional_branch(worktrees, branch)? {
         return Ok(SwitchPlan::Existing {
             repo_root: repo_root.to_path_buf(),
             branch: branch.to_owned(),
-            path: existing.path.clone(),
+            path: existing.path().to_path_buf(),
             base_branch: base_branch.to_owned(),
         });
     }
@@ -514,11 +510,11 @@ pub fn parse_remote_branch(value: &str) -> Result<(String, String), CliError> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn prepare_get<G: CreateMutationGit>(
+pub fn prepare_get<G: CreateMutationGit, T: WorktreeIdentity>(
     git: &G,
     repo_root: &Path,
     managed_worktree_root: &Path,
-    snapshot: &WorktreeSnapshot,
+    worktrees: &[T],
     remote_branch: &str,
     base_branch: &str,
 ) -> Result<GetPlan, CliError> {
@@ -526,16 +522,12 @@ pub fn prepare_get<G: CreateMutationGit>(
     validate_branch(git, repo_root, &branch)?;
     validate_remote_exists(git, repo_root, &remote)?;
     validate_remote_branch_exists(git, repo_root, &remote, &branch)?;
-    if let Some(existing) = snapshot
-        .worktrees
-        .iter()
-        .find(|worktree| worktree.branch.as_deref() == Some(&branch))
-    {
+    if let Some(existing) = crate::app::target::optional_branch(worktrees, &branch)? {
         return Ok(GetPlan::Existing {
             repo_root: repo_root.to_path_buf(),
             remote,
             branch,
-            path: existing.path.clone(),
+            path: existing.path().to_path_buf(),
             base_branch: base_branch.to_owned(),
         });
     }
@@ -1690,7 +1682,7 @@ mod tests {
                 &adapter,
                 &context.repo_root,
                 &managed,
-                &attached,
+                &attached.worktrees,
                 "topic",
                 "main"
             )
@@ -1706,7 +1698,7 @@ mod tests {
                 &adapter,
                 &context.repo_root,
                 &managed,
-                &empty,
+                &empty.worktrees,
                 "local",
                 "main"
             )
@@ -1722,7 +1714,7 @@ mod tests {
                 &adapter,
                 &context.repo_root,
                 &managed,
-                &empty,
+                &empty.worktrees,
                 "feature/blocked",
                 "main",
             )
@@ -1741,7 +1733,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/race",
             "main",
         )
@@ -1770,7 +1762,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/state-phase",
             "main",
         )
@@ -1855,7 +1847,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/include",
             "main",
         )
@@ -1895,7 +1887,8 @@ mod tests {
             &snapshot(
                 &context.repo_root,
                 vec![status(Some("feature/include"), created.path.clone(), false)],
-            ),
+            )
+            .worktrees,
             "feature/include",
             "main",
         )
@@ -1941,7 +1934,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/parent-collision",
             "collision-base",
         )
@@ -1967,7 +1960,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/invalid-include",
             "main",
         )
@@ -1997,7 +1990,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/stale-recovery-details",
             "main",
         )
@@ -2064,7 +2057,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &snapshot(&context.repo_root, Vec::new()),
+            &snapshot(&context.repo_root, Vec::new()).worktrees,
             "feature/state-failure",
             "main",
         )
@@ -2095,7 +2088,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &empty,
+            &empty.worktrees,
             "feature/local",
             "main",
         )
@@ -2116,7 +2109,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &existing_snapshot,
+            &existing_snapshot.worktrees,
             "feature/local",
             "main",
         )
@@ -2166,7 +2159,7 @@ mod tests {
                 &adapter,
                 &context.repo_root,
                 &managed,
-                &empty,
+                &empty.worktrees,
                 "upstream/feature/get",
                 "main",
             )
@@ -2179,7 +2172,7 @@ mod tests {
                 &adapter,
                 &context.repo_root,
                 &managed,
-                &empty,
+                &empty.worktrees,
                 "origin/feature/missing",
                 "main",
             )
@@ -2192,7 +2185,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &empty,
+            &empty.worktrees,
             "origin/feature/get",
             "main",
         )
@@ -2241,7 +2234,7 @@ mod tests {
             &adapter,
             &context.repo_root,
             &managed,
-            &existing,
+            &existing.worktrees,
             "origin/feature/get",
             "main",
         )

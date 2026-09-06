@@ -919,9 +919,9 @@ pub struct LockPlan {
     pub pid: u32,
 }
 
-pub fn prepare_lock(
+pub fn prepare_lock<T: crate::app::target::WorktreeIdentity>(
     repo_root: &Path,
-    snapshot: &WorktreeSnapshot,
+    worktrees: &[T],
     branch: &str,
     reason: &str,
     owner: &str,
@@ -938,10 +938,9 @@ pub fn prepare_lock(
             ));
         }
     }
-    if !snapshot
-        .worktrees
+    if !worktrees
         .iter()
-        .any(|worktree| worktree.branch.as_deref() == Some(branch))
+        .any(|worktree| worktree.branch() == Some(branch))
     {
         return Err(error(
             ErrorCode::WorktreeNotFound,
@@ -2306,10 +2305,20 @@ mod tests {
         let fixture = fixture();
         let repo = fixture.path();
         let empty = snapshot(repo, vec![status(repo, Some("main"), false)]);
-        let error = prepare_lock(repo, &empty, "missing", "busy", "alice", "host", 1).unwrap_err();
+        let error = prepare_lock(
+            repo,
+            &empty.worktrees,
+            "missing",
+            "busy",
+            "alice",
+            "host",
+            1,
+        )
+        .unwrap_err();
         assert_eq!(error.code, ErrorCode::WorktreeNotFound);
 
-        let lock = prepare_lock(repo, &empty, "main", "busy", "alice", "host", 1).unwrap();
+        let lock =
+            prepare_lock(repo, &empty.worktrees, "main", "busy", "alice", "host", 1).unwrap();
         apply_lock(&lock).unwrap();
         let conflict = prepare_unlock(repo, "main", "bob", false).unwrap_err();
         assert_eq!(conflict.code, ErrorCode::LockConflict);

@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::app::error_mapper::MapToCliError;
+use crate::app::target::WorktreeIdentity;
 use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::path::ValidatedManagedPath;
 use crate::domain::repo::RepoContext;
-use crate::domain::worktree::{WorktreeSnapshot, WorktreeStatus};
 use crate::ports::process::ProcessOutput;
 use crate::ports::snapshot::GitSnapshotPort;
 
@@ -76,10 +76,10 @@ pub struct TransferResult {
     pub stash_ref: Option<String>,
 }
 
-pub fn prepare_absorb<G>(
+pub fn prepare_absorb<G, T: WorktreeIdentity>(
     git: &G,
     context: &RepoContext,
-    snapshot: &WorktreeSnapshot,
+    worktrees: &[T],
     managed_root: &Path,
     branch: &str,
     options: &TransferOptions,
@@ -98,7 +98,7 @@ where
         ));
     }
     let source = select_managed_worktree(
-        snapshot,
+        worktrees,
         &context.repo_root,
         managed_root,
         branch,
@@ -106,12 +106,12 @@ where
         "--from",
         "source",
     )?;
-    let source_dirty = git_worktree_dirty(git, &source.path)?;
+    let source_dirty = git_worktree_dirty(git, source.path())?;
     Ok(TransferPlan {
         direction: TransferDirection::Absorb,
         repo_root: context.repo_root.clone(),
         branch: branch.to_owned(),
-        source_path: source.path.clone(),
+        source_path: source.path().to_path_buf(),
         target_path: context.repo_root.clone(),
         source_dirty,
         retention: options.retention,
@@ -119,10 +119,10 @@ where
     })
 }
 
-pub fn prepare_unabsorb<G>(
+pub fn prepare_unabsorb<G, T: WorktreeIdentity>(
     git: &G,
     context: &RepoContext,
-    snapshot: &WorktreeSnapshot,
+    worktrees: &[T],
     managed_root: &Path,
     branch: &str,
     options: &TransferOptions,
@@ -152,7 +152,7 @@ where
         ));
     }
     let target = select_managed_worktree(
-        snapshot,
+        worktrees,
         &context.repo_root,
         managed_root,
         branch,
@@ -160,11 +160,11 @@ where
         "--to",
         "target",
     )?;
-    if git_worktree_dirty(git, &target.path)? {
+    if git_worktree_dirty(git, target.path())? {
         return Err(error(
             ErrorCode::DirtyWorktree,
             "unabsorb requires clean target worktree",
-            [("branch", json!(branch)), ("path", json!(target.path))],
+            [("branch", json!(branch)), ("path", json!(target.path()))],
         ));
     }
     Ok(TransferPlan {
@@ -172,7 +172,7 @@ where
         repo_root: context.repo_root.clone(),
         branch: branch.to_owned(),
         source_path: context.repo_root.clone(),
-        target_path: target.path.clone(),
+        target_path: target.path().to_path_buf(),
         source_dirty: true,
         retention: options.retention,
         checkout_primary: false,
@@ -631,21 +631,21 @@ where
     ))
 }
 
-fn select_managed_worktree<'a>(
-    snapshot: &'a WorktreeSnapshot,
+fn select_managed_worktree<'a, T: WorktreeIdentity>(
+    worktrees: &'a [T],
     repo_root: &Path,
     managed_root: &Path,
     branch: &str,
     requested_name: Option<&Path>,
     option_name: &'static str,
     role: &'static str,
-) -> Result<&'a WorktreeStatus, CliError> {
+) -> Result<&'a T, CliError> {
     let mut candidates = Vec::new();
-    for worktree in &snapshot.worktrees {
-        if worktree.path == repo_root || worktree.branch.as_deref() != Some(branch) {
+    for worktree in worktrees {
+        if worktree.path() == repo_root || worktree.branch() != Some(branch) {
             continue;
         }
-        let Ok(relative) = worktree.path.strip_prefix(managed_root) else {
+        let Ok(relative) = worktree.path().strip_prefix(managed_root) else {
             continue;
         };
         if ValidatedManagedPath::validate(managed_root, relative).is_ok() {
@@ -826,6 +826,7 @@ mod tests {
     use crate::domain::worktree::{
         PrState, WorktreeLockState, WorktreeMergedState, WorktreeUpstreamState,
     };
+    use crate::domain::worktree::{WorktreeSnapshot, WorktreeStatus};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Fault {
@@ -1028,7 +1029,7 @@ mod tests {
             prepare_absorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &denied,
@@ -1043,7 +1044,7 @@ mod tests {
             prepare_absorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &options(),
@@ -1062,7 +1063,7 @@ mod tests {
             prepare_absorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &missing_selection,
@@ -1082,7 +1083,7 @@ mod tests {
             prepare_absorb(
                 &adapter,
                 &context(repo),
-                &ambiguous,
+                &ambiguous.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &options(),
@@ -1103,7 +1104,7 @@ mod tests {
             prepare_unabsorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &options(),
@@ -1120,7 +1121,7 @@ mod tests {
             prepare_unabsorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &options(),
@@ -1136,7 +1137,7 @@ mod tests {
             prepare_unabsorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &options(),
@@ -1153,7 +1154,7 @@ mod tests {
             prepare_unabsorb(
                 &adapter,
                 &context(repo),
-                &snapshot,
+                &snapshot.worktrees,
                 &repo.join(".worktree"),
                 "feature/transfer",
                 &missing_selection,
@@ -1177,7 +1178,7 @@ mod tests {
         let plan = prepare_absorb(
             &adapter,
             &context(repo),
-            &snapshot(repo, "feature/absorb", &source),
+            &snapshot(repo, "feature/absorb", &source).worktrees,
             &repo.join(".worktree"),
             "feature/absorb",
             &selected,
@@ -1217,7 +1218,7 @@ mod tests {
         let plan = prepare_unabsorb(
             &adapter,
             &context(repo),
-            &snapshot(repo, "feature/unabsorb", &target),
+            &snapshot(repo, "feature/unabsorb", &target).worktrees,
             &repo.join(".worktree"),
             "feature/unabsorb",
             &selected,
@@ -1256,7 +1257,7 @@ mod tests {
         let plan = prepare_unabsorb(
             &adapter,
             &context(repo),
-            &snapshot(repo, "feature/unabsorb-switch", &target),
+            &snapshot(repo, "feature/unabsorb-switch", &target).worktrees,
             &repo.join(".worktree"),
             "feature/unabsorb-switch",
             &options(),
@@ -1288,7 +1289,7 @@ mod tests {
         let plan = prepare_absorb(
             &normal,
             &context(repo),
-            &snapshot(repo, "feature/oid-failure", &source),
+            &snapshot(repo, "feature/oid-failure", &source).worktrees,
             &repo.join(".worktree"),
             "feature/oid-failure",
             &options(),
@@ -1320,7 +1321,7 @@ mod tests {
         let plan = prepare_absorb(
             &normal,
             &context(repo),
-            &snapshot(repo, "feature/push-failure", &source),
+            &snapshot(repo, "feature/push-failure", &source).worktrees,
             &repo.join(".worktree"),
             "feature/push-failure",
             &options(),
@@ -1346,7 +1347,7 @@ mod tests {
             let plan = prepare_absorb(
                 &normal,
                 &context(repo),
-                &snapshot(repo, "feature/rollback", &source),
+                &snapshot(repo, "feature/rollback", &source).worktrees,
                 &repo.join(".worktree"),
                 "feature/rollback",
                 &options(),
@@ -1379,7 +1380,7 @@ mod tests {
             let plan = prepare_absorb(
                 &normal,
                 &context(repo),
-                &snapshot(repo, "feature/apply-fault", &source),
+                &snapshot(repo, "feature/apply-fault", &source).worktrees,
                 &repo.join(".worktree"),
                 "feature/apply-fault",
                 &options(),

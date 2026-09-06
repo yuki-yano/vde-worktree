@@ -128,14 +128,14 @@ fn semantics(name: &str) -> Semantics {
             &["vw list --json --no-gh", "vw list --json --no-gh --monitor"],
         ),
         "status" => (
-            "branch attachment or current worktree",
+            "unambiguous branch, explicit --worktree path, or current worktree",
             &["Git repository and a resolvable base branch"],
             &["Query Git and optional GitHub PR state; persist lifecycle observations"],
             &["vw status --json --no-gh", "vw status feature/topic --json"],
         ),
         "path" => (
-            "attached branch",
-            &["Git repository; branch must have an attached worktree"],
+            "unambiguous branch or explicit --worktree path",
+            &["Git repository; selected worktree must be registered"],
             &["Print the absolute worktree path"],
             &["vw path feature/topic", "vw path feature/topic --json"],
         ),
@@ -242,8 +242,8 @@ fn semantics(name: &str) -> Semantics {
             &["vw use feature/topic --allow-agent --allow-unsafe --json"],
         ),
         "exec" => (
-            "branch worktree",
-            &["Attached branch; executable argv after --"],
+            "unambiguous branch or explicit --worktree path",
+            &["Registered worktree; executable argv after --"],
             &[
                 "Run arbitrary child process in the worktree; JSON captures child stdout/stderr, human mode inherits terminal streams",
             ],
@@ -262,13 +262,13 @@ fn semantics(name: &str) -> Semantics {
             ],
         ),
         "copy" => (
-            "WT_WORKTREE_PATH or current worktree",
+            "explicit --worktree path, WT_WORKTREE_PATH, or current worktree",
             &["Existing target distinct from primary; repository-relative source paths"],
             &["Transactionally copy the requested paths; roll back the batch on failure"],
             &["vw copy .env.local config/local.yml --json"],
         ),
         "link" => (
-            "WT_WORKTREE_PATH or current worktree",
+            "explicit --worktree path, WT_WORKTREE_PATH, or current worktree",
             &[
                 "Existing target distinct from primary; repository-relative source paths; symlink support",
             ],
@@ -415,6 +415,12 @@ fn semantic_constraints(command: &str) -> Vec<Value> {
         json!({"lastWins": ["hooks", "no_hooks"]}),
         json!({"lastWins": ["gh", "no_gh"]}),
     ];
+    if matches!(command, "path" | "exec") {
+        constraints.push(json!({"exactlyOne": ["branch", "worktree"]}));
+    }
+    if !matches!(command, "status" | "path" | "exec" | "copy" | "link") {
+        constraints.push(json!({"unsupported": ["worktree"]}));
+    }
     match command {
         "list" => constraints.push(json!({"when": "monitor", "requires": ["json", "no_gh"], "conflictsWith": ["gh"]})),
         "del" => constraints.push(json!({"when": "nonInteractive", "whenAny": ["force", "force_dirty", "allow_unpushed", "force_unmerged", "force_locked"], "requires": ["allow_unsafe"]})),
@@ -579,7 +585,7 @@ pub fn data_schema(command: &str) -> Value {
             ("worktrees", array(worktree_schema())),
         ]),
         "status" => object([("worktree", worktree_schema())]),
-        "path" | "new" | "mv" | "del" | "extract" | "use" => path(),
+        "new" | "mv" | "del" | "extract" | "use" => path(),
         "switch" | "get" => object([
             ("branch", scalar("string")),
             ("path", scalar("string")),
@@ -637,8 +643,12 @@ pub fn data_schema(command: &str) -> Value {
             ("stashRef", nullable(scalar("string"))),
             ("direction", values(&["absorb", "unabsorb"])),
         ]),
+        "path" => object([
+            ("branch", nullable(scalar("string"))),
+            ("path", scalar("string")),
+        ]),
         "exec" => object([
-            ("branch", scalar("string")),
+            ("branch", nullable(scalar("string"))),
             ("path", scalar("string")),
             ("childExitCode", scalar("integer")),
             ("childStdout", scalar("string")),

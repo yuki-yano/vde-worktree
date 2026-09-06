@@ -9,7 +9,7 @@ _vw_dynamic_candidates() {
   while IFS=$'\t' read -r value description; do
     [[ -n "$value" ]] || continue
     values+=("${value}:${description}")
-  done < <(command "$vw_bin" __complete "$kind" 2>/dev/null)
+  done < <(command "$vw_bin" __complete "$kind" -- "${_vw_command_words[@]}" 2>/dev/null)
   (( ${#values} > 0 )) && _describe -t "$kind" "$kind" values
 }
 
@@ -24,6 +24,7 @@ autoload -U is-at-least
 
 _vw() {
     local _vw_command_bin="$words[1]"
+    local -a _vw_command_words=("${words[@]}")
     typeset -A opt_args
     typeset -a _arguments_options
     local ret=1
@@ -36,6 +37,9 @@ _vw() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -64,6 +68,9 @@ _vw() {
         case $line[1] in
             (init)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -85,6 +92,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (list)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -107,6 +117,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (status)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -129,6 +142,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (path)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -146,11 +162,14 @@ _arguments "${_arguments_options[@]}" : \
 '--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch -- Branch whose attached worktree path is printed:_vw_complete_worktrees' \
+'::branch -- Branch whose attached worktree path is printed:_vw_complete_worktrees' \
 && ret=0
 ;;
 (switch)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -173,6 +192,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (new)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -195,6 +217,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (mv)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -217,6 +242,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (del)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -244,6 +272,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (gone)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -267,6 +298,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (adopt)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -290,6 +324,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (get)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -312,6 +349,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (extract)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -336,6 +376,9 @@ _arguments "${_arguments_options[@]}" : \
 (absorb)
 _arguments "${_arguments_options[@]}" : \
 '--from=[Managed source worktree name when branch attachment is ambiguous]:FROM:_vw_complete_managed_worktrees' \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -361,6 +404,9 @@ _arguments "${_arguments_options[@]}" : \
 (unabsorb)
 _arguments "${_arguments_options[@]}" : \
 '--to=[Managed target worktree name when branch attachment is ambiguous]:TO:_vw_complete_managed_worktrees' \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -385,6 +431,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (use)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -409,6 +458,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (exec)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -426,12 +478,15 @@ _arguments "${_arguments_options[@]}" : \
 '--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch -- Branch whose attached worktree becomes the child process cwd:_vw_complete_worktrees' \
+'::branch -- Branch whose attached worktree becomes the child process cwd:_vw_complete_worktrees' \
 '*::argv -- Executable and arguments after --; passed directly without shell interpretation:_default' \
 && ret=0
 ;;
 (invoke)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -455,6 +510,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (copy)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -477,6 +535,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (link)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -501,6 +562,9 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--owner=[Lock owner (default\: current user); use a unique session identifier for agents]:OWNER:_default' \
 '--reason=[Reason for protecting the worktree]:REASON:_default' \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -524,6 +588,9 @@ _arguments "${_arguments_options[@]}" : \
 (unlock)
 _arguments "${_arguments_options[@]}" : \
 '--owner=[Expected owner (default\: current user)]:OWNER:_default' \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -547,6 +614,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (cd)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -569,6 +639,9 @@ _arguments "${_arguments_options[@]}" : \
 (completion)
 _arguments "${_arguments_options[@]}" : \
 '--path=[Installation path (default\: the shell completion directory)]:PATH:_files' \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
@@ -592,6 +665,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (describe)
 _arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
 '--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \

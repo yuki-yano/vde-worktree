@@ -45,6 +45,7 @@ use rustix::fs::{RenameFlags, renameat_with};
 use crate::adapters::git_cli::GitCli;
 use crate::app::error_mapper::{MapToCliError, map_hook_report, map_transaction_error};
 use crate::app::snapshot::parse_worktree_porcelain;
+use crate::app::target;
 use crate::cli::{Command, CompletionCandidateKind, ParsedRequest};
 use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::repo::RepoContext;
@@ -95,15 +96,20 @@ where
     R: ProcessRunner,
 {
     let result = match &request.command {
-        Command::Exec { branch, argv } => {
-            execute_in_worktree(request, context, git, process_runner, branch, argv)
-        }
+        Command::Exec { branch, argv } => execute_in_worktree(
+            request,
+            context,
+            git,
+            process_runner,
+            branch.as_deref(),
+            argv,
+        ),
         Command::Invoke { hook, argv } => {
             invoke_hook(request, context, config, git, hook, argv, terminal_is_tty)
         }
-        Command::Copy { paths } => copy_or_link(context, git, paths, FilePlacement::Copy),
-        Command::Link { paths } => copy_or_link(context, git, paths, FilePlacement::Link),
-        Command::CompletionCandidates { kind } => {
+        Command::Copy { paths } => copy_or_link(request, context, git, paths, FilePlacement::Copy),
+        Command::Link { paths } => copy_or_link(request, context, git, paths, FilePlacement::Link),
+        Command::CompletionCandidates { kind, .. } => {
             completion_candidates(context, config, git, *kind)
         }
         _ => return None,
@@ -116,21 +122,18 @@ fn execute_in_worktree<R: ProcessRunner>(
     context: &RepoContext,
     git: &GitCli<R>,
     process_runner: &dyn ProcessRunner,
-    branch: &str,
+    branch: Option<&str>,
     argv: &[OsString],
 ) -> Result<MiscCommandOutput, CliError> {
     let worktrees = list_worktrees(git, &context.repo_root)?;
-    let target = worktree_for_branch(&worktrees, branch)?;
-    let target_path = target.path.to_str().ok_or_else(|| {
-        CliError::new(
-            ErrorCode::UnsupportedRepositoryLayout,
-            "non-UTF-8 worktree paths are unsupported by exec",
-        )
-        .with_details(BTreeMap::from([(
-            "path".to_owned(),
-            json!(target.path.to_string_lossy()),
-        )]))
-    })?;
+    let target = target::resolve(
+        &worktrees,
+        branch,
+        request.common.worktree.as_deref(),
+        &context.current_worktree_root,
+    )?;
+    let target_path = target::ensure_path(&target.path)?;
+    let branch = target.branch.as_deref();
     let (program, child_arguments) = argv.split_first().ok_or_else(|| {
         CliError::new(
             ErrorCode::InvalidArgument,
@@ -280,13 +283,14 @@ pub(crate) fn copy_worktree_include_paths(
 }
 
 fn copy_or_link<R: ProcessRunner>(
+    request: &ParsedRequest,
     context: &RepoContext,
     git: &GitCli<R>,
     paths: &[PathBuf],
     placement: FilePlacement,
 ) -> Result<MiscCommandOutput, CliError> {
     let worktrees = list_worktrees(git, &context.repo_root)?;
-    let target_root = resolve_file_target(context, &worktrees)?;
+    let target_root = resolve_file_target(request, context, &worktrees)?;
     let plans = paths
         .iter()
         .map(|path| PlacementPlan::validate(&context.repo_root, &target_root, path))
@@ -318,45 +322,28 @@ fn copy_or_link<R: ProcessRunner>(
 }
 
 fn resolve_file_target(
+    request: &ParsedRequest,
     context: &RepoContext,
     worktrees: &[GitWorktree],
 ) -> Result<PathBuf, CliError> {
-    let raw = env::var_os("WT_WORKTREE_PATH")
+    let env_target = env::var_os("WT_WORKTREE_PATH")
         .filter(|value| !value.is_empty())
-        .map_or_else(|| context.current_worktree_root.clone(), PathBuf::from);
-    let requested = if raw.is_absolute() {
-        raw.clone()
-    } else {
-        context.current_worktree_root.join(&raw)
-    };
-    let requested = fs::canonicalize(&requested).map_err(|error| {
-        io_error(
-            ErrorCode::WorktreeNotFound,
-            "failed to resolve copy/link target worktree",
-            &requested,
-            error,
-        )
-    })?;
-    worktrees
-        .iter()
-        .filter_map(|worktree| {
-            let canonical = fs::canonicalize(&worktree.path).ok()?;
-            requested
-                .starts_with(&canonical)
-                .then_some((canonical.components().count(), worktree.path.clone()))
-        })
-        .max_by_key(|(depth, _)| *depth)
-        .map(|(_, path)| path)
-        .ok_or_else(|| {
-            CliError::new(
-                ErrorCode::WorktreeNotFound,
-                "copy/link target worktree was not found",
-            )
-            .with_details(BTreeMap::from([
-                ("rawTarget".to_owned(), json!(raw)),
-                ("resolvedTarget".to_owned(), json!(requested)),
-            ]))
-        })
+        .map(PathBuf::from);
+    let explicit = request.common.worktree.as_ref().or(env_target.as_ref());
+    let cwd = request
+        .common
+        .directory
+        .as_deref()
+        .unwrap_or(&context.current_worktree_root);
+    let absolute = explicit.map(|path| cwd.join(path));
+    let target = target::resolve(
+        worktrees,
+        None,
+        absolute.as_deref(),
+        &context.current_worktree_root,
+    )?;
+    target::ensure_path(&target.path)?;
+    Ok(target.path.clone())
 }
 
 #[derive(Debug)]
@@ -2702,28 +2689,12 @@ fn list_worktrees<R: ProcessRunner>(
     let output = git
         .execute_checked(repo_root, ["worktree", "list", "--porcelain", "-z"])
         .map_err(MapToCliError::map_to_cli_error)?;
-    parse_worktree_porcelain(&output.stdout).map_err(|error| {
-        CliError::new(
-            ErrorCode::InternalError,
-            format!("invalid Git worktree metadata: {error}"),
-        )
-    })
-}
-
-fn worktree_for_branch<'a>(
-    worktrees: &'a [GitWorktree],
-    branch: &str,
-) -> Result<&'a GitWorktree, CliError> {
-    worktrees
-        .iter()
-        .find(|worktree| worktree.branch.as_deref() == Some(branch))
-        .ok_or_else(|| {
-            CliError::new(
-                ErrorCode::WorktreeNotFound,
-                format!("worktree was not found for branch {branch}"),
-            )
-            .with_details(BTreeMap::from([("branch".to_owned(), json!(branch))]))
-        })
+    let mut registry = parse_worktree_porcelain(&output.stdout)
+        .map_err(|error| CliError::new(ErrorCode::InternalError, error.to_string()))?;
+    if let Some(primary) = registry.first_mut() {
+        primary.path = repo_root.to_path_buf();
+    }
+    Ok(registry)
 }
 
 fn canonicalize(path: &Path, code: ErrorCode) -> Result<PathBuf, CliError> {
@@ -2824,7 +2795,7 @@ mod tests {
             &repo_context(),
             &git,
             &child,
-            "topic",
+            Some("topic"),
             match &request.command {
                 Command::Exec { argv, .. } => argv,
                 _ => unreachable!(),
@@ -2856,7 +2827,7 @@ mod tests {
             &repo_context(),
             &git,
             &child,
-            "topic",
+            Some("topic"),
             match &request.command {
                 Command::Exec { argv, .. } => argv,
                 _ => unreachable!(),
@@ -2887,7 +2858,7 @@ mod tests {
             &repo_context(),
             &git,
             &child,
-            "topic",
+            Some("topic"),
             match &request.command {
                 Command::Exec { argv, .. } => argv,
                 _ => unreachable!(),

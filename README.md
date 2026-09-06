@@ -96,6 +96,33 @@ these schemas. `fixtures/rust-migration/` preserves historical migration contrac
 the current public contract. Explicit `--help` and `--version` always print text; a missing command with options
 (such as `vw --json`) is an invalid request with exit code 3.
 
+## Execution Directory and Worktree Selection
+
+Use `-C DIRECTORY` (or `--directory`) to resolve the repository and configuration from another
+location. Relative `--worktree` and completion installation paths are based on that directory.
+Hooks use the selected repository/worktree context, and dynamic shell completion also honors `-C`.
+
+```bash
+vw -C /projects/repo status --json
+vw -C /projects/repo path --worktree .worktree/topic --json
+vw -C /projects/repo exec --worktree .worktree/topic -- cargo test
+vw -C /projects/repo copy --worktree .worktree/topic .env.local
+```
+
+`status`, `path`, `exec`, `copy` and `link` accept `--worktree PATH`; a directory inside a registered
+worktree is accepted. Branch and path selectors are mutually exclusive. Shared branches return an
+error with `details.candidates` instead of choosing one attachment. `switch` and `get` also reject
+ambiguous attachments. `lock` and `unlock` protect branch metadata, so their ownership applies to
+all attachments of that branch.
+
+`path` reads only the worktree registry and needs no base branch or GitHub lookup. `status` enriches
+only its selected worktree. Deletion refreshes the registry and checks branch uniqueness before
+rechecking the selected worktree's guards. Explicit paths can select detached worktrees; their
+`branch` is `null` in `path` and `exec` JSON. UTF-8 spaces are preserved, including trailing spaces;
+non-UTF-8 and control characters are rejected by the one-line path contract.
+For `copy` and `link`, explicit `--worktree` takes priority over `WT_WORKTREE_PATH`, then the current
+worktree. Relative environment paths are based on the execution directory.
+
 ## Shell Completion
 
 Generate from command:

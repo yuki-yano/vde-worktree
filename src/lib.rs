@@ -56,9 +56,13 @@ where
 
 pub fn run_from_env() -> i32 {
     match entrypoint(std::env::args_os()) {
-        EntrypointOutcome::Dispatch(request) => {
-            let output = match SystemBackend::from_environment() {
-                Ok(backend) => dispatch(&request, &backend),
+        EntrypointOutcome::Dispatch(mut request) => {
+            let output = match SystemBackend::from_environment(request.common.directory.as_deref())
+            {
+                Ok(backend) => {
+                    backend.resolve_request_paths(&mut request);
+                    dispatch(&request, &backend)
+                }
                 Err(error) => {
                     if request.common.json {
                         let envelope = ErrorEnvelope::new(

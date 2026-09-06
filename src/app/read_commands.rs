@@ -8,8 +8,10 @@ use crate::app::dispatch::CommandOutput;
 use crate::app::error_mapper::MapToCliError;
 use crate::app::result::TerminalCapabilities;
 use crate::app::snapshot::{
-    SnapshotCollectionOptions, SnapshotCollector, resolve_base_branch, resolve_distance_from_base,
+    SnapshotCollectionOptions, SnapshotCollector, read_registry, resolve_base_branch,
+    resolve_distance_from_base,
 };
+use crate::app::target;
 use crate::cli::{Command, ParsedRequest};
 use crate::domain::error::{CliError, ErrorCode};
 use crate::domain::repo::RepoContext;
@@ -65,6 +67,29 @@ where
     P: PrStateLookup,
     R: ProcessRunner,
 {
+    let mut registry =
+        read_registry(runtime.git, &context.repo_root).map_err(MapToCliError::map_to_cli_error)?;
+    if let Command::Status { branch } | Command::Path { branch } = &request.command {
+        let selected = target::resolve(
+            &registry,
+            branch.as_deref(),
+            request.common.worktree.as_deref(),
+            &context.current_worktree_root,
+        )?
+        .clone();
+        target::ensure_path(&context.repo_root)?;
+        target::ensure_path(&selected.path)?;
+        if matches!(request.command, Command::Path { .. }) {
+            return Ok(CommandOutput {
+                data: json!({ "branch": selected.branch, "path": selected.path }),
+                human_stdout: format!("{}\n", selected.path.display()),
+                human_stderr: String::new(),
+                partial_error: None,
+                warnings: Vec::new(),
+            });
+        }
+        registry = vec![selected];
+    }
     let base_branch = resolve_base_branch(
         runtime.git,
         &context.repo_root,
@@ -78,10 +103,11 @@ where
     };
     let snapshot = SnapshotCollector::new(runtime.git, runtime.pr_lookup)
         .with_options(collection_options)
-        .collect(
+        .collect_registry(
             &context.repo_root,
             &base_branch,
             request.common.gh_enabled() && config.github.enabled,
+            &registry,
         )
         .map_err(MapToCliError::map_to_cli_error)?;
     ensure_json_representable_paths(context, &snapshot)?;
@@ -91,14 +117,11 @@ where
         Command::List { .. } => {
             list_output(request, context, config, runtime, &snapshot, warning_text)
         }
-        Command::Status { branch } => status_output(
-            context,
-            &snapshot,
-            branch.as_deref(),
+        Command::Status { .. } => Ok(status_output(
+            &snapshot.worktrees[0],
             runtime.home,
             warning_text,
-        ),
-        Command::Path { branch } => path_output(&snapshot, branch, warning_text),
+        )),
         Command::Cd => cd_output(request, context, config, runtime, &snapshot, warning_text),
         _ => unreachable!("read command was checked before snapshot collection"),
     }
@@ -108,29 +131,12 @@ fn ensure_json_representable_paths(
     context: &RepoContext,
     snapshot: &WorktreeSnapshot,
 ) -> Result<(), CliError> {
-    let invalid = std::iter::once(context.repo_root.as_path())
-        .chain(std::iter::once(context.current_worktree_root.as_path()))
-        .chain(
-            snapshot
-                .worktrees
-                .iter()
-                .map(|worktree| worktree.path.as_path()),
-        )
-        .find(|path| {
-            path.to_str()
-                .is_none_or(|value| value.chars().any(char::is_control))
-        });
-    let Some(path) = invalid else {
-        return Ok(());
-    };
-    Err(CliError::new(
-        ErrorCode::UnsupportedRepositoryLayout,
-        "repository paths containing non-UTF-8 or control characters are unsupported by the one-line path contract",
-    )
-    .with_details(std::collections::BTreeMap::from([(
-        "path".to_owned(),
-        json!(path.to_string_lossy()),
-    )])))
+    for path in std::iter::once(&context.repo_root)
+        .chain(snapshot.worktrees.iter().map(|worktree| &worktree.path))
+    {
+        target::ensure_path(path)?;
+    }
+    Ok(())
 }
 
 fn list_output<G, P, R>(
@@ -208,23 +214,11 @@ where
 }
 
 fn status_output(
-    context: &RepoContext,
-    snapshot: &WorktreeSnapshot,
-    branch: Option<&str>,
+    worktree: &WorktreeStatus,
     home: Option<&Path>,
     warning_text: String,
-) -> Result<CommandOutput, CliError> {
-    let worktree = branch.map_or_else(
-        || {
-            snapshot
-                .worktrees
-                .iter()
-                .find(|worktree| worktree.path == context.current_worktree_root)
-        },
-        |branch| find_branch(snapshot, branch),
-    );
-    let worktree = worktree.ok_or_else(|| worktree_not_found(branch, context))?;
-    Ok(CommandOutput {
+) -> CommandOutput {
+    CommandOutput {
         data: json!({ "worktree": worktree }),
         human_stdout: format!(
             "branch: {}\npath: {}\ndirty: {}\nlocked: {}\n",
@@ -236,31 +230,7 @@ fn status_output(
         human_stderr: warning_text,
         partial_error: None,
         warnings: Vec::new(),
-    })
-}
-
-fn path_output(
-    snapshot: &WorktreeSnapshot,
-    branch: &str,
-    warning_text: String,
-) -> Result<CommandOutput, CliError> {
-    let worktree = find_branch(snapshot, branch).ok_or_else(|| {
-        CliError::new(
-            ErrorCode::WorktreeNotFound,
-            format!("worktree was not found for branch {branch}"),
-        )
-        .with_details(std::collections::BTreeMap::from([(
-            "branch".to_owned(),
-            json!(branch),
-        )]))
-    })?;
-    Ok(CommandOutput {
-        data: json!({ "branch": branch, "path": worktree.path }),
-        human_stdout: format!("{}\n", worktree.path.display()),
-        human_stderr: warning_text,
-        partial_error: None,
-        warnings: Vec::new(),
-    })
+    }
 }
 
 fn cd_output<G, P, R>(
@@ -388,28 +358,6 @@ fn to_picker_worktree(
         lock_owner: worktree.locked.owner.clone(),
         lock_reason: worktree.locked.reason.clone(),
     }
-}
-
-fn find_branch<'a>(snapshot: &'a WorktreeSnapshot, branch: &str) -> Option<&'a WorktreeStatus> {
-    snapshot
-        .worktrees
-        .iter()
-        .find(|worktree| worktree.branch.as_deref() == Some(branch))
-}
-
-fn worktree_not_found(branch: Option<&str>, context: &RepoContext) -> CliError {
-    let mut details = std::collections::BTreeMap::new();
-    let message = if let Some(branch) = branch {
-        details.insert("branch".to_owned(), json!(branch));
-        format!("worktree was not found for branch {branch}")
-    } else {
-        details.insert(
-            "path".to_owned(),
-            json!(context.current_worktree_root.to_string_lossy()),
-        );
-        "current worktree was not found in Git worktree metadata".to_owned()
-    };
-    CliError::new(ErrorCode::WorktreeNotFound, message).with_details(details)
 }
 
 fn resolve_configured_path(repo_root: &Path, configured: &Path) -> PathBuf {

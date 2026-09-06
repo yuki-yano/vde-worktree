@@ -361,15 +361,15 @@ pub fn gone_dry_run_result(plan: &GonePlan) -> GoneResult {
 }
 
 pub trait GoneSnapshotProvider {
-    fn collect_latest(&self) -> Result<WorktreeSnapshot, CliError>;
+    fn collect_latest(&self, candidate: &GoneCandidate) -> Result<WorktreeSnapshot, CliError>;
 }
 
 impl<F> GoneSnapshotProvider for F
 where
-    F: Fn() -> Result<WorktreeSnapshot, CliError>,
+    F: Fn(&GoneCandidate) -> Result<WorktreeSnapshot, CliError>,
 {
-    fn collect_latest(&self) -> Result<WorktreeSnapshot, CliError> {
-        self()
+    fn collect_latest(&self, candidate: &GoneCandidate) -> Result<WorktreeSnapshot, CliError> {
+        self(candidate)
     }
 }
 
@@ -397,7 +397,7 @@ where
     let mut pending = Vec::new();
     for candidate in &plan.candidates {
         let attempt = snapshots
-            .collect_latest()
+            .collect_latest(candidate)
             .and_then(|latest| revalidate_gone_candidate(plan, candidate, &latest))
             .and_then(|validated| apply_del_git(git, validated));
         match attempt {
@@ -621,35 +621,7 @@ fn worktree_by_branch<'a>(
     snapshot: &'a WorktreeSnapshot,
     branch: &str,
 ) -> Result<&'a WorktreeStatus, CliError> {
-    let matches = snapshot
-        .worktrees
-        .iter()
-        .filter(|worktree| worktree.branch.as_deref() == Some(branch))
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [] => Err(error(
-            ErrorCode::WorktreeNotFound,
-            format!("worktree not found for branch: {branch}"),
-            [("branch", json!(branch))],
-        )),
-        [worktree] => Ok(*worktree),
-        _ => Err(error(
-            ErrorCode::InvalidArgument,
-            format!("multiple worktrees found for branch: {branch}"),
-            [
-                ("branch", json!(branch)),
-                (
-                    "candidates",
-                    json!(
-                        matches
-                            .iter()
-                            .map(|worktree| &worktree.path)
-                            .collect::<Vec<_>>()
-                    ),
-                ),
-            ],
-        )),
-    }
+    crate::app::target::resolve(&snapshot.worktrees, Some(branch), None, &snapshot.repo_root)
 }
 
 fn worktree_by_path<'a>(
@@ -1224,7 +1196,11 @@ mod tests {
             .worktrees
             .push(status(Some("topic"), &managed.join("topic-copy")));
         let result = finalize_gone_state(
-            apply_gone_git(&RecordingGit::default(), &|| Ok(latest.clone()), &plan),
+            apply_gone_git(
+                &RecordingGit::default(),
+                &|_: &GoneCandidate| Ok(latest.clone()),
+                &plan,
+            ),
             &FaultState::default(),
         );
         assert!(result.deleted.is_empty());
@@ -1374,7 +1350,7 @@ mod tests {
         let plan = prepare_gone(&repo, &managed, &initial, false).unwrap();
         assert!(plan.requires_hooks());
         let calls = Mutex::new(0_u8);
-        let provider = || {
+        let provider = |_: &GoneCandidate| {
             let mut calls = calls.lock().unwrap();
             *calls += 1;
             let mut latest = initial.clone();
@@ -1411,7 +1387,7 @@ mod tests {
                     fail_call: Some(1),
                     ..RecordingGit::default()
                 },
-                &|| Ok(current.clone()),
+                &|_: &GoneCandidate| Ok(current.clone()),
                 &plan,
             ),
             &FaultState::default(),
@@ -1425,7 +1401,11 @@ mod tests {
     fn gone_exposes_git_to_state_boundary_and_reports_state_failure_phase() {
         let (_temp, repo, managed, current) = plan_fixture();
         let plan = prepare_gone(&repo, &managed, &current, false).unwrap();
-        let git_applied = apply_gone_git(&RecordingGit::default(), &|| Ok(current.clone()), &plan);
+        let git_applied = apply_gone_git(
+            &RecordingGit::default(),
+            &|_: &GoneCandidate| Ok(current.clone()),
+            &plan,
+        );
         assert!(git_applied.result.deleted.is_empty());
         assert!(git_applied.result.failed.is_empty());
         assert_eq!(git_applied.pending.len(), 1);
@@ -1461,7 +1441,7 @@ mod tests {
                         fail_call: Some(fail_call),
                         ..RecordingGit::default()
                     },
-                    &|| Ok(current.clone()),
+                    &|_: &GoneCandidate| Ok(current.clone()),
                     &plan,
                 ),
                 &FaultState::default(),
@@ -1492,7 +1472,11 @@ mod tests {
             let (_temp, repo, managed, current) = plan_fixture();
             let plan = prepare_gone(&repo, &managed, &current, false).unwrap();
             let result = finalize_gone_state(
-                apply_gone_git(&RecordingGit::default(), &|| Ok(current.clone()), &plan),
+                apply_gone_git(
+                    &RecordingGit::default(),
+                    &|_: &GoneCandidate| Ok(current.clone()),
+                    &plan,
+                ),
                 &state,
             );
             assert_eq!(result.failed[0].phase, expected_phase);

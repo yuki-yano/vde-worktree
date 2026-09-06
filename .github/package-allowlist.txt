@@ -28,6 +28,7 @@ src/app/mutations_delete.rs
 src/app/read_commands.rs
 src/app/result.rs
 src/app/snapshot.rs
+src/app/target.rs
 src/app/transfer.rs
 src/bin/vde-worktree.rs
 src/bin/vw.rs

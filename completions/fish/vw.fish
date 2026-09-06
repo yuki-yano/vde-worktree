@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_vw_global_optspecs
-    string join \n json verbose v/version hooks no-hooks gh no-gh full-path allow-unsafe strict-post-hooks hook-timeout-ms= lock-timeout-ms= prompt= fzf-arg= h/help
+    string join \n C/directory= worktree= json verbose v/version hooks no-hooks gh no-gh full-path allow-unsafe strict-post-hooks hook-timeout-ms= lock-timeout-ms= prompt= fzf-arg= h/help
 end
 
 function __fish_vw_needs_command
@@ -24,6 +24,8 @@ function __fish_vw_using_subcommand
     contains -- $cmd[1] $argv
 end
 
+complete -c vw -n "__fish_vw_needs_command" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_needs_command" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_needs_command" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_needs_command" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_needs_command" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -64,6 +66,8 @@ complete -c vw -n "__fish_vw_needs_command" -f -a "cd" -d 'Select a worktree pat
 complete -c vw -n "__fish_vw_needs_command" -f -a "completion" -d 'Generate or install shell completions'
 complete -c vw -n "__fish_vw_needs_command" -f -a "describe" -d 'Describe commands, arguments, effects, and the JSON output contract'
 complete -c vw -n "__fish_vw_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c vw -n "__fish_vw_using_subcommand init" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand init" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand init" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand init" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand init" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -79,6 +83,8 @@ complete -c vw -n "__fish_vw_using_subcommand init" -l full-path -d 'Show absolu
 complete -c vw -n "__fish_vw_using_subcommand init" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand init" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand init" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand list" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand list" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand list" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand list" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand list" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -95,6 +101,8 @@ complete -c vw -n "__fish_vw_using_subcommand list" -l full-path -d 'Show absolu
 complete -c vw -n "__fish_vw_using_subcommand list" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand list" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand list" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand status" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand status" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand status" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand status" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand status" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -110,6 +118,8 @@ complete -c vw -n "__fish_vw_using_subcommand status" -l full-path -d 'Show abso
 complete -c vw -n "__fish_vw_using_subcommand status" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand status" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand status" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand path" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand path" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand path" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand path" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand path" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -125,6 +135,8 @@ complete -c vw -n "__fish_vw_using_subcommand path" -l full-path -d 'Show absolu
 complete -c vw -n "__fish_vw_using_subcommand path" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand path" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand path" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand switch" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand switch" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand switch" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand switch" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand switch" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -140,6 +152,8 @@ complete -c vw -n "__fish_vw_using_subcommand switch" -l full-path -d 'Show abso
 complete -c vw -n "__fish_vw_using_subcommand switch" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand switch" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand switch" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand new" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand new" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand new" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand new" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand new" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -155,6 +169,8 @@ complete -c vw -n "__fish_vw_using_subcommand new" -l full-path -d 'Show absolut
 complete -c vw -n "__fish_vw_using_subcommand new" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand new" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand new" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand mv" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand mv" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand mv" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand mv" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand mv" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -170,6 +186,8 @@ complete -c vw -n "__fish_vw_using_subcommand mv" -l full-path -d 'Show absolute
 complete -c vw -n "__fish_vw_using_subcommand mv" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand mv" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand mv" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand del" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand del" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand del" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand del" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand del" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -190,6 +208,8 @@ complete -c vw -n "__fish_vw_using_subcommand del" -l full-path -d 'Show absolut
 complete -c vw -n "__fish_vw_using_subcommand del" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand del" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand del" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand gone" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand gone" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand gone" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand gone" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand gone" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -207,6 +227,8 @@ complete -c vw -n "__fish_vw_using_subcommand gone" -l full-path -d 'Show absolu
 complete -c vw -n "__fish_vw_using_subcommand gone" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand gone" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand gone" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand adopt" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand adopt" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand adopt" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand adopt" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand adopt" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -224,6 +246,8 @@ complete -c vw -n "__fish_vw_using_subcommand adopt" -l full-path -d 'Show absol
 complete -c vw -n "__fish_vw_using_subcommand adopt" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand adopt" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand adopt" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand get" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand get" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand get" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand get" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand get" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -239,6 +263,8 @@ complete -c vw -n "__fish_vw_using_subcommand get" -l full-path -d 'Show absolut
 complete -c vw -n "__fish_vw_using_subcommand get" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand get" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand get" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand extract" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand extract" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand extract" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand extract" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand extract" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -257,6 +283,8 @@ complete -c vw -n "__fish_vw_using_subcommand extract" -l allow-unsafe -d 'Ackno
 complete -c vw -n "__fish_vw_using_subcommand extract" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand extract" -s h -l help -d 'Print help'
 complete -c vw -n "__fish_vw_using_subcommand absorb" -l from -d 'Managed source worktree name when branch attachment is ambiguous' -r
+complete -c vw -n "__fish_vw_using_subcommand absorb" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand absorb" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand absorb" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand absorb" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand absorb" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -275,6 +303,8 @@ complete -c vw -n "__fish_vw_using_subcommand absorb" -l allow-unsafe -d 'Acknow
 complete -c vw -n "__fish_vw_using_subcommand absorb" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand absorb" -s h -l help -d 'Print help'
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l to -d 'Managed target worktree name when branch attachment is ambiguous' -r
+complete -c vw -n "__fish_vw_using_subcommand unabsorb" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -292,6 +322,8 @@ complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l full-path -d 'Show ab
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand unabsorb" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand use" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand use" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand use" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand use" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand use" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -309,6 +341,8 @@ complete -c vw -n "__fish_vw_using_subcommand use" -l full-path -d 'Show absolut
 complete -c vw -n "__fish_vw_using_subcommand use" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand use" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand use" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand exec" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand exec" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand exec" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand exec" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand exec" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -324,6 +358,8 @@ complete -c vw -n "__fish_vw_using_subcommand exec" -l full-path -d 'Show absolu
 complete -c vw -n "__fish_vw_using_subcommand exec" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand exec" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand exec" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand invoke" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand invoke" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand invoke" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand invoke" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand invoke" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -339,6 +375,8 @@ complete -c vw -n "__fish_vw_using_subcommand invoke" -l full-path -d 'Show abso
 complete -c vw -n "__fish_vw_using_subcommand invoke" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand invoke" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand invoke" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand copy" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand copy" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand copy" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand copy" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand copy" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -354,6 +392,8 @@ complete -c vw -n "__fish_vw_using_subcommand copy" -l full-path -d 'Show absolu
 complete -c vw -n "__fish_vw_using_subcommand copy" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand copy" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand copy" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand link" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand link" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand link" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand link" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand link" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -371,6 +411,8 @@ complete -c vw -n "__fish_vw_using_subcommand link" -l strict-post-hooks -d 'Ret
 complete -c vw -n "__fish_vw_using_subcommand link" -s h -l help -d 'Print help'
 complete -c vw -n "__fish_vw_using_subcommand lock" -l owner -d 'Lock owner (default: current user); use a unique session identifier for agents' -r
 complete -c vw -n "__fish_vw_using_subcommand lock" -l reason -d 'Reason for protecting the worktree' -r
+complete -c vw -n "__fish_vw_using_subcommand lock" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand lock" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand lock" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand lock" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand lock" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -387,6 +429,8 @@ complete -c vw -n "__fish_vw_using_subcommand lock" -l allow-unsafe -d 'Acknowle
 complete -c vw -n "__fish_vw_using_subcommand lock" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand lock" -s h -l help -d 'Print help'
 complete -c vw -n "__fish_vw_using_subcommand unlock" -l owner -d 'Expected owner (default: current user)' -r
+complete -c vw -n "__fish_vw_using_subcommand unlock" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand unlock" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand unlock" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand unlock" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand unlock" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -403,6 +447,8 @@ complete -c vw -n "__fish_vw_using_subcommand unlock" -l full-path -d 'Show abso
 complete -c vw -n "__fish_vw_using_subcommand unlock" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand unlock" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand unlock" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand cd" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand cd" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand cd" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand cd" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand cd" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -419,6 +465,8 @@ complete -c vw -n "__fish_vw_using_subcommand cd" -l allow-unsafe -d 'Acknowledg
 complete -c vw -n "__fish_vw_using_subcommand cd" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand cd" -s h -l help -d 'Print help'
 complete -c vw -n "__fish_vw_using_subcommand completion" -l path -d 'Installation path (default: the shell completion directory)' -r -F
+complete -c vw -n "__fish_vw_using_subcommand completion" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand completion" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand completion" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand completion" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand completion" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -435,6 +483,8 @@ complete -c vw -n "__fish_vw_using_subcommand completion" -l full-path -d 'Show 
 complete -c vw -n "__fish_vw_using_subcommand completion" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vw -n "__fish_vw_using_subcommand completion" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vw -n "__fish_vw_using_subcommand completion" -s h -l help -d 'Print help'
+complete -c vw -n "__fish_vw_using_subcommand describe" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vw -n "__fish_vw_using_subcommand describe" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vw -n "__fish_vw_using_subcommand describe" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vw -n "__fish_vw_using_subcommand describe" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vw -n "__fish_vw_using_subcommand describe" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -476,6 +526,8 @@ complete -c vw -n "__fish_vw_using_subcommand help; and not __fish_seen_subcomma
 complete -c vw -n "__fish_vw_using_subcommand help; and not __fish_seen_subcommand_from init list status path switch new mv del gone adopt get extract absorb unabsorb use exec invoke copy link lock unlock cd completion describe help" -f -a "describe" -d 'Describe commands, arguments, effects, and the JSON output contract'
 complete -c vw -n "__fish_vw_using_subcommand help; and not __fish_seen_subcommand_from init list status path switch new mv del gone adopt get extract absorb unabsorb use exec invoke copy link lock unlock cd completion describe help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 
+complete -c vde-worktree -n "__fish_vw_needs_command" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_needs_command" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_needs_command" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_needs_command" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_needs_command" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -516,6 +568,8 @@ complete -c vde-worktree -n "__fish_vw_needs_command" -f -a "cd" -d 'Select a wo
 complete -c vde-worktree -n "__fish_vw_needs_command" -f -a "completion" -d 'Generate or install shell completions'
 complete -c vde-worktree -n "__fish_vw_needs_command" -f -a "describe" -d 'Describe commands, arguments, effects, and the JSON output contract'
 complete -c vde-worktree -n "__fish_vw_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c vde-worktree -n "__fish_vw_using_subcommand init" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -531,6 +585,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l full-path -d 'S
 complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand init" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand init" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand list" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -547,6 +603,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l full-path -d 'S
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand list" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand status" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -562,6 +620,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l full-path -d 
 complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand status" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand status" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand path" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -577,6 +637,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l full-path -d 'S
 complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand path" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand path" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -592,6 +654,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l full-path -d 
 complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand switch" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand new" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -607,6 +671,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l full-path -d 'Sh
 complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand new" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand new" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -622,6 +688,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l full-path -d 'Sho
 complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand mv" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand del" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -642,6 +710,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l full-path -d 'Sh
 complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand del" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand del" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -659,6 +729,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l full-path -d 'S
 complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand gone" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -676,6 +748,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l full-path -d '
 complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand adopt" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand get" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -691,6 +765,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l full-path -d 'Sh
 complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand get" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand get" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -709,6 +785,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -l allow-unsafe
 complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand extract" -s h -l help -d 'Print help'
 complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l from -d 'Managed source worktree name when branch attachment is ambiguous' -r
+complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -727,6 +805,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l allow-unsafe 
 complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand absorb" -s h -l help -d 'Print help'
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l to -d 'Managed target worktree name when branch attachment is ambiguous' -r
+complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -744,6 +824,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l full-path -
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand unabsorb" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand use" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -761,6 +843,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l full-path -d 'Sh
 complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand use" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand use" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -776,6 +860,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l full-path -d 'S
 complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand exec" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -791,6 +877,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l full-path -d 
 complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand invoke" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -806,6 +894,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l full-path -d 'S
 complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand copy" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand link" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand link" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand link" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand link" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand link" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -823,6 +913,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand link" -l strict-post-hoo
 complete -c vde-worktree -n "__fish_vw_using_subcommand link" -s h -l help -d 'Print help'
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l owner -d 'Lock owner (default: current user); use a unique session identifier for agents' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l reason -d 'Reason for protecting the worktree' -r
+complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -839,6 +931,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l allow-unsafe -d
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand lock" -s h -l help -d 'Print help'
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l owner -d 'Expected owner (default: current user)' -r
+complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -855,6 +949,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l full-path -d 
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand unlock" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -871,6 +967,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -l allow-unsafe -d '
 complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand cd" -s h -l help -d 'Print help'
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l path -d 'Installation path (default: the shell completion directory)' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -887,6 +985,8 @@ complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l full-path
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l allow-unsafe -d 'Acknowledge explicitly requested unsafe operations'
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -l strict-post-hooks -d 'Return an error if a post-hook fails; retain the completed operation result'
 complete -c vde-worktree -n "__fish_vw_using_subcommand completion" -s h -l help -d 'Print help'
+complete -c vde-worktree -n "__fish_vw_using_subcommand describe" -s C -l directory -d 'Resolve repository, config, hooks and relative paths from this directory' -r -F
+complete -c vde-worktree -n "__fish_vw_using_subcommand describe" -l worktree -d 'Select a registered worktree by path for status, path, exec, copy or link' -r -F
 complete -c vde-worktree -n "__fish_vw_using_subcommand describe" -l hook-timeout-ms -d 'Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand describe" -l lock-timeout-ms -d 'Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000)' -r
 complete -c vde-worktree -n "__fish_vw_using_subcommand describe" -l prompt -d 'Override the interactive cd picker prompt' -r
@@ -935,7 +1035,7 @@ function __vw_dynamic_candidates
     if test (count $tokens) -gt 0
         set vw_bin $tokens[1]
     end
-    command $vw_bin __complete $argv 2>/dev/null
+    command $vw_bin __complete $argv -- $tokens 2>/dev/null
 end
 
 for __vw_bin in vw vde-worktree

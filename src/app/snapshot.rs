@@ -117,6 +117,24 @@ impl Default for SnapshotCollectionOptions {
     }
 }
 
+pub fn read_registry<G: GitSnapshotPort>(
+    git: &G,
+    repo_root: &Path,
+) -> Result<Vec<GitWorktree>, SnapshotError> {
+    let output = run_git(git, repo_root, ["worktree", "list", "--porcelain", "-z"])?;
+    require_success(
+        &output,
+        repo_root,
+        ["worktree", "list", "--porcelain", "-z"],
+    )?;
+    let mut worktrees =
+        parse_worktree_porcelain(&output.stdout).map_err(SnapshotError::InvalidPorcelain)?;
+    if let Some(primary) = worktrees.first_mut() {
+        primary.path = repo_root.to_path_buf();
+    }
+    Ok(worktrees)
+}
+
 pub struct SnapshotCollector<'a, G, P> {
     git: &'a G,
     pr_lookup: &'a P,
@@ -157,21 +175,21 @@ where
         base_branch: &str,
         gh_enabled: bool,
     ) -> Result<WorktreeSnapshot, SnapshotError> {
-        let output = run_git(
-            self.git,
+        self.collect_registry(
             repo_root,
-            ["worktree", "list", "--porcelain", "-z"],
-        )?;
-        require_success(
-            &output,
-            repo_root,
-            ["worktree", "list", "--porcelain", "-z"],
-        )?;
-        let mut worktrees =
-            parse_worktree_porcelain(&output.stdout).map_err(SnapshotError::InvalidPorcelain)?;
-        if let Some(primary) = worktrees.first_mut() {
-            primary.path = repo_root.to_path_buf();
-        }
+            base_branch,
+            gh_enabled,
+            &read_registry(self.git, repo_root)?,
+        )
+    }
+
+    pub fn collect_registry(
+        &self,
+        repo_root: &Path,
+        base_branch: &str,
+        gh_enabled: bool,
+        worktrees: &[GitWorktree],
+    ) -> Result<WorktreeSnapshot, SnapshotError> {
         let branches = worktrees
             .iter()
             .map(|worktree| worktree.branch.clone())

@@ -1297,7 +1297,7 @@ fn enhance_zsh(generated: &str) -> Result<String, CliError> {
         .replacen("#compdef vw", "#compdef vw vde-worktree", 1)
         .replacen(
             "_vw() {",
-            "_vw() {\n    local _vw_command_bin=\"$words[1]\"",
+            "_vw() {\n    local _vw_command_bin=\"$words[1]\"\n    local -a _vw_command_words=(\"${words[@]}\")",
             1,
         );
     for binding in COMPLETION_BINDINGS {
@@ -1313,7 +1313,7 @@ _vw_dynamic_candidates() {
   while IFS=$'\t' read -r value description; do
     [[ -n "$value" ]] || continue
     values+=("${value}:${description}")
-  done < <(command "$vw_bin" __complete "$kind" 2>/dev/null)
+  done < <(command "$vw_bin" __complete "$kind" -- "${_vw_command_words[@]}" 2>/dev/null)
   (( ${#values} > 0 )) && _describe -t "$kind" "$kind" values
 }
 
@@ -1423,7 +1423,7 @@ function __vw_dynamic_candidates
     if test (count $tokens) -gt 0
         set vw_bin $tokens[1]
     end
-    command $vw_bin __complete $argv 2>/dev/null
+    command $vw_bin __complete $argv -- $tokens 2>/dev/null
 end
 
 for __vw_bin in vw vde-worktree
@@ -1516,7 +1516,9 @@ mod tests {
             block.lines().any(|line| line.contains("--from=[")
                 && line.contains(":_vw_complete_managed_worktrees'"))
         );
-        assert!(script.contains("local _vw_command_bin=\"$words[1]\""));
+        assert!(script.contains(
+            "local _vw_command_bin=\"$words[1]\"\n    local -a _vw_command_words=(\"${words[@]}\")"
+        ));
     }
 
     #[test]

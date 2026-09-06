@@ -637,13 +637,29 @@ pub struct SystemBackend {
 }
 
 impl SystemBackend {
-    pub fn from_environment() -> Result<Self, CliError> {
+    pub fn from_environment(directory: Option<&Path>) -> Result<Self, CliError> {
         let cwd = env::current_dir().map_err(|error| {
             CliError::new(
                 ErrorCode::InternalError,
                 format!("failed to resolve current directory: {error}"),
             )
         })?;
+        let cwd = directory.map_or_else(|| cwd.clone(), |path| cwd.join(path));
+        let cwd = cwd.canonicalize().map_err(|error| {
+            CliError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "cannot resolve execution directory {}: {error}",
+                    cwd.display()
+                ),
+            )
+        })?;
+        if !cwd.is_dir() {
+            return Err(CliError::new(
+                ErrorCode::InvalidArgument,
+                "execution directory must be a directory",
+            ));
+        }
         Ok(Self {
             cwd,
             git: GitCli::new(StdProcessRunner),
@@ -655,6 +671,19 @@ impl SystemBackend {
                 .map(PathBuf::from),
             in_tmux: env::var_os("TMUX").is_some_and(|value| !value.is_empty()),
         })
+    }
+
+    pub fn resolve_request_paths(&self, request: &mut ParsedRequest) {
+        request.common.directory = Some(self.cwd.clone());
+        if let Some(path) = &mut request.common.worktree {
+            *path = self.cwd.join(&*path);
+        }
+        if let Command::Completion {
+            path: Some(path), ..
+        } = &mut request.command
+        {
+            *path = self.cwd.join(&*path);
+        }
     }
 
     fn mutation_config(&self, context: &RepoContext) -> Result<ResolvedConfig, CliError> {
@@ -678,6 +707,36 @@ impl SystemBackend {
         SnapshotCollector::new(&self.git, &self.gh)
             .without_lifecycle_observations()
             .collect(&context.repo_root, &base_branch, false)
+            .map_err(MapToCliError::map_to_cli_error)
+    }
+    fn selected_mutation_snapshot(
+        &self,
+        context: &RepoContext,
+        config: &ResolvedConfig,
+        branch: Option<&str>,
+    ) -> Result<WorktreeSnapshot, CliError> {
+        let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+            .map_err(MapToCliError::map_to_cli_error)?;
+        let target =
+            crate::app::target::resolve(&registry, branch, None, &context.current_worktree_root)?;
+        if let Some(branch) = &target.branch {
+            crate::app::target::optional_branch(&registry, branch)?;
+        }
+        let base = resolve_base_branch(
+            &self.git,
+            &context.repo_root,
+            config.git.base_branch.as_deref(),
+            &config.git.base_remote,
+        )
+        .map_err(MapToCliError::map_to_cli_error)?;
+        SnapshotCollector::new(&self.git, &self.gh)
+            .without_lifecycle_observations()
+            .collect_registry(
+                &context.repo_root,
+                &base,
+                false,
+                std::slice::from_ref(target),
+            )
             .map_err(MapToCliError::map_to_cli_error)
     }
 }
@@ -1097,18 +1156,23 @@ impl ApplicationBackend for SystemBackend {
                 (SystemMutationCommandPlan::Init(plan), hooks, true)
             }
             Command::New { branch } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+                    .map_err(MapToCliError::map_to_cli_error)?;
                 let branch = branch.clone().unwrap_or_else(generated_wip_branch);
-                let base_branch = snapshot.base_branch.as_deref().ok_or_else(|| {
-                    CliError::new(ErrorCode::InvalidArgument, "base branch is unavailable")
-                })?;
+                let base_branch = resolve_base_branch(
+                    &self.git,
+                    &context.repo_root,
+                    config.git.base_branch.as_deref(),
+                    &config.git.base_remote,
+                )
+                .map_err(MapToCliError::map_to_cli_error)?;
                 let plan = prepare_new(
                     &self.git,
                     &context.repo_root,
                     &managed_root,
-                    &snapshot,
+                    &registry,
                     &branch,
-                    base_branch,
+                    &base_branch,
                 )?;
                 let target = plan.hook_target();
                 let hooks = mutation_hooks(
@@ -1124,17 +1188,22 @@ impl ApplicationBackend for SystemBackend {
                 (SystemMutationCommandPlan::New(plan), hooks, true)
             }
             Command::Switch { branch } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
-                let base_branch = snapshot.base_branch.as_deref().ok_or_else(|| {
-                    CliError::new(ErrorCode::InvalidArgument, "base branch is unavailable")
-                })?;
+                let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+                    .map_err(MapToCliError::map_to_cli_error)?;
+                let base_branch = resolve_base_branch(
+                    &self.git,
+                    &context.repo_root,
+                    config.git.base_branch.as_deref(),
+                    &config.git.base_remote,
+                )
+                .map_err(MapToCliError::map_to_cli_error)?;
                 let plan = prepare_switch(
                     &self.git,
                     &context.repo_root,
                     &managed_root,
-                    &snapshot,
+                    &registry,
                     branch,
-                    base_branch,
+                    &base_branch,
                 )?;
                 let target = plan.hook_target();
                 let hooks = mutation_hooks(
@@ -1150,17 +1219,22 @@ impl ApplicationBackend for SystemBackend {
                 (SystemMutationCommandPlan::Switch(plan), hooks, true)
             }
             Command::Get { remote_branch } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
-                let base_branch = snapshot.base_branch.as_deref().ok_or_else(|| {
-                    CliError::new(ErrorCode::InvalidArgument, "base branch is unavailable")
-                })?;
+                let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+                    .map_err(MapToCliError::map_to_cli_error)?;
+                let base_branch = resolve_base_branch(
+                    &self.git,
+                    &context.repo_root,
+                    config.git.base_branch.as_deref(),
+                    &config.git.base_remote,
+                )
+                .map_err(MapToCliError::map_to_cli_error)?;
                 let plan = prepare_get(
                     &self.git,
                     &context.repo_root,
                     &managed_root,
-                    &snapshot,
+                    &registry,
                     remote_branch,
-                    base_branch,
+                    &base_branch,
                 )?;
                 let target = plan.hook_target();
                 let hooks = mutation_hooks(
@@ -1318,7 +1392,8 @@ impl ApplicationBackend for SystemBackend {
                 force_unmerged,
                 force_locked,
             } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let snapshot =
+                    self.selected_mutation_snapshot(context, &config, branch.as_deref())?;
                 let plan = prepare_del(
                     &context.repo_root,
                     &context.current_worktree_root,
@@ -1370,7 +1445,8 @@ impl ApplicationBackend for SystemBackend {
                 keep_stash,
                 allow_agent,
             } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+                    .map_err(MapToCliError::map_to_cli_error)?;
                 let options = TransferOptions {
                     invocation: transfer_invocation(
                         self.terminal,
@@ -1387,7 +1463,7 @@ impl ApplicationBackend for SystemBackend {
                 let plan = prepare_absorb(
                     &self.git,
                     context,
-                    &snapshot,
+                    &registry,
                     &managed_root,
                     branch,
                     &options,
@@ -1401,7 +1477,8 @@ impl ApplicationBackend for SystemBackend {
                 keep_stash,
                 allow_agent,
             } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+                    .map_err(MapToCliError::map_to_cli_error)?;
                 let options = TransferOptions {
                     invocation: transfer_invocation(
                         self.terminal,
@@ -1418,7 +1495,7 @@ impl ApplicationBackend for SystemBackend {
                 let plan = prepare_unabsorb(
                     &self.git,
                     context,
-                    &snapshot,
+                    &registry,
                     &managed_root,
                     branch,
                     &options,
@@ -1431,12 +1508,13 @@ impl ApplicationBackend for SystemBackend {
                 owner,
                 reason,
             } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
+                    .map_err(MapToCliError::map_to_cli_error)?;
                 let owner = owner.clone().map_or_else(default_lock_owner, Ok)?;
                 let reason = reason.clone().unwrap_or_else(|| "locked".to_owned());
                 let plan = prepare_lock(
                     &context.repo_root,
-                    &snapshot,
+                    &registry,
                     branch,
                     &reason,
                     &owner,
@@ -1548,16 +1626,17 @@ impl ApplicationBackend for SystemBackend {
             }
             SystemMutationCommandPlan::Del(plan) => {
                 let config = self.mutation_config(context)?;
-                let latest = self.mutation_snapshot(context, &config)?;
+                let latest =
+                    self.selected_mutation_snapshot(context, &config, Some(&plan.branch))?;
                 let revalidated = revalidate_del(plan, &latest)?;
                 apply_del_git(&self.git, revalidated)
                     .map(Box::new)
                     .map(SystemMutationResult::DelGitApplied)
             }
             SystemMutationCommandPlan::Gone(plan) => {
-                let snapshots = || {
+                let snapshots = |candidate: &crate::app::mutations_delete::GoneCandidate| {
                     let config = self.mutation_config(context)?;
-                    self.mutation_snapshot(context, &config)
+                    self.selected_mutation_snapshot(context, &config, Some(&candidate.branch))
                 };
                 Ok(SystemMutationResult::GoneGitApplied(Box::new(
                     apply_gone_git(&self.git, &snapshots, plan),
@@ -1655,6 +1734,7 @@ impl ApplicationBackend for SystemBackend {
             let data = crate::cli::contract::describe(command.as_deref())?;
             let mut output = CommandOutput::new(data);
             let mut definition = crate::cli::clap_command();
+            definition.build();
             let help = if let Some(command) = command {
                 definition
                     .find_subcommand_mut(command)

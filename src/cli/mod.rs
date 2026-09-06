@@ -61,6 +61,14 @@ struct Cli {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct CommonOptions {
+    #[arg(short = 'C', long, global = true, value_name = "DIRECTORY")]
+    /// Resolve repository, config, hooks and relative paths from this directory.
+    pub directory: Option<PathBuf>,
+
+    #[arg(long, global = true, value_name = "PATH")]
+    /// Select a registered worktree by path for status, path, exec, copy or link.
+    pub worktree: Option<PathBuf>,
+
     #[arg(long, global = true)]
     /// Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings.
     pub json: bool,
@@ -155,13 +163,15 @@ pub enum Command {
     },
     /// Show a single worktree status.
     Status {
+        #[arg(conflicts_with = "worktree")]
         /// Branch to inspect (default: current worktree).
         branch: Option<String>,
     },
     /// Print the absolute path for a branch worktree.
     Path {
+        #[arg(required_unless_present = "worktree", conflicts_with = "worktree")]
         /// Branch whose attached worktree path is printed.
-        branch: String,
+        branch: Option<String>,
     },
     /// Reuse or create a worktree for a branch.
     Switch {
@@ -271,8 +281,9 @@ pub enum Command {
     },
     /// Run an argv command in a branch worktree.
     Exec {
+        #[arg(required_unless_present = "worktree", conflicts_with = "worktree")]
         /// Branch whose attached worktree becomes the child process cwd.
-        branch: String,
+        branch: Option<String>,
         #[arg(last = true, required = true, num_args = 1.., allow_hyphen_values = true)]
         /// Executable and arguments after --; passed directly without shell interpretation.
         argv: Vec<OsString>,
@@ -342,6 +353,9 @@ pub enum Command {
     CompletionCandidates {
         /// Candidate category requested by the shell integration.
         kind: CompletionCandidateKind,
+        /// Original shell command line, used only to resolve -C.
+        #[arg(last = true, allow_hyphen_values = true)]
+        commandline: Vec<OsString>,
     },
 }
 
@@ -430,6 +444,30 @@ where
         .and_then(|matches| Cli::from_arg_matches(&matches));
     match parsed {
         Ok(mut cli) => {
+            if let Command::CompletionCandidates { commandline, .. } = &cli.command
+                && !commandline.is_empty()
+            {
+                cli.common.directory = argument_hints(commandline).directory;
+            }
+            if cli.common.worktree.is_some()
+                && !matches!(
+                    cli.command,
+                    Command::Status { .. }
+                        | Command::Path { .. }
+                        | Command::Exec { .. }
+                        | Command::Copy { .. }
+                        | Command::Link { .. }
+                )
+            {
+                let error = CliError::new(
+                    ErrorCode::InvalidArgument,
+                    "--worktree is supported by status, path, exec, copy and link",
+                );
+                return CliParseResult::Invalid {
+                    rendered: error.message.clone(),
+                    error,
+                };
+            }
             apply_toggle(&mut cli.common.hooks, &mut cli.common.no_hooks, hints.hooks);
             apply_toggle(&mut cli.common.gh, &mut cli.common.no_gh, hints.gh);
             if let Err(error) = validate_common_options(&cli.common) {
@@ -474,6 +512,7 @@ fn validate_common_options(common: &CommonOptions) -> Result<(), CliError> {
 
 #[derive(Default, Debug)]
 pub struct ArgumentHints {
+    pub directory: Option<PathBuf>,
     pub json: bool,
     pub command: Option<String>,
     hooks: Option<bool>,
@@ -497,6 +536,15 @@ pub fn argument_hints(args: &[OsString]) -> ArgumentHints {
             continue;
         };
         if let Some(long) = token.strip_prefix("--") {
+            if let Some(value) = long.strip_prefix("directory=") {
+                hints.directory = Some(PathBuf::from(value));
+            } else if long == "directory"
+                && args
+                    .get(index)
+                    .is_some_and(|value| !value.as_encoded_bytes().starts_with(b"-"))
+            {
+                hints.directory = args.get(index).map(PathBuf::from);
+            }
             let (long, inline) = long
                 .split_once('=')
                 .map_or((long, false), |(key, _)| (key, true));
@@ -523,6 +571,16 @@ pub fn argument_hints(args: &[OsString]) -> ArgumentHints {
                 {
                     record_hint(&mut hints, arg.get_id().as_str());
                     if arg.get_action().takes_values() {
+                        if arg.get_id() == "directory" {
+                            let inline = shorts.clone().collect::<String>();
+                            hints.directory = if inline.is_empty() {
+                                args.get(index)
+                                    .filter(|_| consumes_next_value(arg, args.get(index)))
+                                    .map(PathBuf::from)
+                            } else {
+                                Some(PathBuf::from(inline.trim_start_matches('=')))
+                            };
+                        }
                         if shorts.peek().is_none() && consumes_next_value(arg, args.get(index)) {
                             index += 1;
                         }
@@ -872,6 +930,7 @@ mod tests {
             parsed.command,
             Command::CompletionCandidates {
                 kind: CompletionCandidateKind::Worktrees,
+                commandline: Vec::new(),
             }
         );
         assert!(

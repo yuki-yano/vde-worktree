@@ -960,3 +960,260 @@ fn terminal_capabilities_keep_stdout_and_stderr_policies_independent() {
     assert!(!terminal.stdout_color_enabled());
     assert!(terminal.picker_interactive());
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn directory_and_explicit_worktree_select_shared_and_detached_targets() {
+    let (fixture, repo) = repository();
+    assert!(run_vw(&repo, &["init", "--json"]).status.success());
+    let linked = repo.join(".worktree/shared path ");
+    git(
+        &repo,
+        [
+            "worktree",
+            "add",
+            "--quiet",
+            "--force",
+            linked.to_str().unwrap(),
+            "main",
+        ],
+    );
+    let nested = linked.join("nested");
+    fs::create_dir(&nested).unwrap();
+    for command in ["path", "status", "switch", "exec"] {
+        let mut args = vec![
+            "-C",
+            repo.to_str().unwrap(),
+            command,
+            "main",
+            "--json",
+            "--no-gh",
+        ];
+        if command == "exec" {
+            args.extend(["--", "pwd"]);
+        }
+        let output = run_vw(fixture.path(), &args);
+        let value = json_stdout(&output);
+        assert_eq!(
+            value["error"]["code"], "INVALID_ARGUMENT",
+            "{command}: {value}"
+        );
+        assert_eq!(
+            value["error"]["details"]["candidates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+    let path = run_vw(
+        fixture.path(),
+        &[
+            "-C",
+            repo.to_str().unwrap(),
+            "path",
+            "--worktree",
+            ".worktree/shared path /nested",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        json_stdout(&path)["data"]["path"],
+        linked.to_string_lossy().as_ref()
+    );
+    let status = run_vw(
+        fixture.path(),
+        &[
+            "status",
+            "-C",
+            nested.to_str().unwrap(),
+            "--json",
+            "--no-gh",
+        ],
+    );
+    assert_eq!(
+        json_stdout(&status)["data"]["worktree"]["path"],
+        linked.to_string_lossy().as_ref()
+    );
+    let executed = run_vw(
+        fixture.path(),
+        &[
+            "-C",
+            repo.to_str().unwrap(),
+            "exec",
+            "--worktree",
+            ".worktree/shared path ",
+            "--json",
+            "--",
+            "pwd",
+        ],
+    );
+    assert_eq!(
+        json_stdout(&executed)["data"]["childStdout"],
+        format!("{}\n", linked.display())
+    );
+    fs::write(repo.join("shared-config"), "content").unwrap();
+    let copied = run_vw(
+        fixture.path(),
+        &[
+            "-C",
+            repo.to_str().unwrap(),
+            "copy",
+            "--worktree",
+            ".worktree/shared path ",
+            "shared-config",
+            "--json",
+        ],
+    );
+    assert!(copied.status.success(), "{}", json_stdout(&copied));
+    assert_eq!(
+        fs::read_to_string(linked.join("shared-config")).unwrap(),
+        "content"
+    );
+    git(&linked, ["checkout", "--quiet", "--detach"]);
+    let detached = run_vw(
+        fixture.path(),
+        &[
+            "-C",
+            repo.to_str().unwrap(),
+            "path",
+            "--worktree",
+            linked.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    let value = json_stdout(&detached);
+    assert!(value["data"]["branch"].is_null());
+    assert_eq!(value["data"]["path"], linked.to_string_lossy().as_ref());
+}
+
+#[test]
+fn directory_reaches_config_hooks_completion_install_and_dynamic_candidates() {
+    let (fixture, repo) = repository();
+    assert!(run_vw(&repo, &["init", "--json"]).status.success());
+    fs::write(
+        repo.join(".vde/worktree/config.yml"),
+        r#"{"paths":{"worktreeRoot":"custom-trees"}}"#,
+    )
+    .unwrap();
+    assert!(run_vw(&repo, &["init", "--json"]).status.success());
+    let hook = repo.join(".vde/worktree/hooks/post-new");
+    fs::write(
+        &hook,
+        "#!/bin/sh\nprintf '%s' \"$PWD\" > \"$WT_REPO_ROOT/hook-cwd\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let created = run_vw(
+        fixture.path(),
+        &["-C", repo.to_str().unwrap(), "new", "topic", "--json"],
+    );
+    let linked = repo.join("custom-trees/topic");
+    assert_eq!(
+        json_stdout(&created)["data"]["path"],
+        linked.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join("hook-cwd")).unwrap(),
+        linked.to_string_lossy()
+    );
+    let installed = run_vw(
+        fixture.path(),
+        &[
+            "-C",
+            repo.to_str().unwrap(),
+            "completion",
+            "fish",
+            "--install",
+            "--path",
+            "local-completion.fish",
+            "--json",
+        ],
+    );
+    assert!(installed.status.success(), "{}", json_stdout(&installed));
+    assert!(repo.join("local-completion.fish").is_file());
+    let inline = format!("-C{}", repo.display());
+    let long = format!("--directory={}", repo.display());
+    for original in [
+        vec!["vw", "-C", repo.to_str().unwrap(), "path"],
+        vec!["vw", "path", &inline],
+        vec!["vw", &long, "path"],
+    ] {
+        let mut args = vec!["__complete", "worktrees", "--"];
+        args.extend(original);
+        let candidates = run_vw(fixture.path(), &args);
+        assert!(
+            candidates.status.success(),
+            "{}",
+            String::from_utf8_lossy(&candidates.stderr)
+        );
+        assert!(String::from_utf8_lossy(&candidates.stdout).contains("topic\t"));
+    }
+}
+
+#[test]
+fn path_status_and_delete_probe_only_the_required_worktrees() {
+    let (fixture, repo) = repository();
+    assert!(run_vw(&repo, &["init", "--json"]).status.success());
+    for branch in ["one", "two", "three"] {
+        assert!(run_vw(&repo, &["new", branch, "--json"]).status.success());
+    }
+    git(
+        &repo.join(".worktree/three"),
+        ["commit", "--allow-empty", "--quiet", "-m", "work"],
+    );
+    git(&repo, ["merge", "--quiet", "three"]);
+    let wrapper_dir = fixture.path().join("wrapper");
+    fs::create_dir(&wrapper_dir).unwrap();
+    let wrapper = wrapper_dir.join("git");
+    fs::write(
+        &wrapper,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GIT_COMMAND_LOG\"\nexec \"$REAL_GIT\" \"$@\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    let log = fixture.path().join("commands");
+    for (args, expected_status) in [
+        (vec!["path", "one", "--json"], 0),
+        (vec!["status", "one", "--no-gh", "--json"], 1),
+        (vec!["lock", "two", "--json"], 0),
+        (vec!["switch", "two", "--json"], 0),
+        (vec!["del", "one", "--force", "--allow-unsafe", "--json"], 2),
+        (vec!["gone", "--apply", "--json", "--no-gh"], 4),
+    ] {
+        fs::write(&log, "").unwrap();
+        let result = run_vw_with_git_wrapper(&repo, &args, &wrapper_dir, &log);
+        assert!(
+            result.status.success(),
+            "{args:?}: {}",
+            json_stdout(&result)
+        );
+        let commands = fs::read_to_string(&log).unwrap();
+        let probes = commands
+            .lines()
+            .filter(|line| line.contains("status --porcelain"))
+            .count();
+        assert_eq!(probes, expected_status, "{args:?}\n{commands}");
+        if args[0] == "path" {
+            assert!(!commands.contains("merge-base"));
+            assert!(!commands.contains("@{upstream}"));
+        }
+    }
+}
+
+#[test]
+fn path_preserves_repository_trailing_spaces_without_a_base_branch() {
+    let (fixture, repo) = repository();
+    let renamed = fixture.path().join("repo with trailing space ");
+    fs::rename(repo, &renamed).unwrap();
+    let renamed = fs::canonicalize(renamed).unwrap();
+    git(&renamed, ["branch", "-m", "topic"]);
+    let result = run_vw(
+        fixture.path(),
+        &["-C", renamed.to_str().unwrap(), "path", "topic", "--json"],
+    );
+    let value = json_stdout(&result);
+    assert_eq!(value["status"], "ok", "{value}");
+    assert_eq!(value["repoRoot"], renamed.to_string_lossy().as_ref());
+    assert_eq!(value["data"]["path"], renamed.to_string_lossy().as_ref());
+}

@@ -219,7 +219,12 @@ where
                 "separate Git directory does not define core.worktree",
             ));
         }
-        let configured_worktree = path_from_bytes(trim_ascii_whitespace(&config_output.stdout));
+        let configured_worktree = path_from_bytes(
+            config_output
+                .stdout
+                .strip_suffix(b"\n")
+                .unwrap_or(&config_output.stdout),
+        );
         if configured_worktree.as_os_str().is_empty() {
             return Err(unsupported_layout(cwd, "core.worktree must not be empty"));
         }
@@ -237,11 +242,11 @@ fn path_from_stdout(
     args: Vec<OsString>,
     output: ProcessOutput,
 ) -> Result<PathBuf, GitCliError> {
-    let trimmed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let trimmed = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
     if trimmed.is_empty() {
         return Err(command_failure(cwd, args, output));
     }
-    Ok(PathBuf::from(trimmed))
+    Ok(path_from_bytes(trimmed))
 }
 
 fn worktree_paths_from_porcelain(output: &[u8]) -> Vec<PathBuf> {
@@ -262,16 +267,6 @@ fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 #[cfg(not(unix))]
 fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
-}
-
-fn trim_ascii_whitespace(mut bytes: &[u8]) -> &[u8] {
-    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[1..];
-    }
-    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[..bytes.len() - 1];
-    }
-    bytes
 }
 
 fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {

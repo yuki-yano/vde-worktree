@@ -50,3 +50,5 @@ JSON 契約を変更する場合は現行の単一契約へ更新し、旧 rende
 - 改修1：JSON schema 3、strict post-hook 後の data 保持、構造化 hook 警告、adopt / gone の対象別エラー詳細、transfer・extract・mv・配置の復旧情報を実装。Rust 1.89.0 で全290テストと clippy が成功。
 
 - 改修2：全引数の help、コマンドごとの前提・副作用・例、describe、引数解析の共通化、説明文に依存しない zsh/fish 動的補完を実装。既存受け入れテストに実出力の schema 検証を追加。全295テスト、clippy、両 shell の構文・候補取得、Cargo package allowlist 66ファイルの一致を確認。
+
+- 改修3：-C、明示 worktree path、共有 branch の候補付き拒否、一覧と単一詳細の分離を実装。new / switch / get / lock / transfer の不要な全件詳細を除去し、del / gone は最新一覧の一意性を確認して対象だけを再検証する。実リポジトリで path の詳細取得0件、status 1件、del 2件、gone の候補別取得を確認。全299テスト、両 shell の -C を使う候補取得、Cargo package allowlist 67ファイルの一致を確認。
