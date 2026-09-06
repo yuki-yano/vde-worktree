@@ -79,6 +79,23 @@ cd "$(vw cd)"
 
 `vw cd` prints the selected worktree path. It cannot change the parent shell directory by itself.
 
+## Discover Commands
+
+Every command's `--help` describes its target, prerequisites, effects, arguments and examples.
+For machine-readable discovery, use `describe` outside or inside a repository:
+
+```bash
+vw describe --json
+vw describe exec --json
+```
+
+`describe` exports the actual CLI argument definitions, constraints, dynamic completion categories,
+and JSON schemas for the common envelope and each command's result. Request one command to keep
+the response small. The acceptance suite validates real success and partial-result output against
+these schemas. `fixtures/rust-migration/` preserves historical migration contracts; `describe` is
+the current public contract. Explicit `--help` and `--version` always print text; a missing command with options
+(such as `vw --json`) is an invalid request with exit code 3.
+
 ## Shell Completion
 
 Generate from command:
@@ -110,6 +127,8 @@ autoload -Uz compinit && compinit
 ```
 
 The generated scripts obtain dynamic candidates directly from the Rust binary.
+Their bindings use command and argument identities and are independent of help wording.
+`switch` and `use` include local branches that do not have a worktree yet.
 
 `--install` atomically replaces the completion file through a same-filesystem transaction directory. A directory-sync failure restores the previous file before returning an error.
 

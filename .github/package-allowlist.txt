@@ -31,6 +31,7 @@ src/app/snapshot.rs
 src/app/transfer.rs
 src/bin/vde-worktree.rs
 src/bin/vw.rs
+src/cli/contract.rs
 src/cli/mod.rs
 src/domain/error.rs
 src/domain/fzf.rs
@@ -62,3 +63,4 @@ tests/phase2_cli_acceptance.rs
 tests/phase3_cli_acceptance.rs
 tests/phase4_cli_acceptance.rs
 tests/phase5_cli_acceptance.rs
+tests/support/mod.rs

@@ -3,7 +3,7 @@
 # Dynamic candidates are emitted as shell-safe TSV by the Rust binary.
 _vw_dynamic_candidates() {
   local kind="$1" row value description
-  local vw_bin="${words[1]:-vw}"
+  local vw_bin="$_vw_command_bin"
   local -a values
   command -v "$vw_bin" >/dev/null 2>&1 || return 0
   while IFS=$'\t' read -r value description; do
@@ -23,6 +23,7 @@ _vw_complete_managed_worktrees() { _vw_dynamic_candidates managed-worktrees }
 autoload -U is-at-least
 
 _vw() {
+    local _vw_command_bin="$words[1]"
     typeset -A opt_args
     typeset -a _arguments_options
     local ret=1
@@ -35,21 +36,21 @@ _vw() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ":: :_vw_commands" \
@@ -63,530 +64,552 @@ _vw() {
         case $line[1] in
             (init)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (list)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '(--gh)--monitor[Emit a lightweight internal snapshot for monitor integrations]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (status)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'::branch:_vw_complete_worktrees' \
+'::branch -- Branch to inspect (default\: current worktree):_vw_complete_worktrees' \
 && ret=0
 ;;
 (path)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_worktrees' \
+':branch -- Branch whose attached worktree path is printed:_vw_complete_worktrees' \
 && ret=0
 ;;
 (switch)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_worktrees' \
+':branch -- Existing or new local branch; new branches start at the configured base:_vw_complete_use_branches' \
 && ret=0
 ;;
 (new)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'::branch:_vw_complete_worktrees' \
+'::branch -- New branch name (default\: a generated wip name):_default' \
 && ret=0
 ;;
 (mv)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':new_branch:_default' \
+':new_branch -- New branch name and managed directory for the current linked worktree:_default' \
 && ret=0
 ;;
 (del)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--force[]' \
-'--force-dirty[]' \
-'--allow-unpushed[]' \
-'--force-unmerged[]' \
-'--force-locked[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--force[Enable every deletion override; non-interactive use requires --allow-unsafe]' \
+'--force-dirty[Allow discarding dirty worktree files; non-interactive use requires --allow-unsafe]' \
+'--allow-unpushed[Allow commits ahead of upstream or unknown upstream state; non-interactive use requires --allow-unsafe]' \
+'--force-unmerged[Allow deleting work not known to be merged; non-interactive use requires --allow-unsafe]' \
+'--force-locked[Allow deleting a protected worktree; non-interactive use requires --allow-unsafe]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'::branch:_vw_complete_worktrees' \
+'::branch -- Branch to delete (default\: current linked worktree):_vw_complete_worktrees' \
 && ret=0
 ;;
 (gone)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'(--dry-run)--apply[]' \
-'(--apply)--dry-run[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'(--dry-run)--apply[Delete the eligible candidates (default\: preview only)]' \
+'(--apply)--dry-run[Only report eligible candidates (the default)]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (adopt)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'(--dry-run)--apply[]' \
-'(--apply)--dry-run[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'(--dry-run)--apply[Move eligible external worktrees into the managed root (default\: preview only)]' \
+'(--apply)--dry-run[Only report proposed moves (the default)]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (get)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':remote_branch:_vw_complete_remote_branches' \
+':remote_branch -- Remote and branch separated by a slash, for example origin/feature/topic:_vw_complete_remote_branches' \
 && ret=0
 ;;
 (extract)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--current[]' \
-'--stash[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--current[Extract the current primary branch; required]' \
+'--stash[Temporarily stash dirty tracked and untracked changes for transfer]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (absorb)
 _arguments "${_arguments_options[@]}" : \
-'--from=[]:FROM:_vw_complete_managed_worktrees' \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--keep-stash[]' \
-'--allow-agent[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--from=[Managed source worktree name when branch attachment is ambiguous]:FROM:_vw_complete_managed_worktrees' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--keep-stash[Retain the exact transfer stash after successful application]' \
+'--allow-agent[Allow non-interactive transfer; also requires --allow-unsafe]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_worktrees' \
+':branch -- Branch to check out in the primary worktree and receive changes:_vw_complete_worktrees' \
 && ret=0
 ;;
 (unabsorb)
 _arguments "${_arguments_options[@]}" : \
-'--to=[]:TO:_vw_complete_managed_worktrees' \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--keep-stash[]' \
-'--allow-agent[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--to=[Managed target worktree name when branch attachment is ambiguous]:TO:_vw_complete_managed_worktrees' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--keep-stash[Retain the exact transfer stash after successful application]' \
+'--allow-agent[Allow non-interactive transfer; also requires --allow-unsafe]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_use_branches' \
+':branch -- Current primary branch whose changes will be transferred:_vw_complete_use_branches' \
 && ret=0
 ;;
 (use)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--allow-agent[]' \
-'--allow-shared[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--allow-agent[Allow non-interactive checkout; also requires --allow-unsafe]' \
+'--allow-shared[Allow the branch to remain attached to a linked worktree]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_use_branches' \
+':branch -- Local branch to check out in the primary worktree:_vw_complete_use_branches' \
 && ret=0
 ;;
 (exec)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_worktrees' \
-'*::argv:_default' \
+':branch -- Branch whose attached worktree becomes the child process cwd:_vw_complete_worktrees' \
+'*::argv -- Executable and arguments after --; passed directly without shell interpretation:_default' \
 && ret=0
 ;;
 (invoke)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':hook:_vw_complete_hooks' \
-'*::argv:_default' \
+':hook -- Hook name, for example post-switch:_vw_complete_hooks' \
+'*::argv -- Arguments after --, passed directly to the named hook:_default' \
 && ret=0
 ;;
 (copy)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::paths:_files' \
+'*::paths -- Repository-relative files or directories to copy; no absolute paths or traversal:_files' \
 && ret=0
 ;;
 (link)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::paths:_files' \
+'*::paths -- Repository-relative files or directories to symlink; no absolute paths or traversal:_files' \
 && ret=0
 ;;
 (lock)
 _arguments "${_arguments_options[@]}" : \
-'--owner=[]:OWNER:_default' \
-'--reason=[]:REASON:_default' \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--owner=[Lock owner (default\: current user); use a unique session identifier for agents]:OWNER:_default' \
+'--reason=[Reason for protecting the worktree]:REASON:_default' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_worktrees' \
+':branch -- Branch to protect with persistent lock metadata:_vw_complete_worktrees' \
 && ret=0
 ;;
 (unlock)
 _arguments "${_arguments_options[@]}" : \
-'--owner=[]:OWNER:_default' \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--force[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--owner=[Expected owner (default\: current user)]:OWNER:_default' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--force[Remove the lock regardless of owner or record validity]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch:_vw_complete_worktrees' \
+':branch -- Branch whose persistent lock is removed:_vw_complete_worktrees' \
 && ret=0
 ;;
 (cd)
 _arguments "${_arguments_options[@]}" : \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (completion)
 _arguments "${_arguments_options[@]}" : \
-'--path=[]:PATH:_files' \
-'--hook-timeout-ms=[]:HOOK_TIMEOUT_MS:_default' \
-'--lock-timeout-ms=[]:LOCK_TIMEOUT_MS:_default' \
-'--prompt=[]:PROMPT:_default' \
-'*--fzf-arg=[]:FZF_ARGS:_default' \
-'--install[]' \
-'--json[]' \
-'*--verbose[]' \
-'-v[]' \
-'--version[]' \
-'--hooks[]' \
-'--no-hooks[]' \
-'--gh[]' \
-'--no-gh[]' \
-'--full-path[]' \
-'--allow-unsafe[]' \
-'--strict-post-hooks[]' \
+'--path=[Installation path (default\: the shell completion directory)]:PATH:_files' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--install[Atomically install the generated script instead of printing it]' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':shell:(zsh fish)' \
+':shell -- Shell to generate completions for:(zsh fish)' \
+&& ret=0
+;;
+(describe)
+_arguments "${_arguments_options[@]}" : \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::command -- Command to describe (default\: all public commands):_default' \
 && ret=0
 ;;
 (help)
@@ -693,6 +716,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(describe)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -732,6 +759,7 @@ _vw_commands() {
 'unlock:Remove persistent lock metadata' \
 'cd:Select a worktree path interactively' \
 'completion:Generate or install shell completions' \
+'describe:Describe commands, arguments, effects, and the JSON output contract' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'vw commands' commands "$@"
@@ -765,6 +793,11 @@ _vw__subcmd__copy_commands() {
 _vw__subcmd__del_commands() {
     local commands; commands=()
     _describe -t commands 'vw del commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__describe_commands] )) ||
+_vw__subcmd__describe_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw describe commands' commands "$@"
 }
 (( $+functions[_vw__subcmd__exec_commands] )) ||
 _vw__subcmd__exec_commands() {
@@ -812,6 +845,7 @@ _vw__subcmd__help_commands() {
 'unlock:Remove persistent lock metadata' \
 'cd:Select a worktree path interactively' \
 'completion:Generate or install shell completions' \
+'describe:Describe commands, arguments, effects, and the JSON output contract' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'vw help commands' commands "$@"
@@ -845,6 +879,11 @@ _vw__subcmd__help__subcmd__copy_commands() {
 _vw__subcmd__help__subcmd__del_commands() {
     local commands; commands=()
     _describe -t commands 'vw help del commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__describe_commands] )) ||
+_vw__subcmd__help__subcmd__describe_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help describe commands' commands "$@"
 }
 (( $+functions[_vw__subcmd__help__subcmd__exec_commands] )) ||
 _vw__subcmd__help__subcmd__exec_commands() {

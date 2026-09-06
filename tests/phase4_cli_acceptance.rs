@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+mod support;
+
 use std::fs;
 use std::io::{self, Read as _};
 use std::os::unix::fs::PermissionsExt as _;
@@ -182,13 +184,7 @@ fn write_hook(repo: &Path, name: &str, script: &str) {
 }
 
 fn json(output: &Output) -> Value {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "stdout is not JSON: {error}; stdout={}; stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    })
+    support::parse_cli_json(&output.stdout)
 }
 
 fn assert_success(output: &Output) {

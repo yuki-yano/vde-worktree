@@ -210,7 +210,10 @@ pub fn dispatch<B>(request: &ParsedRequest, backend: &B) -> ProcessOutput
 where
     B: ApplicationBackend,
 {
-    let context = if matches!(request.command, Command::Completion { .. }) {
+    let context = if matches!(
+        request.command,
+        Command::Completion { .. } | Command::Describe { .. }
+    ) {
         None
     } else {
         match backend.resolve_repo_context() {
@@ -1648,6 +1651,21 @@ impl ApplicationBackend for SystemBackend {
         request: &ParsedRequest,
         context: Option<&RepoContext>,
     ) -> Result<CommandOutput, CliError> {
+        if let Command::Describe { command } = &request.command {
+            let data = crate::cli::contract::describe(command.as_deref())?;
+            let mut output = CommandOutput::new(data);
+            let mut definition = crate::cli::clap_command();
+            let help = if let Some(command) = command {
+                definition
+                    .find_subcommand_mut(command)
+                    .expect("validated command")
+            } else {
+                &mut definition
+            };
+            output.human_stdout = help.render_long_help().to_string();
+            output.human_stdout.push('\n');
+            return Ok(output);
+        }
         if let Some(result) = execute_completion(request, self.home.as_deref()) {
             return result.map(Into::into);
         }

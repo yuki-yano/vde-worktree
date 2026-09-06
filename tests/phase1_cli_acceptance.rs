@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+mod support;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -57,7 +59,7 @@ fn parse_json(output: &Output) -> Value {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&output.stdout).expect("stdout is one JSON object")
+    support::parse_cli_json(&output.stdout)
 }
 
 #[test]

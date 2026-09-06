@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+mod support;
+
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
@@ -106,7 +108,7 @@ fn run_vw_with_git_wrapper(
 }
 
 fn json_stdout(output: &Output) -> Value {
-    serde_json::from_slice(&output.stdout).expect("one JSON stdout object")
+    support::parse_cli_json(&output.stdout)
 }
 
 #[test]
@@ -943,7 +945,7 @@ fn a008_cd_success_is_one_absolute_path_line_or_json_data_path() {
     assert_eq!(json.exit_code, 0);
     assert!(json.stderr.is_empty());
     assert!(!json.stdout.contains('\u{1b}'));
-    let value: Value = serde_json::from_str(&json.stdout).expect("cd JSON envelope");
+    let value = support::parse_cli_json(json.stdout.as_bytes());
     assert_eq!(value["data"]["path"], path);
 }
 

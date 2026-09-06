@@ -1,15 +1,17 @@
-use std::ffi::OsString;
+pub mod contract;
+
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use clap::error::ErrorKind;
-use clap::{ArgAction, Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 use crate::domain::error::{CliError, ErrorCode};
 use crate::domain::fzf::validate_fzf_extra_args;
 use crate::domain::hook::HookName;
 use crate::domain::safety::{CommonSafetyPolicy, enforce_common_safety};
 
-pub const COMMAND_NAMES: [&str; 23] = [
+pub const COMMAND_NAMES: [&str; 24] = [
     "init",
     "list",
     "status",
@@ -33,6 +35,7 @@ pub const COMMAND_NAMES: [&str; 23] = [
     "unlock",
     "cd",
     "completion",
+    "describe",
 ];
 
 #[derive(Debug, Clone, PartialEq, Parser)]
@@ -59,9 +62,11 @@ struct Cli {
 #[allow(clippy::struct_excessive_bools)]
 pub struct CommonOptions {
     #[arg(long, global = true)]
+    /// Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings.
     pub json: bool,
 
     #[arg(long, global = true, action = ArgAction::Count)]
+    /// Increase diagnostic detail on stderr (repeatable).
     pub verbose: u8,
 
     #[arg(
@@ -71,36 +76,47 @@ pub struct CommonOptions {
         action = ArgAction::Version,
         required = false
     )]
+    /// Print the version.
     version: Option<bool>,
 
     #[arg(long, global = true, overrides_with = "no_hooks")]
+    /// Enable automatic command hooks.
     pub hooks: bool,
 
     #[arg(long = "no-hooks", global = true, overrides_with = "hooks")]
+    /// Disable automatic hooks; requires --allow-unsafe.
     pub no_hooks: bool,
 
     #[arg(long, global = true, overrides_with = "no_gh")]
+    /// Enable GitHub pull request lookup.
     pub gh: bool,
 
     #[arg(long = "no-gh", global = true, overrides_with = "gh")]
+    /// Disable GitHub lookup and network requests made by that lookup.
     pub no_gh: bool,
 
     #[arg(long, global = true)]
+    /// Show absolute paths in human list output.
     pub full_path: bool,
 
     #[arg(long, global = true)]
+    /// Acknowledge explicitly requested unsafe operations.
     pub allow_unsafe: bool,
 
     #[arg(long, global = true)]
+    /// Return an error if a post-hook fails; retain the completed operation result.
     pub strict_post_hooks: bool,
 
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..))]
+    /// Maximum time per hook in milliseconds (default: hooks.timeoutMs, 30000).
     pub hook_timeout_ms: Option<u64>,
 
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..))]
+    /// Maximum wait for the repository mutation lock in milliseconds (default: locks.timeoutMs, 15000).
     pub lock_timeout_ms: Option<u64>,
 
     #[arg(long, global = true)]
+    /// Override the interactive cd picker prompt.
     pub prompt: Option<String>,
 
     #[arg(
@@ -109,6 +125,7 @@ pub struct CommonOptions {
         action = ArgAction::Append,
         allow_hyphen_values = true
     )]
+    /// Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash.
     pub fzf_args: Vec<String>,
 }
 
@@ -137,131 +154,195 @@ pub enum Command {
         monitor: bool,
     },
     /// Show a single worktree status.
-    Status { branch: Option<String> },
+    Status {
+        /// Branch to inspect (default: current worktree).
+        branch: Option<String>,
+    },
     /// Print the absolute path for a branch worktree.
-    Path { branch: String },
+    Path {
+        /// Branch whose attached worktree path is printed.
+        branch: String,
+    },
     /// Reuse or create a worktree for a branch.
-    Switch { branch: String },
+    Switch {
+        /// Existing or new local branch; new branches start at the configured base.
+        branch: String,
+    },
     /// Create a branch and its worktree.
-    New { branch: Option<String> },
+    New {
+        /// New branch name (default: a generated wip name).
+        branch: Option<String>,
+    },
     /// Rename the current linked worktree branch.
-    Mv { new_branch: String },
+    Mv {
+        /// New branch name and managed directory for the current linked worktree.
+        new_branch: String,
+    },
     /// Delete a linked worktree and branch.
     Del {
+        /// Branch to delete (default: current linked worktree).
         branch: Option<String>,
         #[arg(long)]
+        /// Enable every deletion override; non-interactive use requires --allow-unsafe.
         force: bool,
         #[arg(long)]
+        /// Allow discarding dirty worktree files; non-interactive use requires --allow-unsafe.
         force_dirty: bool,
         #[arg(long)]
+        /// Allow commits ahead of upstream or unknown upstream state; non-interactive use requires --allow-unsafe.
         allow_unpushed: bool,
         #[arg(long)]
+        /// Allow deleting work not known to be merged; non-interactive use requires --allow-unsafe.
         force_unmerged: bool,
         #[arg(long)]
+        /// Allow deleting a protected worktree; non-interactive use requires --allow-unsafe.
         force_locked: bool,
     },
     /// Find or delete stale merged worktrees.
     Gone {
         #[arg(long, conflicts_with = "dry_run")]
+        /// Delete the eligible candidates (default: preview only).
         apply: bool,
         #[arg(long, conflicts_with = "apply")]
+        /// Only report eligible candidates (the default).
         dry_run: bool,
     },
     /// Find or move unmanaged worktrees into the managed root.
     Adopt {
         #[arg(long, conflicts_with = "dry_run")]
+        /// Move eligible external worktrees into the managed root (default: preview only).
         apply: bool,
         #[arg(long, conflicts_with = "apply")]
+        /// Only report proposed moves (the default).
         dry_run: bool,
     },
     /// Fetch and attach a remote branch.
-    Get { remote_branch: String },
+    Get {
+        /// Remote and branch separated by a slash, for example origin/feature/topic.
+        remote_branch: String,
+    },
     /// Extract the current primary branch into the managed root.
     Extract {
         #[arg(long, required = true)]
+        /// Extract the current primary branch; required.
         current: bool,
         #[arg(long)]
+        /// Temporarily stash dirty tracked and untracked changes for transfer.
         stash: bool,
     },
     /// Transfer linked worktree changes into the primary worktree.
     Absorb {
+        /// Branch to check out in the primary worktree and receive changes.
         branch: String,
         #[arg(long)]
+        /// Managed source worktree name when branch attachment is ambiguous.
         from: Option<String>,
         #[arg(long)]
+        /// Retain the exact transfer stash after successful application.
         keep_stash: bool,
         #[arg(long)]
+        /// Allow non-interactive transfer; also requires --allow-unsafe.
         allow_agent: bool,
     },
     /// Transfer primary worktree changes into a linked worktree.
     Unabsorb {
+        /// Current primary branch whose changes will be transferred.
         branch: String,
         #[arg(long)]
+        /// Managed target worktree name when branch attachment is ambiguous.
         to: Option<String>,
         #[arg(long)]
+        /// Retain the exact transfer stash after successful application.
         keep_stash: bool,
         #[arg(long)]
+        /// Allow non-interactive transfer; also requires --allow-unsafe.
         allow_agent: bool,
     },
     /// Check out a branch in the primary worktree.
     Use {
+        /// Local branch to check out in the primary worktree.
         branch: String,
         #[arg(long)]
+        /// Allow non-interactive checkout; also requires --allow-unsafe.
         allow_agent: bool,
         #[arg(long)]
+        /// Allow the branch to remain attached to a linked worktree.
         allow_shared: bool,
     },
     /// Run an argv command in a branch worktree.
     Exec {
+        /// Branch whose attached worktree becomes the child process cwd.
         branch: String,
         #[arg(last = true, required = true, num_args = 1.., allow_hyphen_values = true)]
+        /// Executable and arguments after --; passed directly without shell interpretation.
         argv: Vec<OsString>,
     },
     /// Invoke a named hook.
     Invoke {
+        /// Hook name, for example post-switch.
         hook: HookName,
         #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
+        /// Arguments after --, passed directly to the named hook.
         argv: Vec<OsString>,
     },
     /// Copy repository-relative paths into the target worktree.
     Copy {
         #[arg(required = true, num_args = 1..)]
+        /// Repository-relative files or directories to copy; no absolute paths or traversal.
         paths: Vec<PathBuf>,
     },
     /// Link repository-relative paths into the target worktree.
     Link {
         #[arg(required = true, num_args = 1..)]
+        /// Repository-relative files or directories to symlink; no absolute paths or traversal.
         paths: Vec<PathBuf>,
     },
     /// Protect a worktree with persistent lock metadata.
     Lock {
+        /// Branch to protect with persistent lock metadata.
         branch: String,
         #[arg(long)]
+        /// Lock owner (default: current user); use a unique session identifier for agents.
         owner: Option<String>,
         #[arg(long)]
+        /// Reason for protecting the worktree.
         reason: Option<String>,
     },
     /// Remove persistent lock metadata.
     Unlock {
+        /// Branch whose persistent lock is removed.
         branch: String,
         #[arg(long)]
+        /// Expected owner (default: current user).
         owner: Option<String>,
         #[arg(long)]
+        /// Remove the lock regardless of owner or record validity.
         force: bool,
     },
     /// Select a worktree path interactively.
     Cd,
     /// Generate or install shell completions.
     Completion {
+        /// Shell to generate completions for.
         shell: CompletionShell,
         #[arg(long)]
+        /// Atomically install the generated script instead of printing it.
         install: bool,
         #[arg(long)]
+        /// Installation path (default: the shell completion directory).
         path: Option<PathBuf>,
     },
+    /// Describe commands, arguments, effects, and the JSON output contract.
+    Describe {
+        /// Command to describe (default: all public commands).
+        command: Option<String>,
+    },
     /// Internal completion candidate provider.
-    #[command(skip)]
-    CompletionCandidates { kind: CompletionCandidateKind },
+    #[command(name = "__complete", hide = true)]
+    CompletionCandidates {
+        /// Candidate category requested by the shell integration.
+        kind: CompletionCandidateKind,
+    },
 }
 
 impl Command {
@@ -290,6 +371,7 @@ impl Command {
             Self::Unlock { .. } => "unlock",
             Self::Cd => "cd",
             Self::Completion { .. } => "completion",
+            Self::Describe { .. } => "describe",
             Self::CompletionCandidates { .. } => "__complete",
         }
     }
@@ -320,7 +402,7 @@ pub enum CompletionCandidateKind {
 }
 
 pub fn clap_command() -> clap::Command {
-    Cli::command()
+    contract::document_command(Cli::command())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -342,19 +424,14 @@ where
     T: Into<OsString> + Clone,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
-    if args.get(1).is_some_and(|value| value == "__complete") {
-        return parse_completion_candidates(&args);
-    }
-    let hooks_enabled = last_toggle(&args, "--hooks", "--no-hooks");
-    let gh_enabled = last_toggle(&args, "--gh", "--no-gh");
-    match Cli::try_parse_from(args) {
+    let hints = argument_hints(&args);
+    let parsed = clap_command()
+        .try_get_matches_from(&args)
+        .and_then(|matches| Cli::from_arg_matches(&matches));
+    match parsed {
         Ok(mut cli) => {
-            apply_toggle(
-                &mut cli.common.hooks,
-                &mut cli.common.no_hooks,
-                hooks_enabled,
-            );
-            apply_toggle(&mut cli.common.gh, &mut cli.common.no_gh, gh_enabled);
+            apply_toggle(&mut cli.common.hooks, &mut cli.common.no_hooks, hints.hooks);
+            apply_toggle(&mut cli.common.gh, &mut cli.common.no_gh, hints.gh);
             if let Err(error) = validate_common_options(&cli.common) {
                 let rendered = format!("error: {}\n", error.message);
                 return CliParseResult::Invalid { error, rendered };
@@ -365,10 +442,12 @@ where
             })
         }
         Err(error) => match error.kind() {
-            ErrorKind::DisplayHelp
-            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-            | ErrorKind::DisplayVersion
-            | ErrorKind::MissingSubcommand => CliParseResult::Display(error.to_string()),
+            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                CliParseResult::Display(error.to_string())
+            }
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand if args.len() == 1 => {
+                CliParseResult::Display(error.to_string())
+            }
             _ => CliParseResult::Invalid {
                 error: CliError::new(
                     if error.kind() == ErrorKind::InvalidSubcommand {
@@ -384,29 +463,6 @@ where
     }
 }
 
-fn parse_completion_candidates(args: &[OsString]) -> CliParseResult {
-    let parsed = args
-        .get(2)
-        .and_then(|value| value.to_str())
-        .and_then(|value| CompletionCandidateKind::from_str(value, true).ok());
-    if args.len() == 3
-        && let Some(kind) = parsed
-    {
-        return CliParseResult::Parsed(ParsedRequest {
-            common: CommonOptions::default(),
-            command: Command::CompletionCandidates { kind },
-        });
-    }
-    let error = CliError::new(
-        ErrorCode::InvalidArgument,
-        "internal completion provider requires exactly one valid candidate kind",
-    );
-    CliParseResult::Invalid {
-        rendered: format!("error: {}\n", error.message),
-        error,
-    }
-}
-
 fn validate_common_options(common: &CommonOptions) -> Result<(), CliError> {
     enforce_common_safety(CommonSafetyPolicy {
         hooks_disabled: common.no_hooks,
@@ -416,36 +472,91 @@ fn validate_common_options(common: &CommonOptions) -> Result<(), CliError> {
         .map_err(|error| CliError::new(ErrorCode::InvalidArgument, error.to_string()))
 }
 
-fn last_toggle(args: &[OsString], positive: &str, negative: &str) -> Option<bool> {
-    const VALUE_OPTIONS: [&str; 4] = [
-        "--hook-timeout-ms",
-        "--lock-timeout-ms",
-        "--prompt",
-        "--fzf-arg",
-    ];
+#[derive(Default, Debug)]
+pub struct ArgumentHints {
+    pub json: bool,
+    pub command: Option<String>,
+    hooks: Option<bool>,
+    gh: Option<bool>,
+}
 
-    let mut result = None;
-    let mut skip_value = false;
-    for arg in args.iter().skip(1) {
-        if arg.as_os_str() == std::ffi::OsStr::new("--") {
+/// Tolerant scan used only for error rendering and last-wins global toggles. Option arity comes
+/// from the same Clap definition as parsing; option values and child argv are never reinterpreted.
+pub fn argument_hints(args: &[OsString]) -> ArgumentHints {
+    let mut definition = Cli::command();
+    definition.build();
+    let mut command = &definition;
+    let mut hints = ArgumentHints::default();
+    let mut index = 1;
+    while let Some(token) = args.get(index) {
+        index += 1;
+        if token == OsStr::new("--") {
             break;
         }
-        if skip_value {
-            skip_value = false;
+        let Some(token) = token.to_str() else {
             continue;
-        }
-        let value = arg.to_string_lossy();
-        if VALUE_OPTIONS.contains(&value.as_ref()) {
-            skip_value = true;
-            continue;
-        }
-        if value == positive {
-            result = Some(true);
-        } else if value == negative {
-            result = Some(false);
+        };
+        if let Some(long) = token.strip_prefix("--") {
+            let (long, inline) = long
+                .split_once('=')
+                .map_or((long, false), |(key, _)| (key, true));
+            if let Some(arg) = command
+                .get_arguments()
+                .find(|arg| arg.get_long() == Some(long))
+            {
+                if !inline {
+                    record_hint(&mut hints, arg.get_id().as_str());
+                }
+                if arg.get_action().takes_values()
+                    && !inline
+                    && consumes_next_value(arg, args.get(index))
+                {
+                    index += 1;
+                }
+            }
+        } else if let Some(shorts) = token.strip_prefix('-').filter(|value| !value.is_empty()) {
+            let mut shorts = shorts.chars().peekable();
+            while let Some(short) = shorts.next() {
+                if let Some(arg) = command
+                    .get_arguments()
+                    .find(|arg| arg.get_short() == Some(short))
+                {
+                    record_hint(&mut hints, arg.get_id().as_str());
+                    if arg.get_action().takes_values() {
+                        if shorts.peek().is_none() && consumes_next_value(arg, args.get(index)) {
+                            index += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+        } else if hints.command.is_none() {
+            hints.command = Some(token.to_owned());
+            if let Some(subcommand) = definition.find_subcommand(token) {
+                command = subcommand;
+            }
         }
     }
-    result
+    hints
+}
+
+fn consumes_next_value(argument: &clap::Arg, next: Option<&OsString>) -> bool {
+    next.is_some_and(|value| {
+        argument.is_allow_hyphen_values_set()
+            || value == "-"
+            || !value.as_encoded_bytes().starts_with(b"-")
+    })
+}
+
+fn record_hint(hints: &mut ArgumentHints, id: &str) {
+    match id {
+        "json" => hints.json = true,
+        "hooks" => hints.hooks = Some(true),
+        "no_hooks" => hints.hooks = Some(false),
+        "gh" => hints.gh = Some(true),
+        "no_gh" => hints.gh = Some(false),
+        _ => {}
+    }
 }
 
 fn apply_toggle(positive: &mut bool, negative: &mut bool, enabled: Option<bool>) {
@@ -474,8 +585,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_all_twenty_three_command_variants() {
-        let cases: [&[&str]; 23] = [
+    fn parses_all_public_command_variants() {
+        let cases: [&[&str]; 24] = [
             &["init"],
             &["list"],
             &["status"],
@@ -499,6 +610,7 @@ mod tests {
             &["unlock", "main"],
             &["cd"],
             &["completion", "zsh"],
+            &["describe"],
         ];
 
         let parsed_names: Vec<_> = cases
@@ -754,7 +866,7 @@ mod tests {
     }
 
     #[test]
-    fn internal_completion_provider_parses_but_is_absent_from_public_clap_definition() {
+    fn internal_completion_provider_parses_but_is_hidden_from_help() {
         let parsed = request(&["__complete", "worktrees"]);
         assert_eq!(
             parsed.command,
@@ -765,6 +877,7 @@ mod tests {
         assert!(
             clap_command()
                 .get_subcommands()
+                .filter(|command| !command.is_hide_set())
                 .all(|command| command.get_name() != "__complete")
         );
     }

@@ -2607,18 +2607,15 @@ fn completion_candidates<R: ProcessRunner>(
             })
             .collect::<Vec<_>>(),
         CompletionCandidateKind::UseBranches => {
-            let mut branches = list_worktrees(git, &context.repo_root)?
-                .into_iter()
-                .filter_map(|worktree| worktree.branch)
-                .collect::<Vec<_>>();
-            if let Some(base) = config.git.base_branch.clone() {
-                branches.push(base);
-            }
-            branches.sort();
-            branches.dedup();
-            branches
-                .into_iter()
-                .map(|branch| sanitize(&branch))
+            let output = git
+                .execute_checked(
+                    &context.repo_root,
+                    ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+                )
+                .map_err(MapToCliError::map_to_cli_error)?;
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(sanitize)
                 .collect()
         }
         CompletionCandidateKind::RemoteBranches => {

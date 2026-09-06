@@ -6,7 +6,7 @@ pub mod ports;
 pub mod presentation;
 pub mod state;
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::{self, Write};
 
 use app::dispatch::{SystemBackend, dispatch};
@@ -21,8 +21,9 @@ where
     T: Into<OsString> + Clone,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
-    let json_requested = option_is_present(&args, "--json");
-    let command = command_hint(&args);
+    let hints = cli::argument_hints(&args);
+    let json_requested = hints.json;
+    let command = hints.command.unwrap_or_else(|| "vw".to_owned());
 
     match cli::parse_from(args) {
         CliParseResult::Parsed(request) => EntrypointOutcome::Dispatch(request),
@@ -98,46 +99,53 @@ fn write_process_output(output: &ProcessOutput) {
     }
 }
 
-fn option_is_present(args: &[OsString], expected: &str) -> bool {
-    args.iter()
-        .skip(1)
-        .take_while(|arg| arg.as_os_str() != OsStr::new("--"))
-        .any(|arg| arg.as_os_str() == OsStr::new(expected))
-}
-
-fn command_hint(args: &[OsString]) -> String {
-    const VALUE_OPTIONS: [&str; 4] = [
-        "--hook-timeout-ms",
-        "--lock-timeout-ms",
-        "--prompt",
-        "--fzf-arg",
-    ];
-
-    let mut index = 1;
-    while let Some(arg) = args.get(index) {
-        let arg = arg.to_string_lossy();
-        if arg == "--" {
-            break;
-        }
-        if VALUE_OPTIONS.contains(&arg.as_ref()) {
-            index += 2;
-            continue;
-        }
-        if arg.starts_with('-') {
-            index += 1;
-            continue;
-        }
-        return arg.into_owned();
-    }
-    "vw".into()
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
 
     use super::entrypoint;
     use crate::app::result::EntrypointOutcome;
+
+    #[test]
+    fn invalid_request_json_routing_skips_values_and_child_arguments() {
+        for args in [
+            vec!["vw", "--fzf-arg", "--json", "list", "--invalid"],
+            vec!["vw", "--fzf-arg=--json", "list", "--invalid"],
+            vec!["vw", "exec", "--invalid", "main", "--", "echo", "--json"],
+        ] {
+            let EntrypointOutcome::Rendered(output) = entrypoint(args.clone()) else {
+                panic!("expected error")
+            };
+            assert_eq!(output.exit_code, 3, "{args:?}");
+            assert_eq!(output.stdout, "", "{args:?}");
+            assert!(output.stderr.contains("INVALID_ARGUMENT"));
+        }
+        for args in [
+            vec!["vw", "--json"],
+            vec!["vw", "--prompt", "--json", "list"],
+            vec!["vw", "--hook-timeout-ms", "--json", "list"],
+            vec!["vw", "--fzf-arg", "--json", "--json", "list", "--invalid"],
+            vec![
+                "vw",
+                "exec",
+                "main",
+                "--json",
+                "--invalid",
+                "--",
+                "echo",
+                "--no-hooks",
+            ],
+        ] {
+            let EntrypointOutcome::Rendered(output) = entrypoint(args.clone()) else {
+                panic!("expected error")
+            };
+            assert_eq!(output.exit_code, 3, "{args:?}");
+            assert_eq!(output.stderr, "", "{args:?}");
+            let value: Value = serde_json::from_str(&output.stdout).unwrap();
+            assert_eq!(value["status"], "error");
+            assert_eq!(value["error"]["execution"]["phase"], "parse");
+        }
+    }
 
     #[test]
     fn entrypoint_returns_parsed_requests_for_dispatch() {

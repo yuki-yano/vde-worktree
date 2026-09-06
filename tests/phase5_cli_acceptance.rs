@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+mod support;
+
 use std::fs;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::os::unix::net::UnixListener;
@@ -91,13 +93,7 @@ fn git_ok(cwd: &Path, args: &[&str]) {
 }
 
 fn json(output: &Output) -> Value {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "stdout is not one JSON value: {error}; stdout={}; stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    })
+    support::parse_cli_json(&output.stdout)
 }
 
 fn assert_success(output: &Output) {
@@ -639,7 +635,8 @@ fn a024_completion_is_repo_independent_json_installable_and_node_free() {
                     "_vw_complete_use_branches() { _vw_dynamic_candidates use-branches }"
                 )
             );
-            assert!(script.contains("':branch:_vw_complete_use_branches'"));
+            assert!(script.lines().any(|line| line.starts_with("':branch -- ")
+                && line.contains(":_vw_complete_use_branches'")));
         }
     }
 
@@ -689,4 +686,56 @@ fn a024_completion_is_repo_independent_json_installable_and_node_free() {
     assert_eq!(unsupported["command"], "completion");
     assert_eq!(unsupported["repoRoot"], Value::Null);
     assert_eq!(unsupported["data"], Value::Null);
+}
+
+#[test]
+fn describe_and_help_cover_public_commands_without_repository_or_valid_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let config_dir = directory.path().join(".vde/worktree");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("config.yml"), "[invalid: yaml").unwrap();
+    for binary in [env!("CARGO_BIN_EXE_vw"), env!("CARGO_BIN_EXE_vde-worktree")] {
+        let output = Command::new(binary)
+            .current_dir(directory.path())
+            .args(["describe", "--json"])
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let value = json(&output);
+        assert!(value["repoRoot"].is_null());
+        let names = value["data"]["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|command| command["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vde_worktree::cli::COMMAND_NAMES);
+        for command in names {
+            let help = Command::new(binary)
+                .current_dir(directory.path())
+                .args([command, "--help"])
+                .output()
+                .unwrap();
+            assert_success(&help);
+            let text = String::from_utf8(help.stdout).unwrap();
+            assert!(text.contains("Examples:"), "{command}");
+            assert!(text.contains("Prerequisites:"), "{command}");
+            assert!(text.contains("Effects:"), "{command}");
+        }
+        let selected = Command::new(binary)
+            .current_dir(directory.path())
+            .args(["describe", "exec", "--json"])
+            .output()
+            .unwrap();
+        assert_success(&selected);
+        let selected = json(&selected);
+        assert_eq!(selected["data"]["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(selected["data"]["commands"][0]["name"], "exec");
+        let missing = Command::new(binary)
+            .current_dir(directory.path())
+            .args(["describe", "unknown", "--json"])
+            .output()
+            .unwrap();
+        assert_error(&missing, "UNKNOWN_COMMAND", 3);
+    }
 }

@@ -79,6 +79,23 @@ cd "$(vw cd)"
 
 `vw cd` は選択した worktree の path を出力するコマンドです。親シェルのディレクトリは直接変更できません。
 
+## コマンドの調べ方
+
+各コマンドの `--help` は、対象・前提・副作用・引数・実行例を説明します。
+機械向けの定義は、repository 内外から `describe` で取得できます。
+
+```bash
+vw describe --json
+vw describe exec --json
+```
+
+`describe` は実際の CLI 引数定義、制約、動的補完の候補種別、共通 envelope と各コマンドの結果の JSON Schema を返します。
+単一コマンドを指定すると応答を小さくできます。
+受け入れテストでは、実際の成功・部分成功の出力をこの schema と照合します。
+`fixtures/rust-migration/` は過去の移行時の記録で、現行の公開契約は `describe` で取得します。
+明示的な `--help` と `--version` は常にテキスト表示です。
+`vw --json` のように option だけでコマンドがない入力は、終了コード3の引数エラーになります。
+
 ## シェル補完
 
 コマンドから補完スクリプトを出力:
@@ -109,7 +126,9 @@ fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
 
-補完スクリプトはRust binaryだけで動的候補を取得します。
+補完スクリプトは Rust binary から動的候補を取得します。
+候補との接続にはコマンド名と引数名を使い、help の説明文には依存しません。
+`switch` と `use` の候補には、まだ worktree を持たないローカル branch も含みます。
 
 `--install`は同一filesystemのtransaction directoryを経由して補完ファイルをatomic replaceします。rename後のdirectory syncが失敗した場合は、errorを返す前に以前のfileを復元します。
 

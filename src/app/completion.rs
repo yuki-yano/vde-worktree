@@ -1,5 +1,6 @@
 #[cfg(unix)]
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
@@ -39,6 +40,7 @@ use serde_json::json;
 
 use crate::app::error_mapper::map_transaction_error;
 use crate::app::misc_commands::MiscCommandOutput;
+use crate::cli::contract::{COMPLETION_BINDINGS, CompletionBinding};
 use crate::cli::{Command, CompletionShell, ParsedRequest, clap_command};
 use crate::domain::error::{CliError, ErrorCode, ExecutionPhase};
 
@@ -57,8 +59,25 @@ pub fn execute_completion(
     Some(run_completion(*shell, *install, path.as_deref(), home))
 }
 
+fn completion_command() -> clap::Command {
+    // clap_complete currently emits hidden subcommands too. Build its public view from the
+    // actual argument/subcommand definitions, without exposing internal candidate requests.
+    let command = clap_command();
+    clap::Command::new("vw")
+        .version(env!("CARGO_PKG_VERSION"))
+        .disable_version_flag(true)
+        .propagate_version(true)
+        .args(command.get_arguments().cloned())
+        .subcommands(
+            command
+                .get_subcommands()
+                .filter(|command| !command.is_hide_set())
+                .cloned(),
+        )
+}
+
 pub fn generate_completion(shell: CompletionShell) -> Result<String, CliError> {
-    let mut command = clap_command();
+    let mut command = completion_command();
     let mut bytes = Vec::new();
     generate(
         match shell {
@@ -76,7 +95,7 @@ pub fn generate_completion(shell: CompletionShell) -> Result<String, CliError> {
         )
     })?;
     let script = match shell {
-        CompletionShell::Zsh => enhance_zsh(&generated),
+        CompletionShell::Zsh => enhance_zsh(&generated)?,
         CompletionShell::Fish => enhance_fish(&generated),
     };
     debug_assert!(!script.contains("node"));
@@ -1273,41 +1292,22 @@ fn completion_io(action: &str, path: &Path, error: &std::io::Error) -> CliError 
     ]))
 }
 
-fn enhance_zsh(generated: &str) -> String {
-    let generated = generated
+fn enhance_zsh(generated: &str) -> Result<String, CliError> {
+    let mut generated = generated
         .replacen("#compdef vw", "#compdef vw vde-worktree", 1)
-        .replace("'::branch:_default'", "'::branch:_vw_complete_worktrees'")
-        .replace("':branch:_default'", "':branch:_vw_complete_worktrees'")
-        .replace(
-            "':remote_branch:_default'",
-            "':remote_branch:_vw_complete_remote_branches'",
-        )
-        .replace("':hook:_default'", "':hook:_vw_complete_hooks'")
-        .replace(
-            "'--from=[]:FROM:_default'",
-            "'--from=[]:FROM:_vw_complete_managed_worktrees'",
-        )
-        .replace(
-            "'--to=[]:TO:_default'",
-            "'--to=[]:TO:_vw_complete_managed_worktrees'",
+        .replacen(
+            "_vw() {",
+            "_vw() {\n    local _vw_command_bin=\"$words[1]\"",
+            1,
         );
-    let generated = replace_zsh_command_argument(
-        &generated,
-        "use",
-        "':branch:_vw_complete_worktrees'",
-        "':branch:_vw_complete_use_branches'",
-    );
-    let generated = replace_zsh_command_argument(
-        &generated,
-        "unabsorb",
-        "':branch:_vw_complete_worktrees'",
-        "':branch:_vw_complete_use_branches'",
-    );
+    for binding in COMPLETION_BINDINGS {
+        generated = replace_zsh_command_argument(&generated, binding)?;
+    }
     let helpers = r#"
 # Dynamic candidates are emitted as shell-safe TSV by the Rust binary.
 _vw_dynamic_candidates() {
   local kind="$1" row value description
-  local vw_bin="${words[1]:-vw}"
+  local vw_bin="$_vw_command_bin"
   local -a values
   command -v "$vw_bin" >/dev/null 2>&1 || return 0
   while IFS=$'\t' read -r value description; do
@@ -1323,29 +1323,61 @@ _vw_complete_remote_branches() { _vw_dynamic_candidates remote-branches }
 _vw_complete_hooks() { _vw_dynamic_candidates hooks }
 _vw_complete_managed_worktrees() { _vw_dynamic_candidates managed-worktrees }
 "#;
-    generated.replacen('\n', &format!("\n{helpers}\n"), 1)
+    Ok(generated.replacen('\n', &format!("\n{helpers}\n"), 1))
 }
 
 fn replace_zsh_command_argument(
     generated: &str,
-    command: &str,
-    needle: &str,
-    replacement: &str,
-) -> String {
-    let marker = format!("({command})\n");
-    let Some(start) = generated.find(&marker) else {
-        return generated.to_owned();
+    binding: &CompletionBinding,
+) -> Result<String, CliError> {
+    let marker = format!("({})\n", binding.command);
+    let missing = || {
+        CliError::new(
+            ErrorCode::InternalError,
+            format!(
+                "completion binding missing: {} {}",
+                binding.command, binding.argument
+            ),
+        )
     };
+    let start = generated.find(&marker).ok_or_else(missing)?;
     let body_start = start + marker.len();
-    let Some(relative_end) = generated[body_start..].find("\n;;") else {
-        return generated.to_owned();
-    };
-    let end = body_start + relative_end;
-    let mut output = String::with_capacity(generated.len());
-    output.push_str(&generated[..body_start]);
-    output.push_str(&generated[body_start..end].replace(needle, replacement));
-    output.push_str(&generated[end..]);
-    output
+    let end = body_start + generated[body_start..].find("\n;;").ok_or_else(missing)?;
+    let mut matched = 0;
+    let body = generated[body_start..end]
+        .split_inclusive('\n')
+        .map(|line| {
+            let is_argument = binding.long.map_or_else(
+                || {
+                    let prefix = line
+                        .trim_start()
+                        .trim_start_matches('\'')
+                        .trim_start_matches(':');
+                    prefix.starts_with(&format!("{} -- ", binding.argument))
+                        || prefix.starts_with(&format!("{}:", binding.argument))
+                },
+                |long| line.contains(&format!("--{long}=[")),
+            );
+            if is_argument && let Some(offset) = line.rfind(":_default'") {
+                matched += 1;
+                let mut replacement = line.to_owned();
+                replacement.replace_range(
+                    offset..offset + ":_default'".len(),
+                    &format!(":_vw_complete_{}'", binding.kind.replace('-', "_")),
+                );
+                return replacement;
+            }
+            line.to_owned()
+        })
+        .collect::<String>();
+    if matched != 1 {
+        return Err(missing());
+    }
+    Ok(format!(
+        "{}{body}{}",
+        &generated[..body_start],
+        &generated[end..]
+    ))
 }
 
 fn enhance_fish(generated: &str) -> String {
@@ -1355,6 +1387,31 @@ fn enhance_fish(generated: &str) -> String {
         .map(|line| line.replacen("complete -c vw ", "complete -c vde-worktree ", 1))
         .collect::<Vec<_>>()
         .join("\n");
+    let mut dynamic = String::new();
+    for kind in ["worktrees", "use-branches", "remote-branches", "hooks"] {
+        let commands = COMPLETION_BINDINGS
+            .iter()
+            .filter(|binding| binding.long.is_none() && binding.kind == kind)
+            .map(|binding| binding.command)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = writeln!(
+            dynamic,
+            "    complete -c $__vw_bin -f -n '__fish_vw_using_subcommand {commands}' -a '(__vw_dynamic_candidates {kind})'"
+        );
+    }
+    for binding in COMPLETION_BINDINGS
+        .iter()
+        .filter(|binding| binding.long.is_some())
+    {
+        let _ = writeln!(
+            dynamic,
+            "    complete -c $__vw_bin -f -n '__fish_vw_using_subcommand {}' -l {} -a '(__vw_dynamic_candidates {})'",
+            binding.command,
+            binding.long.expect("option binding"),
+            binding.kind
+        );
+    }
     format!(
         r"{generated}
 {aliases}
@@ -1370,12 +1427,7 @@ function __vw_dynamic_candidates
 end
 
 for __vw_bin in vw vde-worktree
-    complete -c $__vw_bin -f -n '__fish_seen_subcommand_from status path switch del absorb exec lock unlock' -a '(__vw_dynamic_candidates worktrees)'
-    complete -c $__vw_bin -f -n '__fish_seen_subcommand_from use unabsorb' -a '(__vw_dynamic_candidates use-branches)'
-    complete -c $__vw_bin -f -n '__fish_seen_subcommand_from get' -a '(__vw_dynamic_candidates remote-branches)'
-    complete -c $__vw_bin -f -n '__fish_seen_subcommand_from invoke' -a '(__vw_dynamic_candidates hooks)'
-    complete -c $__vw_bin -f -n '__fish_seen_subcommand_from absorb' -l from -a '(__vw_dynamic_candidates managed-worktrees)'
-    complete -c $__vw_bin -f -n '__fish_seen_subcommand_from unabsorb' -l to -a '(__vw_dynamic_candidates managed-worktrees)'
+{dynamic}
 end
 "
     )
@@ -1394,6 +1446,7 @@ mod tests {
             assert!(!script.contains("node"));
             assert!(!script.contains("npm"));
             assert!(!script.contains("pnpm"));
+            assert!(!script.contains("Internal completion candidate provider"));
             assert!(script.contains("vw"));
             assert!(script.contains("vde-worktree"));
             assert!(script.contains("__complete"));
@@ -1419,12 +1472,51 @@ mod tests {
                 .split_once("\n;;")
                 .unwrap()
                 .0;
-            assert!(block.contains("':branch:_vw_complete_use_branches'"));
-            assert!(!block.contains("':branch:_vw_complete_worktrees'"));
+            assert!(block.lines().any(|line| line.starts_with("':branch -- ")
+                && line.contains(":_vw_complete_use_branches'")));
+            assert!(!block.lines().any(|line| line.starts_with("':branch -- ")
+                && line.contains(":_vw_complete_worktrees'")));
         }
         let fish = generate_completion(CompletionShell::Fish).unwrap();
-        assert!(fish.contains("__fish_seen_subcommand_from use unabsorb"));
+        assert!(fish.contains("__fish_vw_using_subcommand switch use unabsorb"));
         assert!(fish.contains("__vw_dynamic_candidates use-branches"));
+    }
+
+    #[test]
+    fn dynamic_bindings_survive_argument_help_with_punctuation() {
+        let mut command = clap_command().mut_subcommand("absorb", |command| {
+            command
+                .mut_arg("branch", |argument| {
+                    argument.help("Branch: user's [attached] worktree")
+                })
+                .mut_arg("from", |argument| {
+                    argument.help("Source: user's [managed] worktree")
+                })
+        });
+        let mut generated = Vec::new();
+        clap_complete::generate(
+            clap_complete::Shell::Zsh,
+            &mut command,
+            "vw",
+            &mut generated,
+        );
+        let script = enhance_zsh(&String::from_utf8(generated).unwrap()).unwrap();
+        let block = script
+            .split_once("(absorb)\n")
+            .unwrap()
+            .1
+            .split_once("\n;;")
+            .unwrap()
+            .0;
+        assert!(
+            block.lines().any(|line| line.starts_with("':branch -- ")
+                && line.contains(":_vw_complete_worktrees'"))
+        );
+        assert!(
+            block.lines().any(|line| line.contains("--from=[")
+                && line.contains(":_vw_complete_managed_worktrees'"))
+        );
+        assert!(script.contains("local _vw_command_bin=\"$words[1]\""));
     }
 
     #[test]
