@@ -45,6 +45,7 @@ _vw() {
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -76,6 +77,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -101,6 +103,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '(--gh)--monitor[Emit a lightweight internal snapshot for monitor integrations]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -125,6 +128,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -150,6 +154,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -175,6 +180,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -200,6 +206,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -225,6 +232,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -255,6 +263,7 @@ _arguments "${_arguments_options[@]}" : \
 '--force-unmerged[Allow deleting work not known to be merged; non-interactive use requires --allow-unsafe]' \
 '--force-locked[Allow deleting a protected worktree; non-interactive use requires --allow-unsafe]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -280,8 +289,8 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '(--dry-run)--apply[Delete the eligible candidates (default\: preview only)]' \
-'(--apply)--dry-run[Only report eligible candidates (the default)]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -306,8 +315,8 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '(--dry-run)--apply[Move eligible external worktrees into the managed root (default\: preview only)]' \
-'(--apply)--dry-run[Only report proposed moves (the default)]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -332,6 +341,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -359,6 +369,7 @@ _arguments "${_arguments_options[@]}" : \
 '--current[Extract the current primary branch; required]' \
 '--stash[Temporarily stash dirty tracked and untracked changes for transfer]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -386,6 +397,7 @@ _arguments "${_arguments_options[@]}" : \
 '--keep-stash[Retain the exact transfer stash after successful application]' \
 '--allow-agent[Allow non-interactive transfer; also requires --allow-unsafe]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -414,6 +426,7 @@ _arguments "${_arguments_options[@]}" : \
 '--keep-stash[Retain the exact transfer stash after successful application]' \
 '--allow-agent[Allow non-interactive transfer; also requires --allow-unsafe]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -441,6 +454,7 @@ _arguments "${_arguments_options[@]}" : \
 '--allow-agent[Allow non-interactive checkout; also requires --allow-unsafe]' \
 '--allow-shared[Allow the branch to remain attached to a linked worktree]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -466,6 +480,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -492,6 +507,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -518,6 +534,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -543,6 +560,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -570,6 +588,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -597,6 +616,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--force[Remove the lock regardless of owner or record validity]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -622,6 +642,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -648,6 +669,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--install[Atomically install the generated script instead of printing it]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -673,6 +695,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -698,6 +721,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -722,6 +746,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
@@ -734,6 +759,32 @@ _arguments "${_arguments_options[@]}" : \
 '--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
 '-h[Print help]' \
 '--help[Print help]' \
+&& ret=0
+;;
+(check)
+_arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::argv -- Lifecycle command and its arguments, for example -- del feature/topic:_default' \
 && ret=0
 ;;
 (help)
@@ -852,6 +903,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(check)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -894,6 +949,7 @@ _vw_commands() {
 'describe:Describe commands, arguments, effects, and the JSON output contract' \
 'context:Show execution context, effective configuration and setting sources' \
 'doctor:Diagnose repository setup, configuration and dependencies without changing state' \
+'check:Inspect a lifecycle mutation supplied after -- without applying it' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'vw commands' commands "$@"
@@ -912,6 +968,11 @@ _vw__subcmd__adopt_commands() {
 _vw__subcmd__cd_commands() {
     local commands; commands=()
     _describe -t commands 'vw cd commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__check_commands] )) ||
+_vw__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw check commands' commands "$@"
 }
 (( $+functions[_vw__subcmd__completion_commands] )) ||
 _vw__subcmd__completion_commands() {
@@ -992,6 +1053,7 @@ _vw__subcmd__help_commands() {
 'describe:Describe commands, arguments, effects, and the JSON output contract' \
 'context:Show execution context, effective configuration and setting sources' \
 'doctor:Diagnose repository setup, configuration and dependencies without changing state' \
+'check:Inspect a lifecycle mutation supplied after -- without applying it' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'vw help commands' commands "$@"
@@ -1010,6 +1072,11 @@ _vw__subcmd__help__subcmd__adopt_commands() {
 _vw__subcmd__help__subcmd__cd_commands() {
     local commands; commands=()
     _describe -t commands 'vw help cd commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__check_commands] )) ||
+_vw__subcmd__help__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help check commands' commands "$@"
 }
 (( $+functions[_vw__subcmd__help__subcmd__completion_commands] )) ||
 _vw__subcmd__help__subcmd__completion_commands() {

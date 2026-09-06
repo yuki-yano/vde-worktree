@@ -162,6 +162,35 @@ pub trait ApplicationBackend {
         context: &RepoContext,
     ) -> Result<Self::MutationPlan, CliError>;
 
+    /// Inspect only; never lock, recover, stage, invoke hooks or finalize state.
+    fn inspect_mutation(
+        &self,
+        request: &ParsedRequest,
+        context: &RepoContext,
+    ) -> Result<CommandOutput, CliError> {
+        if !matches!(request.command, Command::Init) && !self.is_initialized(&context.repo_root)? {
+            return Err(CliError::new(
+                ErrorCode::NotInitialized,
+                "Repository is not initialized. Run `vw init` first.",
+            ));
+        }
+        let plan = self.prepare_mutation(request, context)?;
+        let target = plan.hook_context(HookPhase::Post);
+        crate::app::preflight::output(
+            request,
+            &json!({"branch": target.branch, "path": target.worktree_path}),
+            &Value::Null,
+            &Value::Null,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    /// Called only under the mutation lock, before planning an actual operation.
+    fn recover_mutations(&self, _context: &RepoContext) -> Result<Vec<CliError>, CliError> {
+        Ok(Vec::new())
+    }
+
     /// Performs reversible staging required before a pre-hook, such as stashing dirty state.
     fn stage_mutation(
         &self,
@@ -246,7 +275,9 @@ where
     };
 
     let mut hook_warnings = Vec::new();
-    let result = if write_command {
+    let result = if write_command && request.is_preview() {
+        backend.inspect_mutation(request, context.as_ref().expect("mutation context"))
+    } else if write_command {
         let context = context
             .as_ref()
             .expect("write commands always resolve a context");
@@ -281,7 +312,7 @@ where
             output.warnings.extend(hook_warnings);
             render_output(request, context.as_ref(), output)
         }
-        Err(error) => render_error(request, context.as_ref(), &error),
+        Err(error) => render_error_with_warnings(request, context.as_ref(), &error, &hook_warnings),
     };
     append_verbose(request, context.as_ref(), config.as_ref(), &mut rendered);
     rendered
@@ -332,7 +363,7 @@ fn mutation_lock<B: ApplicationBackend>(
     context: Option<&RepoContext>,
     config: Option<&ResolvedConfig>,
 ) -> Result<Option<B::LockGuard>, CliError> {
-    if !is_write_command(&request.command) {
+    if !is_write_command(&request.command) || request.is_preview() {
         return Ok(None);
     }
     let context = context.expect("write commands resolve a context");
@@ -378,6 +409,7 @@ fn execute_mutation_pipeline<B>(
 where
     B: ApplicationBackend,
 {
+    hook_warnings.extend(backend.recover_mutations(context)?);
     let plan = backend
         .prepare_mutation(request, context)
         .map_err(|error| {
@@ -526,7 +558,7 @@ fn render_output(
     if let Some(error) = &output.partial_error {
         if request.common.json {
             let mut envelope = PartialErrorEnvelope::new(
-                request.command.name(),
+                request.output_command(),
                 context.map(|value| value.repo_root.to_string_lossy().into_owned()),
                 output.data,
                 ErrorPayload::from(error),
@@ -554,7 +586,7 @@ fn render_output(
     }
     if request.common.json {
         let mut envelope = SuccessEnvelope::new(
-            request.command.name(),
+            request.output_command(),
             context.map(|value| value.repo_root.to_string_lossy().into_owned()),
             output.data,
         );
@@ -580,12 +612,22 @@ fn render_error(
     context: Option<&RepoContext>,
     error: &CliError,
 ) -> ProcessOutput {
+    render_error_with_warnings(request, context, error, &[])
+}
+
+fn render_error_with_warnings(
+    request: &ParsedRequest,
+    context: Option<&RepoContext>,
+    error: &CliError,
+    warnings: &[CliError],
+) -> ProcessOutput {
     if request.common.json {
-        let envelope = ErrorEnvelope::new(
-            request.command.name(),
+        let mut envelope = ErrorEnvelope::new(
+            request.output_command(),
             context.map(|value| value.repo_root.to_string_lossy().into_owned()),
             ErrorPayload::from(error),
         );
+        envelope.warnings = warnings.iter().map(ErrorPayload::from).collect();
         return match to_stdout_json(&envelope) {
             Ok(stdout) => ProcessOutput::stdout(error.exit_code(), stdout),
             Err(serialization_error) => {
@@ -596,10 +638,12 @@ fn render_error(
     if error.code == ErrorCode::Cancelled {
         return ProcessOutput::stdout(error.exit_code(), "");
     }
-    ProcessOutput::stderr(
-        error.exit_code(),
-        format!("[{}] {}\n", error.code, error.message),
-    )
+    let mut stderr = String::new();
+    for warning in warnings {
+        let _ = writeln!(stderr, "Warning: {}", warning.message);
+    }
+    let _ = writeln!(stderr, "[{}] {}", error.code, error.message);
+    ProcessOutput::stderr(error.exit_code(), stderr)
 }
 
 #[derive(Debug)]
@@ -622,6 +666,7 @@ enum SystemMutationCommandPlan {
 #[derive(Debug)]
 pub struct SystemMutationPlan {
     command: SystemMutationCommandPlan,
+    inspection_evidence: Value,
     hooks: MutationHookContexts,
     requires_hooks: bool,
 }
@@ -735,6 +780,7 @@ impl SystemBackend {
         &self,
         context: &RepoContext,
         config: &ResolvedConfig,
+        gh_enabled: bool,
     ) -> Result<WorktreeSnapshot, CliError> {
         let base_branch = resolve_base_branch(
             &self.git,
@@ -745,7 +791,7 @@ impl SystemBackend {
         .map_err(MapToCliError::map_to_cli_error)?;
         SnapshotCollector::new(&self.git, &self.gh)
             .without_lifecycle_observations()
-            .collect(&context.repo_root, &base_branch, false)
+            .collect(&context.repo_root, &base_branch, gh_enabled)
             .map_err(MapToCliError::map_to_cli_error)
     }
     fn selected_mutation_snapshot(
@@ -753,6 +799,7 @@ impl SystemBackend {
         context: &RepoContext,
         config: &ResolvedConfig,
         branch: Option<&str>,
+        gh_enabled: bool,
     ) -> Result<WorktreeSnapshot, CliError> {
         let registry = crate::app::snapshot::read_registry(&self.git, &context.repo_root)
             .map_err(MapToCliError::map_to_cli_error)?;
@@ -773,7 +820,7 @@ impl SystemBackend {
             .collect_registry(
                 &context.repo_root,
                 &base,
-                false,
+                gh_enabled,
                 std::slice::from_ref(target),
             )
             .map_err(MapToCliError::map_to_cli_error)
@@ -1138,23 +1185,121 @@ impl ApplicationBackend for SystemBackend {
         Ok(ApplicationHookResult::Continue)
     }
 
+    fn recover_mutations(&self, context: &RepoContext) -> Result<Vec<CliError>, CliError> {
+        let recovered =
+            recover_pending_metadata_transactions(&context.repo_root).map_err(|error| {
+                map_metadata_transaction_error(&error).at_phase(
+                    ExecutionPhase::Recover,
+                    ExecutionState::RecoveryRequired,
+                    &[],
+                )
+            })?;
+        Ok(recovered
+            .into_iter()
+            .map(|outcome| {
+                CliError::new(
+                    ErrorCode::MetadataRecoveryCompleted,
+                    "completed pending metadata recovery before planning the requested operation",
+                )
+                .with_details(BTreeMap::from([(
+                    "recoveryOutcome".to_owned(),
+                    json!(outcome),
+                )]))
+                .at_phase(
+                    ExecutionPhase::Recover,
+                    ExecutionState::Applied,
+                    &["recoverMetadata"],
+                )
+            })
+            .collect())
+    }
+
+    fn inspect_mutation(
+        &self,
+        request: &ParsedRequest,
+        context: &RepoContext,
+    ) -> Result<CommandOutput, CliError> {
+        let pending = crate::state::metadata_transaction::inspect_pending_metadata_transactions(
+            &context.repo_root,
+        )
+        .map_err(|error| map_metadata_transaction_error(&error))?;
+        let mut errors = Vec::new();
+        if !matches!(request.command, Command::Init) && !self.is_initialized(&context.repo_root)? {
+            errors.push(CliError::new(
+                ErrorCode::NotInitialized,
+                "Repository is not initialized. Run `vw init` first.",
+            ));
+        }
+        if !pending.is_empty() {
+            errors.push(CliError::new(
+                ErrorCode::SafetyRejected,
+                "pending metadata recovery must be resolved before this plan can be used",
+            ));
+        }
+        let mut target = Value::Null;
+        let mut planned_result = Value::Null;
+        let evidence;
+        let mut native_preview = None;
+        match self.prepare_mutation(request, context) {
+            Ok(plan) => {
+                let hook = plan.hook_context(HookPhase::Post);
+                if let Some(path) = &hook.worktree_path {
+                    crate::app::target::ensure_path(path)?;
+                }
+                target = json!({"branch": hook.branch, "path": hook.worktree_path});
+                evidence = plan.inspection_evidence;
+                match &plan.command {
+                    SystemMutationCommandPlan::Gone(plan) => {
+                        let result = crate::app::mutations_delete::gone_dry_run_result(plan);
+                        planned_result = json!(result);
+                        native_preview =
+                            Some(mutation_command_output(SystemMutationResult::Gone(result))?);
+                    }
+                    SystemMutationCommandPlan::Adopt(plan) => {
+                        let result = crate::app::mutations_create::adopt_dry_run_result(plan);
+                        planned_result = json!(result);
+                        native_preview = Some(mutation_command_output(
+                            SystemMutationResult::Adopt(result),
+                        )?);
+                    }
+                    _ => {}
+                }
+            }
+            Err(mut error) => {
+                evidence = error
+                    .details
+                    .remove("preflightEvidence")
+                    .unwrap_or(Value::Null);
+                errors.push(error);
+            }
+        }
+        if !request.common.dry_run
+            && errors.is_empty()
+            && let Some(output) = native_preview
+        {
+            return Ok(output);
+        }
+        crate::app::preflight::output(
+            request,
+            &target,
+            &planned_result,
+            &evidence,
+            pending,
+            errors,
+        )
+    }
+
     #[allow(clippy::too_many_lines)]
     fn prepare_mutation(
         &self,
         request: &ParsedRequest,
         context: &RepoContext,
     ) -> Result<Self::MutationPlan, CliError> {
-        recover_pending_metadata_transactions(&context.repo_root).map_err(|error| {
-            map_metadata_transaction_error(&error).at_phase(
-                ExecutionPhase::Recover,
-                ExecutionState::RecoveryRequired,
-                &[],
-            )
-        })?;
         let config = self.mutation_config(context)?;
         let managed_root =
             resolve_managed_worktree_root(&context.repo_root, &config.paths.worktree_root);
         let action = request.command.name();
+        let mut inspection_evidence = Value::Null;
         let (command, hooks, requires_hooks) = match &request.command {
             Command::Init => {
                 let plan = prepare_init(context, managed_root)?;
@@ -1266,7 +1411,7 @@ impl ApplicationBackend for SystemBackend {
                 (SystemMutationCommandPlan::Get(plan), hooks, true)
             }
             Command::Adopt { apply, .. } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let snapshot = self.mutation_snapshot(context, &config, false)?;
                 let plan = prepare_adopt(&context.repo_root, &managed_root, &snapshot, !apply)?;
                 let target = plan.hook_target();
                 let hooks = mutation_hooks(
@@ -1287,7 +1432,7 @@ impl ApplicationBackend for SystemBackend {
                 )
             }
             Command::Mv { new_branch } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let snapshot = self.mutation_snapshot(context, &config, false)?;
                 let target_path = managed_root.join(new_branch);
                 let plan = prepare_mv(
                     &self.git,
@@ -1318,7 +1463,7 @@ impl ApplicationBackend for SystemBackend {
                 (SystemMutationCommandPlan::Mv(plan), hooks, requires_hooks)
             }
             Command::Extract { stash, .. } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let snapshot = self.mutation_snapshot(context, &config, false)?;
                 let base_branch = snapshot.base_branch.as_deref().ok_or_else(|| {
                     CliError::new(ErrorCode::InvalidArgument, "base branch is unavailable")
                 })?;
@@ -1365,7 +1510,7 @@ impl ApplicationBackend for SystemBackend {
                 allow_agent,
                 allow_shared,
             } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
+                let snapshot = self.mutation_snapshot(context, &config, false)?;
                 let invocation = if self.terminal.stdout_tty && self.terminal.stderr_tty {
                     UseInvocation::Interactive
                 } else {
@@ -1408,25 +1553,43 @@ impl ApplicationBackend for SystemBackend {
                 force_unmerged,
                 force_locked,
             } => {
-                let snapshot =
-                    self.selected_mutation_snapshot(context, &config, branch.as_deref())?;
+                let snapshot = self.selected_mutation_snapshot(
+                    context,
+                    &config,
+                    branch.as_deref(),
+                    request.common.gh_enabled(config.github.enabled),
+                )?;
+                let force = DeleteForceOptions {
+                    force_dirty: *force || *force_dirty,
+                    allow_unpushed: *force || *allow_unpushed,
+                    force_unmerged: *force || *force_unmerged,
+                    force_locked: *force || *force_locked,
+                };
+                inspection_evidence = crate::app::preflight::deletion_evidence(
+                    &context.repo_root,
+                    &managed_root,
+                    &snapshot,
+                    force,
+                    false,
+                )?;
                 let plan = prepare_del(
                     &context.repo_root,
                     &context.current_worktree_root,
                     &managed_root,
                     &snapshot,
                     branch.as_deref(),
-                    DeleteForceOptions {
-                        force_dirty: *force || *force_dirty,
-                        allow_unpushed: *force || *allow_unpushed,
-                        force_unmerged: *force || *force_unmerged,
-                        force_locked: *force || *force_locked,
-                    },
+                    force,
                     DeleteInvocation {
                         interactive: self.terminal.stdout_tty && self.terminal.stderr_tty,
                         allow_unsafe: request.common.allow_unsafe,
                     },
-                )?;
+                )
+                .map_err(|mut error| {
+                    error
+                        .details
+                        .insert("preflightEvidence".to_owned(), inspection_evidence.clone());
+                    error
+                })?;
                 let hooks = mutation_hooks(
                     self.terminal,
                     &context.repo_root,
@@ -1440,8 +1603,25 @@ impl ApplicationBackend for SystemBackend {
                 (SystemMutationCommandPlan::Del(Box::new(plan)), hooks, true)
             }
             Command::Gone { apply, .. } => {
-                let snapshot = self.mutation_snapshot(context, &config)?;
-                let plan = prepare_gone(&context.repo_root, &managed_root, &snapshot, !apply)?;
+                let snapshot = self.mutation_snapshot(
+                    context,
+                    &config,
+                    request.common.gh_enabled(config.github.enabled),
+                )?;
+                inspection_evidence = crate::app::preflight::deletion_evidence(
+                    &context.repo_root,
+                    &managed_root,
+                    &snapshot,
+                    DeleteForceOptions::default(),
+                    true,
+                )?;
+                let plan = prepare_gone(&context.repo_root, &managed_root, &snapshot, !apply)
+                    .map_err(|mut error| {
+                        error
+                            .details
+                            .insert("preflightEvidence".to_owned(), inspection_evidence.clone());
+                        error
+                    })?;
                 let hooks = mutation_hooks(
                     self.terminal,
                     &context.repo_root,
@@ -1577,6 +1757,7 @@ impl ApplicationBackend for SystemBackend {
         };
         Ok(SystemMutationPlan {
             command,
+            inspection_evidence,
             hooks,
             requires_hooks,
         })
@@ -1584,7 +1765,7 @@ impl ApplicationBackend for SystemBackend {
 
     fn apply_mutation(
         &self,
-        _request: &ParsedRequest,
+        request: &ParsedRequest,
         context: &RepoContext,
         plan: &Self::MutationPlan,
         stage: Self::MutationStage,
@@ -1642,8 +1823,12 @@ impl ApplicationBackend for SystemBackend {
             }
             SystemMutationCommandPlan::Del(plan) => {
                 let config = self.mutation_config(context)?;
-                let latest =
-                    self.selected_mutation_snapshot(context, &config, Some(&plan.branch))?;
+                let latest = self.selected_mutation_snapshot(
+                    context,
+                    &config,
+                    Some(&plan.branch),
+                    request.common.gh_enabled(config.github.enabled),
+                )?;
                 let revalidated = revalidate_del(plan, &latest)?;
                 apply_del_git(&self.git, revalidated)
                     .map(Box::new)
@@ -1652,7 +1837,12 @@ impl ApplicationBackend for SystemBackend {
             SystemMutationCommandPlan::Gone(plan) => {
                 let snapshots = |candidate: &crate::app::mutations_delete::GoneCandidate| {
                     let config = self.mutation_config(context)?;
-                    self.selected_mutation_snapshot(context, &config, Some(&candidate.branch))
+                    self.selected_mutation_snapshot(
+                        context,
+                        &config,
+                        Some(&candidate.branch),
+                        request.common.gh_enabled(config.github.enabled),
+                    )
                 };
                 Ok(SystemMutationResult::GoneGitApplied(Box::new(
                     apply_gone_git(&self.git, &snapshots, plan),

@@ -6,6 +6,7 @@ pub mod misc_commands;
 pub mod mutations_change;
 pub mod mutations_create;
 pub mod mutations_delete;
+pub mod preflight;
 pub mod read_commands;
 pub mod result;
 pub mod snapshot;

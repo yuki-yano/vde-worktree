@@ -27,6 +27,7 @@ pub enum PrStatus {
 pub struct PrState {
     pub status: Option<PrStatus>,
     pub url: Option<String>,
+    pub head_oid: Option<String>,
     pub diagnostic: Option<PrDiagnostic>,
 }
 
@@ -40,6 +41,8 @@ pub enum PrUnavailableReason {
     CommandFailed,
     TimedOut,
     InvalidResponse,
+    HeadMismatch,
+    HeadUnavailable,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -63,6 +66,7 @@ impl PrState {
         Self {
             status: Some(PrStatus::Unknown),
             url: None,
+            head_oid: None,
             diagnostic: Some(PrDiagnostic {
                 reason,
                 message,
@@ -75,6 +79,7 @@ impl PrState {
         Self {
             status: Some(PrStatus::None),
             url: None,
+            head_oid: None,
             diagnostic: None,
         }
     }
@@ -172,6 +177,7 @@ mod tests {
                 pr: PrState {
                     status: None,
                     url: None,
+                    head_oid: None,
                     diagnostic: None,
                 },
                 upstream: WorktreeUpstreamState {

@@ -159,6 +159,44 @@ The unused `locks.staleLockTTLSeconds` setting has been removed and is rejected 
 Repository locking uses the operating system's lock lifetime; `locks.timeoutMs` controls waiting.
 Initialization requires the hooks, logs, locks and state directories created by `vw init`.
 
+## Read-only Preflight and Deletion Evidence
+
+```bash
+vw check --json -- del feature/topic
+vw del feature/topic --dry-run --json
+vw check --json -- gone --apply
+vw new feature/topic --dry-run --json
+```
+
+`check -- COMMAND ...` and `--dry-run` support the 14 lifecycle commands: `init`, `new`,
+`switch`, `get`, `adopt`, `mv`, `del`, `gone`, `extract`, `absorb`, `unabsorb`, `use`, `lock`
+and `unlock`. Place output and context options before `check` or before its `--` separator.
+Inspection never invokes hooks, stages a stash, acquires the repository mutation lock, saves
+metadata, refreshes the Git index, or runs automatic recovery. Enabled GitHub lookup and `get`'s
+remote-branch probe can still access the network; `--no-gh` disables the former.
+
+The result includes `allowed`, `target`, intended `effects`, `rejections`, `pendingRecoveries`
+and `requiresRevalidation: true`. Batch candidates appear in `plannedResult`. Deletion `evidence`
+contains the exact snapshot used by preflight and all independently observable rejection reasons.
+A blocked inspection retains this data and returns the first rejection's nonzero exit code.
+Inspection does not reserve a worktree or predict hook/process success. Apply revalidates current
+state. To reuse the generated branch name from `new --dry-run`, supply that name explicitly.
+
+Plain `gone` and `adopt` remain batch previews and also use the read-only path. `--dry-run` requests
+the detailed inspection format; default previews and `--apply` keep their command result format.
+Pending recovery blocks inspection without changing journals. Actual lifecycle operations recover
+under the repository lock before planning. Completed recoveries are retained in structured
+`METADATA_RECOVERY_COMPLETED` warnings even if the requested operation then fails; an interrupted
+recovery batch also reports `error.details.completedRecoveries`.
+
+`list`, `status`, `del` and `gone` use the same enabled GitHub policy. A merged PR permits a positive
+`merged.byPR` only when `pr.headOid` matches the current worktree HEAD. Missing or mismatched PR
+heads produce `head_unavailable` or `head_mismatch` diagnostics and `byPR: null`. Deletion refreshes
+this evidence after the pre-hook. A verified PR merge can authorize branch deletion after a squash
+merge; Git ancestry need not be true. `del` additionally rejects unpushed or unknown upstream
+state unless explicitly overridden. `gone` does not use upstream-ahead as a guard. Both retain
+their dirty, lock, merged, managed-path and unambiguous-branch checks.
+
 ## Shell Completion
 
 Generate from command:
@@ -231,6 +269,7 @@ the command runs; concurrent changes can therefore make worktree creation fail a
 ## Global Options
 
 - `--json`: machine-readable single-object output
+- `--dry-run`: inspect a lifecycle operation without applying it
 - `-C <directory>` / `--directory <directory>`: resolve the invocation from this directory
 - `--worktree <path>`: explicit target for status, path, exec, copy and link
 - `--verbose`: context/result diagnostics; repeat to include effective configuration

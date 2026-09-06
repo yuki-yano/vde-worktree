@@ -34,6 +34,7 @@ pub enum ErrorCode {
     InvalidArgument,
     InvalidConfig,
     InvalidMetadata,
+    MetadataRecoveryCompleted,
     UnknownCommand,
     SafetyRejected,
     UnsafeFlagRequired,
@@ -107,7 +108,9 @@ impl ErrorCode {
             }
             Self::GitCommandFailed => ExitCode::GitCommandFailed.value(),
             Self::ChildProcessFailed => ExitCode::ChildProcessFailed.value(),
-            Self::InternalError => ExitCode::InternalError.value(),
+            Self::InternalError | Self::MetadataRecoveryCompleted => {
+                ExitCode::InternalError.value()
+            }
             Self::Cancelled => ExitCode::Cancelled.value(),
         }
     }

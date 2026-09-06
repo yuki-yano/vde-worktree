@@ -26,6 +26,7 @@ src/app/mod.rs
 src/app/mutations_change.rs
 src/app/mutations_create.rs
 src/app/mutations_delete.rs
+src/app/preflight.rs
 src/app/read_commands.rs
 src/app/result.rs
 src/app/snapshot.rs

@@ -241,6 +241,12 @@ pub struct MetadataRenameRequest<'a> {
 
 #[derive(Debug, Error)]
 pub enum MetadataTransactionError {
+    #[error("metadata recovery stopped after completed transactions: {source}")]
+    RecoveryBatch {
+        completed: Vec<MetadataRecoveryOutcome>,
+        #[source]
+        source: Box<MetadataTransactionError>,
+    },
     #[error(transparent)]
     LifecycleObservation(#[from] LifecycleError),
     #[error("metadata rename requires distinct non-empty branch names")]
@@ -659,58 +665,89 @@ pub fn recover_pending_metadata_transactions(
 
     let mut outcomes = Vec::with_capacity(directories.len());
     for directory in directories {
-        if !directory.is_dir() {
-            continue;
+        let result = (|| {
+            let metadata = fs::symlink_metadata(&directory)
+                .map_err(|source| io_error(directory.clone(), source))?;
+            if !metadata.is_dir() && !metadata.file_type().is_symlink() {
+                return Ok(None);
+            }
+            recover_metadata_directory(repo_root, &directory).map(Some)
+        })();
+        match result {
+            Ok(Some(outcome)) => outcomes.push(outcome),
+            Ok(None) => {}
+            Err(source) if outcomes.is_empty() => return Err(source),
+            Err(source) => {
+                return Err(MetadataTransactionError::RecoveryBatch {
+                    completed: outcomes,
+                    source: Box::new(source),
+                });
+            }
         }
-        let paths = TransactionPaths::from_directory(directory.clone());
-        let journal_read = read_json_record::<MetadataTransactionJournal>(&paths.journal);
-        let journal = match journal_read.state {
-            JsonRecordState::Missing => {
-                let id = directory
-                    .file_name()
-                    .map_or_else(String::new, |value| value.to_string_lossy().into_owned());
-                cleanup_transaction_directory(&directory)?;
-                outcomes.push(MetadataRecoveryOutcome {
-                    transaction_id: id,
-                    resolution: MetadataRecoveryResolution::OrphanRemoved,
-                });
-                continue;
-            }
-            JsonRecordState::Invalid { reason } => {
-                return Err(MetadataTransactionError::InvalidJournal {
-                    path: paths.journal,
-                    reason,
-                });
-            }
-            JsonRecordState::Valid(journal) => journal,
-        };
-        validate_journal(&journal, &directory)?;
-        revalidate_journal_target(repo_root, &journal)?;
-        let resolution = match journal.phase {
-            JournalPhase::Prepared | JournalPhase::BranchRenamed | JournalPhase::WorktreeMoved => {
-                match reconcile_git_transition(repo_root, &journal)? {
-                    GitRecoveryDirection::Rollback => {
-                        rollback_prepared(repo_root, &journal, &paths)?;
-                        MetadataRecoveryResolution::RolledBack
-                    }
-                    GitRecoveryDirection::Forward => {
-                        finish_forward(repo_root, &journal, &paths)?;
-                        MetadataRecoveryResolution::Committed
-                    }
-                }
-            }
-            JournalPhase::CommitForward | JournalPhase::Committed => {
-                finish_forward(repo_root, &journal, &paths)?;
-                MetadataRecoveryResolution::Committed
-            }
-        };
-        cleanup_transaction_directory(&directory)?;
-        outcomes.push(MetadataRecoveryOutcome {
-            transaction_id: journal.transaction_id,
-            resolution,
-        });
     }
     Ok(outcomes)
+}
+
+fn recover_metadata_directory(
+    repo_root: &Path,
+    directory: &Path,
+) -> Result<MetadataRecoveryOutcome, MetadataTransactionError> {
+    let paths = TransactionPaths::from_directory(directory.to_path_buf());
+    if fs::symlink_metadata(directory)
+        .map_err(|source| io_error(directory.to_path_buf(), source))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(MetadataTransactionError::InvalidJournal {
+            path: directory.to_path_buf(),
+            reason: "transaction directory is a symlink".to_owned(),
+        });
+    }
+    let journal_read = read_json_record::<MetadataTransactionJournal>(&paths.journal);
+    let journal = match journal_read.state {
+        JsonRecordState::Missing => {
+            let id = directory
+                .file_name()
+                .map_or_else(String::new, |value| value.to_string_lossy().into_owned());
+            cleanup_transaction_directory(directory)?;
+            return Ok(MetadataRecoveryOutcome {
+                transaction_id: id,
+                resolution: MetadataRecoveryResolution::OrphanRemoved,
+            });
+        }
+        JsonRecordState::Invalid { reason } => {
+            return Err(MetadataTransactionError::InvalidJournal {
+                path: paths.journal,
+                reason,
+            });
+        }
+        JsonRecordState::Valid(journal) => journal,
+    };
+    validate_journal(&journal, directory)?;
+    revalidate_journal_target(repo_root, &journal)?;
+    let resolution = match journal.phase {
+        JournalPhase::Prepared | JournalPhase::BranchRenamed | JournalPhase::WorktreeMoved => {
+            match reconcile_git_transition(repo_root, &journal)? {
+                GitRecoveryDirection::Rollback => {
+                    rollback_prepared(repo_root, &journal, &paths)?;
+                    MetadataRecoveryResolution::RolledBack
+                }
+                GitRecoveryDirection::Forward => {
+                    finish_forward(repo_root, &journal, &paths)?;
+                    MetadataRecoveryResolution::Committed
+                }
+            }
+        }
+        JournalPhase::CommitForward | JournalPhase::Committed => {
+            finish_forward(repo_root, &journal, &paths)?;
+            MetadataRecoveryResolution::Committed
+        }
+    };
+    cleanup_transaction_directory(directory)?;
+    Ok(MetadataRecoveryOutcome {
+        transaction_id: journal.transaction_id,
+        resolution,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -56,6 +56,8 @@ pub struct DelPlan {
     pub branch: String,
     pub path: PathBuf,
     pub force: DeleteForceOptions,
+    /// Exact HEAD certified by the latest merged PR; bound again during revalidation.
+    verified_pr_head: Option<String>,
     metadata: MetadataFingerprint,
 }
 
@@ -133,6 +135,7 @@ pub fn prepare_del(
         branch: branch.to_owned(),
         path: target.path.clone(),
         force,
+        verified_pr_head: verified_pr_head(target),
         metadata,
     })
 }
@@ -165,7 +168,9 @@ pub fn revalidate_del(
             [("branch", json!(plan.branch)), ("path", json!(plan.path))],
         ));
     }
-    Ok(RevalidatedDelPlan(plan.clone()))
+    let mut refreshed = plan.clone();
+    refreshed.verified_pr_head = verified_pr_head(target);
+    Ok(RevalidatedDelPlan(refreshed))
 }
 
 /// Applies only the Git portion of `del`. A failure includes the completed phases, allowing the
@@ -194,7 +199,11 @@ where
         .map_err(|error| deletion_failure(error, "worktreeRemove", progress))?;
     progress.worktree_removed = true;
 
-    let delete_mode = if plan.force.any() { "-D" } else { "-d" };
+    let delete_mode = if plan.force.any() || plan.verified_pr_head.is_some() {
+        "-D"
+    } else {
+        "-d"
+    };
     let branch_args = [
         OsString::from("branch"),
         OsString::from(delete_mode),
@@ -353,7 +362,7 @@ pub fn prepare_gone(
 
 pub fn gone_dry_run_result(plan: &GonePlan) -> GoneResult {
     GoneResult {
-        dry_run: plan.dry_run,
+        dry_run: true,
         candidates: candidate_branches(plan),
         deleted: Vec::new(),
         failed: Vec::new(),
@@ -501,8 +510,15 @@ fn revalidate_gone_candidate(
         branch: candidate.branch.clone(),
         path: candidate.path.clone(),
         force: DeleteForceOptions::default(),
+        verified_pr_head: verified_pr_head(target),
         metadata,
     }))
+}
+
+fn verified_pr_head(target: &WorktreeStatus) -> Option<String> {
+    (target.merged.by_pr == Some(true)
+        && target.pr.head_oid.as_deref() == Some(target.head.as_str()))
+    .then(|| target.head.clone())
 }
 
 fn validate_delete_target<'a>(
@@ -538,18 +554,69 @@ fn validate_delete_target<'a>(
     Ok(branch)
 }
 
+/// Enumerate independently observable rejection reasons without mutating metadata.
+pub fn inspect_delete_guards(
+    repo_root: &Path,
+    managed_root: &Path,
+    snapshot: &WorktreeSnapshot,
+    target: &WorktreeStatus,
+    mut force: DeleteForceOptions,
+    gone: bool,
+) -> Vec<CliError> {
+    let mut errors = Vec::new();
+    if let Err(error) = validate_delete_target(repo_root, managed_root, target) {
+        errors.push(error);
+    }
+    if let Some(branch) = &target.branch {
+        if let Err(error) = worktree_by_branch(snapshot, branch) {
+            errors.push(error);
+        }
+        if let Err(error) = read_valid_metadata(repo_root, branch) {
+            errors.push(error);
+        }
+    }
+    if gone {
+        force.allow_unpushed = true;
+    }
+    errors.extend(del_safety_errors(target, force));
+    errors
+}
+
+fn del_safety_errors(target: &WorktreeStatus, force: DeleteForceOptions) -> Vec<CliError> {
+    [
+        (target.dirty && !force.force_dirty, ErrorCode::DirtyWorktree),
+        (
+            target.locked.value && !force.force_locked,
+            ErrorCode::LockedWorktree,
+        ),
+        (
+            target.merged.overall != Some(true) && !force.force_unmerged,
+            ErrorCode::UnmergedWorktree,
+        ),
+        (
+            target.upstream.ahead.is_none_or(|ahead| ahead > 0) && !force.allow_unpushed,
+            ErrorCode::UnpushedWorktree,
+        ),
+    ]
+    .into_iter()
+    .filter(|(rejected, _)| *rejected)
+    .map(|(_, code)| delete_guard_error(code, target))
+    .collect()
+}
+
 fn validate_del_safety(target: &WorktreeStatus, force: DeleteForceOptions) -> Result<(), CliError> {
-    if target.dirty && !force.force_dirty {
-        return Err(delete_guard_error(ErrorCode::DirtyWorktree, target));
-    }
-    if target.locked.value && !force.force_locked {
-        return Err(delete_guard_error(ErrorCode::LockedWorktree, target));
-    }
-    if target.merged.overall != Some(true) && !force.force_unmerged {
-        return Err(delete_guard_error(ErrorCode::UnmergedWorktree, target));
-    }
-    if target.upstream.ahead.is_none_or(|ahead| ahead > 0) && !force.allow_unpushed {
-        return Err(delete_guard_error(ErrorCode::UnpushedWorktree, target));
+    let errors = del_safety_errors(target, force);
+    if let Some(mut first) = errors.first().cloned() {
+        first.details.insert(
+            "rejections".to_owned(),
+            json!(
+                errors
+                    .iter()
+                    .map(crate::presentation::json::ErrorPayload::from)
+                    .collect::<Vec<_>>()
+            ),
+        );
+        return Err(first);
     }
     Ok(())
 }

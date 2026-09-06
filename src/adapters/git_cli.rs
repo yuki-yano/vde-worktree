@@ -114,6 +114,12 @@ where
         command.stdout = OutputPolicy::Capture;
         command.stderr = OutputPolicy::Capture;
         command.timeout = Some(self.timeout);
+        command
+            .env
+            .push(crate::ports::process::EnvironmentVariable::set(
+                "GIT_OPTIONAL_LOCKS",
+                "0",
+            ));
 
         self.runner.run(&command).map_err(|source| {
             GitCliError::GitCommandFailed(Box::new(GitCommandFailure {

@@ -158,6 +158,43 @@ PR 状態が不明な場合の `merged.byPR` は引き続き `null` です。
 repository lock の有効期間は OS の lock が管理し、`locks.timeoutMs` は待機時間を指定します。
 初期化完了には `vw init` が作成する hooks・logs・locks・state ディレクトリが必要です。
 
+## 変更を伴わない事前検査と削除の判定材料
+
+```bash
+vw check --json -- del feature/topic
+vw del feature/topic --dry-run --json
+vw check --json -- gone --apply
+vw new feature/topic --dry-run --json
+```
+
+`check -- COMMAND ...` と `--dry-run` は、`init`・`new`・`switch`・`get`・`adopt`・`mv`・`del`・`gone`・`extract`・`absorb`・`unabsorb`・`use`・`lock`・`unlock` の14操作を検査します。
+出力形式や実行ディレクトリの option は、`check` より前、または `check` の `--` より前に指定します。
+検査は hook、stash、repository lock、メタデータ保存、Git index の更新、自動復旧を実行しません。
+有効な GitHub 照会と `get` の remote branch 確認は通信を伴う場合があり、前者は `--no-gh` で省略できます。
+
+結果は `allowed`、`target`、予定する `effects`、`rejections`、`pendingRecoveries`、`requiresRevalidation: true` を含みます。
+バッチ操作の候補は `plannedResult` に入り、削除の `evidence` は検査に使った同一 snapshot と、独立に確認できる拒否理由を返します。
+実行できない場合もこの情報を保持し、最初の拒否理由に対応する非ゼロの終了コードを返します。
+検査は作業先を予約せず、hook や外部プロセスの成功も保証しません。
+実行時は最新の状態を再検証します。
+`new --dry-run` が生成した branch 名を使う場合は、実行時にその名前を明示してください。
+
+通常の `gone` / `adopt` も変更を伴わないプレビューです。
+`--dry-run` を指定すると詳細な検査形式になり、通常のプレビューと `--apply` は各コマンドの結果形式を返します。
+保留中の復旧がある検査は journal を変更せずに拒否します。
+実際の lifecycle 操作では repository lock を取得し、復旧してから計画を作ります。
+完了した復旧は、後続の操作が失敗しても `METADATA_RECOVERY_COMPLETED` の構造化 warning に残します。
+復旧バッチの途中で失敗した場合は `error.details.completedRecoveries` に完了分を保持します。
+
+`list`・`status`・`del`・`gone` は同じ GitHub 有効化設定を使います。
+マージ済み PR を `merged.byPR: true` の根拠にできるのは、`pr.headOid` と現在の worktree の HEAD が一致する場合だけです。
+PR の HEAD が不明なら `head_unavailable`、異なれば `head_mismatch` を診断に残し、`byPR` は `null` にします。
+削除は pre-hook 後にもこの情報を取り直します。
+一致する PR があれば squash merge 後も削除でき、Git ancestry が true である必要はありません。
+`del` は upstream への未送信や不明状態も拒否し、明示した override でのみ許可します。
+`gone` は upstream-ahead をガードに使いません。
+両方とも dirty、lock、merge、管理対象 path、branch の一意性を確認します。
+
 ## シェル補完
 
 コマンドから補完スクリプトを出力:
@@ -227,6 +264,8 @@ fileだけが対象です。tracked file、symlink、既存destination、destina
 - 非TTYで unsafe 操作を行う場合は `--allow-unsafe` が必要
 
 ## グローバルオプション
+
+- `--dry-run`: lifecycle 操作を変更せずに検査する
 
 - `--json`: 機械可読の単一 JSON 出力
 - `-C <directory>` / `--directory <directory>`: 実行コンテキストの基準ディレクトリ

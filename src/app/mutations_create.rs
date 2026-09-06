@@ -835,19 +835,23 @@ pub fn prepare_adopt(
     })
 }
 
+pub fn adopt_dry_run_result(plan: &AdoptPlan) -> AdoptResult {
+    AdoptResult {
+        dry_run: true,
+        managed_worktree_root: plan.managed_worktree_root.clone(),
+        candidates: plan.candidates.clone(),
+        moved: Vec::new(),
+        skipped: plan.skipped.clone(),
+        failed: Vec::new(),
+    }
+}
+
 pub fn apply_adopt<G: CreateMutationGit>(
     git: &G,
     plan: &AdoptPlan,
 ) -> Result<AdoptResult, CliError> {
     if plan.dry_run {
-        return Ok(AdoptResult {
-            dry_run: true,
-            managed_worktree_root: plan.managed_worktree_root.clone(),
-            candidates: plan.candidates.clone(),
-            moved: Vec::new(),
-            skipped: plan.skipped.clone(),
-            failed: Vec::new(),
-        });
+        return Ok(adopt_dry_run_result(plan));
     }
     let mut moved = Vec::new();
     let mut failed = Vec::new();

@@ -102,7 +102,7 @@ where
             OsString::from("--limit"),
             OsString::from("1000"),
             OsString::from("--json"),
-            OsString::from("headRefName,state,mergedAt,updatedAt,url"),
+            OsString::from("headRefName,headRefOid,state,mergedAt,updatedAt,url"),
         ];
         let output = match self.runner.run(&gh_command(repo_root, args, self.timeout)) {
             Ok(output) => output,
@@ -184,6 +184,7 @@ fn unknown_states(
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct PrSummary {
+    head_ref_oid: Option<String>,
     head_ref_name: Option<String>,
     state: Option<String>,
     merged_at: Option<String>,
@@ -231,6 +232,7 @@ fn parse_pr_states(raw: &[u8], branches: &[String]) -> Option<HashMap<String, Pr
         let state = PrState {
             status: Some(pr_status(&record)),
             url: record.url.filter(|url| !url.is_empty()),
+            head_oid: record.head_ref_oid.filter(|oid| !oid.is_empty()),
             diagnostic: None,
         };
         let replace = latest

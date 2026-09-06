@@ -54,3 +54,5 @@ JSON 契約を変更する場合は現行の単一契約へ更新し、旧 rende
 - 改修3：-C、明示 worktree path、共有 branch の候補付き拒否、一覧と単一詳細の分離を実装。new / switch / get / lock / transfer の不要な全件詳細を除去し、del / gone は最新一覧の一意性を確認して対象だけを再検証する。実リポジトリで path の詳細取得0件、status 1件、del 2件、gone の候補別取得を確認。全299テスト、両 shell の -C を使う候補取得、Cargo package allowlist 67ファイルの一致を確認。
 
 - 改修4：context / doctor、設定項目ごとの出所と CLI 優先順位、verbose、PR unknown の理由、構造化メタデータ警告、復旧 journal の無変更観測を実装。未使用 TTL 設定を削除し、初期化判定を必要な状態ディレクトリに統一。設定不正・未初期化・制御文字 path の診断、ファイル内容と更新時刻の不変性を検証。全305テスト、clippy、補完構文、Cargo package allowlist 69ファイルの一致を確認。
+
+- 改修5：check / --dry-run を14種類の lifecycle 操作へ追加。通常の gone / adopt プレビューを含め、hook・stash・lock・Git index・メタデータ・復旧を変更しない経路を実装。検査と判定材料には同じ snapshot を使用し、PR HEAD 照合と削除直前の取り直しを実装。全308テスト、追加の引数伝播テスト、clippy、補完構文、Cargo package allowlist 70ファイルの一致を確認。復旧完了後の別処理失敗と復旧バッチ途中失敗でも完了情報を保持する。

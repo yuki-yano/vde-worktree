@@ -268,6 +268,7 @@ where
                 pr: PrState {
                     status: None,
                     url: None,
+                    head_oid: None,
                     diagnostic: None,
                 },
                 upstream: unknown_upstream(),
@@ -280,7 +281,21 @@ where
             worktree.locked,
             warnings,
         );
-        let pr = resolve_pr(worktree.branch.as_deref(), base_branch, pr_states);
+        let mut pr = resolve_pr(worktree.branch.as_deref(), base_branch, pr_states);
+        if pr.status == Some(PrStatus::Merged) && pr.head_oid.as_deref() != Some(&worktree.head) {
+            pr.diagnostic = Some(crate::domain::worktree::PrDiagnostic {
+                reason: if pr.head_oid.is_some() {
+                    crate::domain::worktree::PrUnavailableReason::HeadMismatch
+                } else {
+                    crate::domain::worktree::PrUnavailableReason::HeadUnavailable
+                },
+                message: Some(
+                    "merged PR does not establish that the current worktree HEAD was merged"
+                        .to_owned(),
+                ),
+                exit_code: None,
+            });
+        }
         let merged = self.resolve_merged(repo_root, base_branch, worktree, &pr, warnings)?;
         let upstream = if self.options.include_upstream {
             self.resolve_upstream(&worktree.path)?
@@ -366,7 +381,9 @@ where
         };
         let by_ancestry = self.probe_ancestry(repo_root, branch, base_branch)?;
         let by_pr = match pr.status {
-            Some(PrStatus::Merged) => Some(true),
+            Some(PrStatus::Merged) => {
+                (pr.head_oid.as_deref() == Some(worktree.head.as_str())).then_some(true)
+            }
             Some(PrStatus::None | PrStatus::Open | PrStatus::ClosedUnmerged) => Some(false),
             Some(PrStatus::Unknown) | None => None,
         };
@@ -854,11 +871,13 @@ fn resolve_pr(
         None => PrState {
             status: None,
             url: None,
+            head_oid: None,
             diagnostic: None,
         },
         Some(branch) if branch == base_branch => PrState {
             status: None,
             url: None,
+            head_oid: None,
             diagnostic: None,
         },
         Some(branch) => states.get(branch).cloned().unwrap_or_else(PrState::unknown),

@@ -636,7 +636,7 @@ fn a018_gone_dry_run_has_no_hooks_and_apply_reports_deleted_and_failed_candidate
     let dry_run = json(&dry_run);
     assert_eq!(dry_run["data"]["dryRun"], true);
     assert_eq!(
-        dry_run["data"]["candidates"],
+        dry_run["data"]["plannedResult"]["candidates"],
         serde_json::json!(["feature/gone-failed", "feature/gone-ok"])
     );
     assert!(!hook_marker.exists(), "gone --dry-run must not run hooks");

@@ -308,3 +308,229 @@ fn diagnostics_report_unsupported_paths_without_panicking() {
             .any(|check| check["name"] == "repositoryPaths" && check["status"] == "error")
     );
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn check_and_dry_run_never_lock_recover_stash_run_hooks_or_write_git_state() {
+    let fixture = Fixture::new();
+    let before = files(&fixture.repo);
+    let init = fixture.ok(&["init", "--dry-run", "--json"]);
+    assert_eq!(init["data"]["allowed"], true);
+    assert_eq!(before, files(&fixture.repo));
+    fixture.ok(&["init", "--json"]);
+    let new = fixture.ok(&["new", "topic", "--json"]);
+    let topic = PathBuf::from(new["data"]["path"].as_str().unwrap());
+    fs::write(topic.join("dirty"), "untracked changes").unwrap();
+    fixture.ok(&["lock", "topic", "--owner", "test-session", "--json"]);
+    for action in [
+        "new", "switch", "get", "adopt", "mv", "del", "gone", "extract", "absorb", "unabsorb",
+        "use", "init",
+    ] {
+        let path = fixture
+            .repo
+            .join(".vde/worktree/hooks")
+            .join(format!("pre-{action}"));
+        fs::write(
+            &path,
+            "#!/bin/sh\ntouch \"$WT_REPO_ROOT/hook-must-not-run\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let before = files(&fixture.repo);
+    for args in [
+        vec!["init"],
+        vec!["new", "planned"],
+        vec!["switch", "planned"],
+        vec!["get", "missing/topic"],
+        vec!["adopt", "--apply"],
+        vec!["mv", "renamed"],
+        vec!["del", "topic"],
+        vec!["gone", "--apply"],
+        vec!["extract", "--current", "--stash"],
+        vec!["absorb", "topic", "--allow-agent", "--allow-unsafe"],
+        vec!["unabsorb", "main", "--allow-agent", "--allow-unsafe"],
+        vec!["use", "topic", "--allow-agent", "--allow-unsafe"],
+        vec!["lock", "topic", "--owner", "test-session"],
+        vec!["unlock", "topic", "--owner", "test-session"],
+    ] {
+        let mut full = vec!["check", "--json", "--no-gh", "--"];
+        full.extend(args.clone());
+        let output = fixture.run(&full);
+        let value = support::parse_cli_json(&output.stdout);
+        assert_eq!(value["command"], "check", "{args:?}: {value}");
+        assert_eq!(value["data"]["command"], args[0], "{value}");
+        assert_eq!(value["data"]["dryRun"], true, "{value}");
+        assert_eq!(value["data"]["requiresRevalidation"], true);
+        assert_eq!(value["data"]["allowed"], output.status.success());
+        assert_eq!(
+            before,
+            files(&fixture.repo),
+            "inspection changed repository: {args:?}"
+        );
+    }
+    let output = fixture.run(&["del", "topic", "--dry-run", "--json", "--no-gh"]);
+    let value = support::parse_cli_json(&output.stdout);
+    assert_eq!(output.status.code(), Some(4));
+    let rejected = &value["data"]["evidence"]["targets"][0]["rejections"];
+    for code in [
+        "DIRTY_WORKTREE",
+        "LOCKED_WORKTREE",
+        "UNMERGED_WORKTREE",
+        "UNPUSHED_WORKTREE",
+    ] {
+        assert!(
+            rejected
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|error| error["code"] == code),
+            "{value}"
+        );
+    }
+    assert_eq!(before, files(&fixture.repo));
+
+    // Default batch previews also bypass the mutation lock and recovery path.
+    fixture.ok(&["gone", "--json", "--no-gh"]);
+    fixture.ok(&["adopt", "--json", "--no-gh"]);
+    assert_eq!(before, files(&fixture.repo));
+    let journals = fixture
+        .repo
+        .join(".vde/worktree/state/metadata-transactions");
+    fs::create_dir_all(journals.join("orphan")).unwrap();
+    let before = files(&fixture.repo);
+    for args in [
+        vec!["new", "planned", "--dry-run"],
+        vec!["gone"],
+        vec!["adopt"],
+    ] {
+        let mut full = vec!["--json", "--no-gh"];
+        full.extend(args);
+        let output = fixture.run(&full);
+        let value = support::parse_cli_json(&output.stdout);
+        assert!(!output.status.success(), "{value}");
+        assert_eq!(value["data"]["allowed"], false);
+        assert_eq!(
+            value["data"]["pendingRecoveries"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(before, files(&fixture.repo));
+    }
+}
+
+#[test]
+fn deletion_requires_matching_pr_head_and_rechecks_after_the_pre_hook() {
+    for change_in_hook in [false, true] {
+        let fixture = Fixture::new();
+        fixture.ok(&["init", "--json"]);
+        let new = fixture.ok(&["new", "topic", "--json"]);
+        let topic = new["data"]["path"].as_str().unwrap();
+        fs::write(Path::new(topic).join("feature"), "feature contents").unwrap();
+        fixture.git(&["-C", topic, "add", "feature"]);
+        fixture.git(&["-C", topic, "commit", "-q", "-m", "feature"]);
+        fixture.git(&["merge", "--squash", "topic"]);
+        fixture.git(&["commit", "-q", "-m", "squashed feature"]);
+        let oid = Command::new("git")
+            .args(["rev-parse", "topic"])
+            .current_dir(&fixture.repo)
+            .output()
+            .unwrap();
+        let oid = String::from_utf8(oid.stdout).unwrap().trim().to_owned();
+        for (head, reason) in [
+            (Value::Null, "head_unavailable"),
+            (
+                json!("0000000000000000000000000000000000000000"),
+                "head_mismatch",
+            ),
+        ] {
+            let response = json!([{"headRefName": "topic", "headRefOid": head, "state": "MERGED", "mergedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z", "url": "https://example.test/pr/1"}]);
+            fixture.script("gh", &format!("#!/bin/sh\nprintf '%s\\n' '{response}'\n"));
+            let status = fixture.ok(&["status", "topic", "--json"]);
+            assert_eq!(
+                status["data"]["worktree"]["pr"]["diagnostic"]["reason"],
+                reason
+            );
+            assert_eq!(status["data"]["worktree"]["merged"]["byPR"], Value::Null);
+            assert_eq!(
+                fixture.ok(&["gone", "--json"])["data"]["candidates"],
+                json!([])
+            );
+        }
+        let response = json!([{"headRefName": "topic", "headRefOid": oid, "state": "MERGED", "mergedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z", "url": "https://example.test/pr/1"}]);
+        fixture.script("gh", &format!("#!/bin/sh\nprintf '%s\\n' '{response}'\n"));
+        let status = fixture.ok(&["status", "topic", "--json"]);
+        assert_eq!(status["data"]["worktree"]["merged"]["byAncestry"], false);
+        assert_eq!(status["data"]["worktree"]["merged"]["byPR"], true);
+        assert_eq!(status["data"]["worktree"]["pr"]["headOid"], oid);
+        assert_eq!(
+            fixture.ok(&["gone", "--json"])["data"]["candidates"],
+            json!(["topic"])
+        );
+        let inspect = fixture.ok(&["check", "--json", "--", "gone", "--apply"]);
+        assert_eq!(
+            inspect["data"]["plannedResult"]["candidates"],
+            json!(["topic"])
+        );
+        let manual =
+            support::parse_cli_json(&fixture.run(&["del", "topic", "--dry-run", "--json"]).stdout);
+        assert_eq!(manual["data"]["allowed"], false); // del also checks upstream state.
+        assert_eq!(manual["error"]["code"], "UNPUSHED_WORKTREE");
+        if change_in_hook {
+            let hook = fixture.repo.join(".vde/worktree/hooks/pre-gone");
+            fs::write(&hook, "#!/bin/sh\ngit -C \"$WT_REPO_ROOT/.worktree/topic\" commit --allow-empty -q -m 'new work after inspection'\n").unwrap();
+            fs::set_permissions(hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let output = fixture.run(&["gone", "--apply", "--json"]);
+        let value = support::parse_cli_json(&output.stdout);
+        if change_in_hook {
+            assert!(!output.status.success(), "{value}");
+            assert_eq!(value["data"]["failed"][0]["code"], "UNMERGED_WORKTREE");
+            assert!(Path::new(topic).exists());
+        } else {
+            assert!(output.status.success(), "{value}");
+            assert_eq!(value["data"]["deleted"], json!(["topic"]));
+            assert!(!Path::new(topic).exists());
+        }
+    }
+}
+
+#[test]
+fn recovery_results_survive_a_later_command_or_journal_failure() {
+    let fixture = Fixture::new();
+    fixture.ok(&["init", "--json"]);
+    let journals = fixture
+        .repo
+        .join(".vde/worktree/state/metadata-transactions");
+    fs::create_dir_all(journals.join("orphan")).unwrap();
+    let output = fixture.run(&["new", "main", "--json"]);
+    let value = support::parse_cli_json(&output.stdout);
+    assert!(!output.status.success());
+    assert_eq!(value["error"]["code"], "BRANCH_ALREADY_ATTACHED");
+    assert_eq!(value["warnings"][0]["code"], "METADATA_RECOVERY_COMPLETED");
+    assert_eq!(
+        value["warnings"][0]["details"]["recoveryOutcome"]["transactionId"],
+        "orphan"
+    );
+    assert!(!journals.join("orphan").exists());
+    fs::create_dir_all(journals.join("a-orphan")).unwrap();
+    fs::create_dir_all(journals.join("b-invalid")).unwrap();
+    fs::write(journals.join("b-invalid/journal.json"), "invalid").unwrap();
+    let output = fixture.run(&["new", "planned", "--json"]);
+    let value = support::parse_cli_json(&output.stdout);
+    assert!(!output.status.success(), "{value}");
+    assert_eq!(value["error"]["execution"]["phase"], "recover");
+    assert_eq!(value["error"]["execution"]["state"], "recoveryRequired");
+    assert_eq!(
+        value["error"]["details"]["completedRecoveries"][0]["transactionId"],
+        "a-orphan"
+    );
+    assert!(
+        value["error"]["details"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("b-invalid/journal.json")
+    );
+    assert!(!journals.join("a-orphan").exists());
+    assert!(journals.join("b-invalid/journal.json").exists());
+    assert!(!fixture.repo.join(".worktree/planned").exists());
+}

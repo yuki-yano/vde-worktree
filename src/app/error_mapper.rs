@@ -390,15 +390,44 @@ fn details<const N: usize>(entries: [(&str, Value); N]) -> BTreeMap<String, Valu
 }
 
 pub fn map_metadata_transaction_error(error: &MetadataTransactionError) -> CliError {
-    match error {
+    if let MetadataTransactionError::RecoveryBatch { completed, source } = error {
+        let mut mapped = map_metadata_transaction_error(source);
+        mapped
+            .execution
+            .completed
+            .push("recoverMetadata".to_owned());
+        mapped
+            .details
+            .insert("completedRecoveries".to_owned(), json!(completed));
+        return mapped;
+    }
+    let code = match error {
         MetadataTransactionError::InvalidMetadata { .. }
         | MetadataTransactionError::TargetExists { .. }
         | MetadataTransactionError::PendingTransaction(_)
-        | MetadataTransactionError::RecoveryConflict { .. } => {
-            CliError::new(ErrorCode::LockConflict, error.to_string())
+        | MetadataTransactionError::RecoveryConflict { .. } => ErrorCode::LockConflict,
+        _ => ErrorCode::InternalError,
+    };
+    let mut mapped = CliError::new(code, error.to_string());
+    match error {
+        MetadataTransactionError::InvalidMetadata { path, reason, .. }
+        | MetadataTransactionError::InvalidJournal { path, reason } => {
+            mapped
+                .details
+                .insert("path".to_owned(), json!(path.to_string_lossy()));
+            mapped.details.insert("reason".to_owned(), json!(reason));
         }
-        _ => CliError::new(ErrorCode::InternalError, error.to_string()),
+        MetadataTransactionError::TargetExists { path, .. }
+        | MetadataTransactionError::PendingTransaction(path)
+        | MetadataTransactionError::RecoveryConflict { path, .. }
+        | MetadataTransactionError::Io { path, .. } => {
+            mapped
+                .details
+                .insert("path".to_owned(), json!(path.to_string_lossy()));
+        }
+        _ => {}
     }
+    mapped
 }
 
 #[cfg(test)]

@@ -171,6 +171,7 @@ fn semantics(name: &str) -> Semantics {
             &["Remove worktree, branch, lifecycle and lock metadata; run hooks"],
             &[
                 "vw del feature/topic --json",
+                "vw del feature/topic --dry-run --json",
                 "vw del feature/topic --force-dirty --allow-unsafe --json",
             ],
         ),
@@ -328,6 +329,17 @@ fn semantics(name: &str) -> Semantics {
                 "vw -C /projects/repo doctor --json",
             ],
         ),
+        "check" => (
+            "lifecycle command supplied after --",
+            &["Git repository; the inspected command prerequisites are reported as rejections"],
+            &[
+                "Read-only preflight; no hooks, stash, repository lock, metadata writes or automatic recovery; GitHub and remote branch probes may access the network; a later apply revalidates current state",
+            ],
+            &[
+                "vw check --json -- del feature/topic",
+                "vw check --json -- new feature/topic",
+            ],
+        ),
         _ => unreachable!("every public command has documented semantics: {name}"),
     };
     Semantics {
@@ -336,6 +348,10 @@ fn semantics(name: &str) -> Semantics {
         effects,
         examples,
     }
+}
+
+pub fn command_effects(name: &str) -> &'static [&'static str] {
+    semantics(name).effects
 }
 
 pub(super) fn document_command(mut command: ClapCommand) -> ClapCommand {
@@ -424,6 +440,7 @@ fn describe_command(command: &ClapCommand) -> Value {
         "examples": spec.examples,
         "arguments": arguments,
         "constraints": semantic_constraints(name),
+        "supportsInspection": supports_preflight(name),
         "dataSchema": data_schema(name),
     })
 }
@@ -439,6 +456,9 @@ fn semantic_constraints(command: &str) -> Vec<Value> {
     }
     if !matches!(command, "status" | "path" | "exec" | "copy" | "link") {
         constraints.push(json!({"unsupported": ["worktree"]}));
+    }
+    if !supports_preflight(command) {
+        constraints.push(json!({"unsupported": ["dry_run"]}));
     }
     match command {
         "list" => constraints.push(json!({"when": "monitor", "requires": ["json", "no_gh"], "conflictsWith": ["gh"]})),
@@ -557,6 +577,7 @@ fn worktree_schema() -> Value {
                     ])),
                 ),
                 ("url", nullable(scalar("string"))),
+                ("headOid", nullable(scalar("string"))),
                 (
                     "diagnostic",
                     nullable(object([
@@ -564,6 +585,8 @@ fn worktree_schema() -> Value {
                             "reason",
                             values(&[
                                 "not_observed",
+                                "head_mismatch",
+                                "head_unavailable",
                                 "disabled",
                                 "dependency_missing",
                                 "authentication_required",
@@ -705,6 +728,58 @@ fn pending_recoveries_schema() -> Value {
 /// Schema for successful and partial-result data; ordinary failures use null data.
 #[allow(clippy::too_many_lines)]
 pub fn data_schema(command: &str) -> Value {
+    let normal = result_data_schema(command);
+    if supports_preflight(command) && command != "check" {
+        json!({"anyOf": [normal, preflight_schema()]})
+    } else {
+        normal
+    }
+}
+
+fn supports_preflight(command: &str) -> bool {
+    matches!(
+        command,
+        "init"
+            | "new"
+            | "switch"
+            | "get"
+            | "adopt"
+            | "mv"
+            | "del"
+            | "gone"
+            | "extract"
+            | "absorb"
+            | "unabsorb"
+            | "use"
+            | "lock"
+            | "unlock"
+            | "check"
+    )
+}
+
+fn preflight_schema() -> Value {
+    object([
+        ("dryRun", scalar("boolean")),
+        ("command", scalar("string")),
+        ("allowed", scalar("boolean")),
+        (
+            "target",
+            nullable(object([
+                ("branch", nullable(scalar("string"))),
+                ("path", nullable(scalar("string"))),
+            ])),
+        ),
+        ("plannedResult", nullable(scalar("object"))),
+        ("effects", strings()),
+        ("evidence", nullable(scalar("object"))),
+        ("pendingRecoveries", pending_recoveries_schema()),
+        ("rejections", array(diagnostic_schema())),
+        ("requiresRevalidation", scalar("boolean")),
+    ])
+}
+
+#[allow(clippy::too_many_lines)]
+fn result_data_schema(command: &str) -> Value {
     let path = || object([("branch", scalar("string")), ("path", scalar("string"))]);
     let adopt_candidate = || {
         object([
@@ -714,6 +789,7 @@ pub fn data_schema(command: &str) -> Value {
         ])
     };
     match command {
+        "check" => preflight_schema(),
         "init" => object([("alreadyInitialized", scalar("boolean"))]),
         "list" => object([
             ("baseBranch", nullable(scalar("string"))),

@@ -11,7 +11,7 @@ use crate::domain::fzf::validate_fzf_extra_args;
 use crate::domain::hook::HookName;
 use crate::domain::safety::{CommonSafetyPolicy, enforce_common_safety};
 
-pub const COMMAND_NAMES: [&str; 26] = [
+pub const COMMAND_NAMES: [&str; 27] = [
     "init",
     "list",
     "status",
@@ -38,6 +38,7 @@ pub const COMMAND_NAMES: [&str; 26] = [
     "describe",
     "context",
     "doctor",
+    "check",
 ];
 
 #[derive(Debug, Clone, PartialEq, Parser)]
@@ -74,6 +75,13 @@ pub struct CommonOptions {
     #[arg(long, global = true)]
     /// Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings.
     pub json: bool,
+
+    #[arg(long, global = true)]
+    /// Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery.
+    pub dry_run: bool,
+
+    #[arg(skip)]
+    pub check: bool,
 
     #[arg(long, global = true, action = ArgAction::Count)]
     /// Show resolved context and result diagnostics on stderr; repeat to include configuration.
@@ -215,18 +223,12 @@ pub enum Command {
         #[arg(long, conflicts_with = "dry_run")]
         /// Delete the eligible candidates (default: preview only).
         apply: bool,
-        #[arg(long, conflicts_with = "apply")]
-        /// Only report eligible candidates (the default).
-        dry_run: bool,
     },
     /// Find or move unmanaged worktrees into the managed root.
     Adopt {
         #[arg(long, conflicts_with = "dry_run")]
         /// Move eligible external worktrees into the managed root (default: preview only).
         apply: bool,
-        #[arg(long, conflicts_with = "apply")]
-        /// Only report proposed moves (the default).
-        dry_run: bool,
     },
     /// Fetch and attach a remote branch.
     Get {
@@ -354,6 +356,12 @@ pub enum Command {
     Context,
     /// Diagnose repository setup, configuration and dependencies without changing state.
     Doctor,
+    /// Inspect a lifecycle mutation supplied after -- without applying it.
+    Check {
+        #[arg(last = true, required = true, num_args = 1.., allow_hyphen_values = true)]
+        /// Lifecycle command and its arguments, for example -- del feature/topic.
+        argv: Vec<OsString>,
+    },
     /// Internal completion candidate provider.
     #[command(name = "__complete", hide = true)]
     CompletionCandidates {
@@ -394,6 +402,7 @@ impl Command {
             Self::Describe { .. } => "describe",
             Self::Context => "context",
             Self::Doctor => "doctor",
+            Self::Check { .. } => "check",
             Self::CompletionCandidates { .. } => "__complete",
         }
     }
@@ -433,6 +442,24 @@ pub struct ParsedRequest {
     pub command: Command,
 }
 
+impl ParsedRequest {
+    pub const fn output_command(&self) -> &'static str {
+        if self.common.check {
+            "check"
+        } else {
+            self.command.name()
+        }
+    }
+
+    pub const fn is_preview(&self) -> bool {
+        self.common.dry_run
+            || matches!(
+                self.command,
+                Command::Gone { apply: false } | Command::Adopt { apply: false }
+            )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CliParseResult {
     Parsed(ParsedRequest),
@@ -446,12 +473,44 @@ where
     T: Into<OsString> + Clone,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
-    let hints = argument_hints(&args);
+    parse_args(&args, false)
+}
+
+fn parse_args(args: &[OsString], nested_check: bool) -> CliParseResult {
+    let hints = argument_hints(args);
     let parsed = clap_command()
-        .try_get_matches_from(&args)
+        .try_get_matches_from(args)
         .and_then(|matches| Cli::from_arg_matches(&matches));
     match parsed {
         Ok(mut cli) => {
+            if let Command::Check { argv } = &cli.command {
+                if nested_check {
+                    return invalid_request("check cannot inspect another check command");
+                }
+                let separator = args.len() - argv.len() - 1;
+                let mut combined = args[..separator].to_vec();
+                combined.remove(hints.command_index.expect("check is a parsed command"));
+                combined.extend_from_slice(argv);
+                let result = parse_args(&combined, true);
+                return match result {
+                    CliParseResult::Parsed(mut request) => {
+                        if !crate::app::dispatch::is_write_command(&request.command) {
+                            return invalid_request(
+                                "check supports lifecycle mutation commands only",
+                            );
+                        }
+                        request.common.check = true;
+                        request.common.dry_run = true;
+                        CliParseResult::Parsed(request)
+                    }
+                    other => other,
+                };
+            }
+            if cli.common.dry_run && !crate::app::dispatch::is_write_command(&cli.command) {
+                return invalid_request(
+                    "--dry-run and check support lifecycle mutation commands only",
+                );
+            }
             if let Command::CompletionCandidates { commandline, .. } = &cli.command
                 && !commandline.is_empty()
             {
@@ -509,6 +568,14 @@ where
     }
 }
 
+fn invalid_request(message: &str) -> CliParseResult {
+    let error = CliError::new(ErrorCode::InvalidArgument, message);
+    CliParseResult::Invalid {
+        rendered: format!("error: {message}\n"),
+        error,
+    }
+}
+
 fn validate_common_options(common: &CommonOptions) -> Result<(), CliError> {
     enforce_common_safety(CommonSafetyPolicy {
         hooks_disabled: common.no_hooks,
@@ -523,6 +590,7 @@ pub struct ArgumentHints {
     pub directory: Option<PathBuf>,
     pub json: bool,
     pub command: Option<String>,
+    command_index: Option<usize>,
     hooks: Option<bool>,
     gh: Option<bool>,
 }
@@ -598,6 +666,7 @@ pub fn argument_hints(args: &[OsString]) -> ArgumentHints {
             }
         } else if hints.command.is_none() {
             hints.command = Some(token.to_owned());
+            hints.command_index = Some(index - 1);
             if let Some(subcommand) = definition.find_subcommand(token) {
                 command = subcommand;
             }
@@ -652,7 +721,7 @@ mod tests {
 
     #[test]
     fn parses_all_public_command_variants() {
-        let cases: [&[&str]; 26] = [
+        let cases: [&[&str]; 27] = [
             &["init"],
             &["list"],
             &["status"],
@@ -679,13 +748,52 @@ mod tests {
             &["describe"],
             &["context"],
             &["doctor"],
+            &["check", "--", "new", "topic"],
         ];
 
         let parsed_names: Vec<_> = cases
             .iter()
-            .map(|args| request(args).command.name())
+            .map(|args| request(args).output_command())
             .collect();
         assert_eq!(parsed_names, COMMAND_NAMES);
+    }
+
+    #[test]
+    fn check_preserves_options_and_rejects_nested_or_non_lifecycle_commands() {
+        let request = request(&[
+            "check",
+            "--fzf-arg",
+            "--json",
+            "-C",
+            "/repo",
+            "--",
+            "del",
+            "topic",
+            "--force-dirty",
+            "--allow-unsafe",
+        ]);
+        assert!(request.common.check && request.common.dry_run);
+        assert!(!request.common.json);
+        assert_eq!(request.common.fzf_args, ["--json"]);
+        assert_eq!(
+            request.common.directory.as_deref(),
+            Some(std::path::Path::new("/repo"))
+        );
+        assert!(matches!(
+            request.command,
+            Command::Del {
+                force_dirty: true,
+                ..
+            }
+        ));
+        for args in [
+            vec!["vw", "check", "--", "check", "--", "new", "topic"],
+            vec!["vw", "check", "--", "exec", "topic", "--", "true"],
+            vec!["vw", "list", "--dry-run"],
+            vec!["vw", "completion", "zsh", "--dry-run"],
+        ] {
+            assert!(matches!(parse_from(args), CliParseResult::Invalid { .. }));
+        }
     }
 
     #[test]

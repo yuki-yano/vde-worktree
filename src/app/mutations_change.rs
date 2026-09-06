@@ -1531,6 +1531,9 @@ fn git_output_error_os(cwd: &Path, args: &[OsString], output: &ProcessOutput) ->
 fn map_metadata_error(source: MetadataTransactionError) -> CliError {
     let message = source.to_string();
     match source {
+        MetadataTransactionError::RecoveryBatch { .. } => {
+            crate::app::error_mapper::map_metadata_transaction_error(&source)
+        }
         MetadataTransactionError::LifecycleObservation(source) => {
             MapToCliError::map_to_cli_error(source)
         }
