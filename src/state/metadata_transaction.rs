@@ -2,7 +2,7 @@
 //!
 //! # Locking
 //!
-//! Every public operation in this module must run while the caller holds the repository mutation
+//! Every mutating operation in this module must run while the caller holds the repository mutation
 //! lock. The module deliberately does not acquire that lock itself, so Git mutation and metadata
 //! preflight can share one lock lifetime without lock-order inversion.
 
@@ -39,7 +39,7 @@ const BACKUP_LIFECYCLE_FILE: &str = "backup-lifecycle.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum JournalPhase {
+pub enum JournalPhase {
     Prepared,
     BranchRenamed,
     WorktreeMoved,
@@ -135,17 +135,95 @@ pub struct MetadataRenameOutcome {
     pub lifecycle_created: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum MetadataRecoveryResolution {
     RolledBack,
     Committed,
     OrphanRemoved,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MetadataRecoveryOutcome {
     pub transaction_id: String,
     pub resolution: MetadataRecoveryResolution,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMetadataTransaction {
+    pub transaction_id: String,
+    pub path: PathBuf,
+    pub journal_state: &'static str,
+    pub phase: Option<JournalPhase>,
+    pub from_branch: Option<String>,
+    pub to_branch: Option<String>,
+    pub source_path: Option<PathBuf>,
+    pub target_path: Option<PathBuf>,
+    pub problem: Option<String>,
+}
+
+/// Observes pending journals without locks, recovery, Git commands or filesystem writes.
+/// Journal validity is structural; execution always revalidates the live Git and path state.
+pub fn inspect_pending_metadata_transactions(
+    repo_root: &Path,
+) -> Result<Vec<PendingMetadataTransaction>, MetadataTransactionError> {
+    let root = transaction_root(repo_root);
+    let entries = match fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(io_error(root, source)),
+    };
+    let mut reports = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| io_error(root.clone(), source))?;
+        let kind = entry
+            .file_type()
+            .map_err(|source| io_error(entry.path(), source))?;
+        if !kind.is_dir() && !kind.is_symlink() {
+            continue;
+        }
+        let directory = entry.path();
+        let mut report = PendingMetadataTransaction {
+            transaction_id: entry.file_name().to_string_lossy().into_owned(),
+            path: directory.join(JOURNAL_FILE),
+            journal_state: "missing",
+            phase: None,
+            from_branch: None,
+            to_branch: None,
+            source_path: None,
+            target_path: None,
+            problem: None,
+        };
+        if kind.is_symlink() {
+            report.journal_state = "invalid";
+            report.problem = Some("transaction directory is a symlink".to_owned());
+        } else {
+            match read_json_record::<MetadataTransactionJournal>(&report.path).state {
+                JsonRecordState::Missing => {}
+                JsonRecordState::Invalid { reason } => {
+                    report.journal_state = "invalid";
+                    report.problem = Some(reason);
+                }
+                JsonRecordState::Valid(journal) => {
+                    report.journal_state = "valid";
+                    if let Err(error) = validate_journal(&journal, &directory) {
+                        report.journal_state = "invalid";
+                        report.problem = Some(error.to_string());
+                    }
+                    report.phase = Some(journal.phase);
+                    report.from_branch = Some(journal.from_branch);
+                    report.to_branch = Some(journal.to_branch);
+                    report.source_path = Some(journal.source_path);
+                    report.target_path = Some(journal.target_path);
+                }
+            }
+        }
+        reports.push(report);
+    }
+    reports.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(reports)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1553,6 +1631,26 @@ mod tests {
                 error,
                 MetadataTransactionError::InjectedCrash { step: actual, .. } if actual == step
             ));
+
+            let pending = inspect_pending_metadata_transactions(directory.path()).unwrap();
+            if step == MetadataTransactionStep::CleanupComplete {
+                assert!(pending.is_empty());
+            } else {
+                assert_eq!(pending.len(), 1);
+                assert_eq!(
+                    pending[0].journal_state,
+                    if step == MetadataTransactionStep::ArtifactsStaged {
+                        "missing"
+                    } else {
+                        "valid"
+                    }
+                );
+                if pending[0].journal_state == "valid" {
+                    assert_eq!(pending[0].from_branch.as_deref(), Some(OLD));
+                    assert_eq!(pending[0].to_branch.as_deref(), Some(NEW));
+                    assert!(pending[0].phase.is_some());
+                }
+            }
 
             // At no injected point may deletion protection disappear from both branch IDs.
             assert!(

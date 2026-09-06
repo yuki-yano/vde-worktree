@@ -268,6 +268,7 @@ where
                 pr: PrState {
                     status: None,
                     url: None,
+                    diagnostic: None,
                 },
                 upstream: unknown_upstream(),
             });
@@ -853,10 +854,12 @@ fn resolve_pr(
         None => PrState {
             status: None,
             url: None,
+            diagnostic: None,
         },
         Some(branch) if branch == base_branch => PrState {
             status: None,
             url: None,
+            diagnostic: None,
         },
         Some(branch) => states.get(branch).cloned().unwrap_or_else(PrState::unknown),
     }

@@ -1,4 +1,5 @@
 pub mod completion;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod error_mapper;
 pub mod misc_commands;

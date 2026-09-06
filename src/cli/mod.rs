@@ -11,7 +11,7 @@ use crate::domain::fzf::validate_fzf_extra_args;
 use crate::domain::hook::HookName;
 use crate::domain::safety::{CommonSafetyPolicy, enforce_common_safety};
 
-pub const COMMAND_NAMES: [&str; 24] = [
+pub const COMMAND_NAMES: [&str; 26] = [
     "init",
     "list",
     "status",
@@ -36,6 +36,8 @@ pub const COMMAND_NAMES: [&str; 24] = [
     "cd",
     "completion",
     "describe",
+    "context",
+    "doctor",
 ];
 
 #[derive(Debug, Clone, PartialEq, Parser)]
@@ -74,7 +76,7 @@ pub struct CommonOptions {
     pub json: bool,
 
     #[arg(long, global = true, action = ArgAction::Count)]
-    /// Increase diagnostic detail on stderr (repeatable).
+    /// Show resolved context and result diagnostics on stderr; repeat to include configuration.
     pub verbose: u8,
 
     #[arg(
@@ -138,12 +140,12 @@ pub struct CommonOptions {
 }
 
 impl CommonOptions {
-    pub const fn hooks_enabled(&self) -> bool {
-        !self.no_hooks
+    pub const fn hooks_enabled(&self, configured: bool) -> bool {
+        self.hooks || (!self.no_hooks && configured)
     }
 
-    pub const fn gh_enabled(&self) -> bool {
-        !self.no_gh
+    pub const fn gh_enabled(&self, configured: bool) -> bool {
+        self.gh || (!self.no_gh && configured)
     }
 }
 
@@ -348,6 +350,10 @@ pub enum Command {
         /// Command to describe (default: all public commands).
         command: Option<String>,
     },
+    /// Show execution context, effective configuration and setting sources.
+    Context,
+    /// Diagnose repository setup, configuration and dependencies without changing state.
+    Doctor,
     /// Internal completion candidate provider.
     #[command(name = "__complete", hide = true)]
     CompletionCandidates {
@@ -386,6 +392,8 @@ impl Command {
             Self::Cd => "cd",
             Self::Completion { .. } => "completion",
             Self::Describe { .. } => "describe",
+            Self::Context => "context",
+            Self::Doctor => "doctor",
             Self::CompletionCandidates { .. } => "__complete",
         }
     }
@@ -644,7 +652,7 @@ mod tests {
 
     #[test]
     fn parses_all_public_command_variants() {
-        let cases: [&[&str]; 24] = [
+        let cases: [&[&str]; 26] = [
             &["init"],
             &["list"],
             &["status"],
@@ -669,6 +677,8 @@ mod tests {
             &["cd"],
             &["completion", "zsh"],
             &["describe"],
+            &["context"],
+            &["doctor"],
         ];
 
         let parsed_names: Vec<_> = cases
@@ -732,8 +742,8 @@ mod tests {
 
         assert!(parsed.common.json);
         assert_eq!(parsed.common.verbose, 2);
-        assert!(parsed.common.hooks_enabled());
-        assert!(parsed.common.gh_enabled());
+        assert!(parsed.common.hooks_enabled(true));
+        assert!(parsed.common.gh_enabled(true));
         assert!(parsed.common.full_path);
         assert!(parsed.common.allow_unsafe);
         assert!(parsed.common.strict_post_hooks);
@@ -743,21 +753,21 @@ mod tests {
         assert_eq!(parsed.common.fzf_args, ["--ansi", "--nth=1"]);
 
         let disabled = request(&["list", "--no-hooks", "--allow-unsafe", "--no-gh"]);
-        assert!(!disabled.common.hooks_enabled());
-        assert!(!disabled.common.gh_enabled());
+        assert!(!disabled.common.hooks_enabled(true));
+        assert!(!disabled.common.gh_enabled(true));
     }
 
     #[test]
     fn parses_explicit_boolean_forms() {
         let disabled = request(&["list", "--no-hooks", "--allow-unsafe", "--no-gh"]);
-        assert!(!disabled.common.hooks_enabled());
-        assert!(!disabled.common.gh_enabled());
+        assert!(!disabled.common.hooks_enabled(true));
+        assert!(!disabled.common.gh_enabled(true));
 
         let enabled = request(&["--hooks", "--gh", "list"]);
         assert!(enabled.common.hooks);
         assert!(enabled.common.gh);
-        assert!(enabled.common.hooks_enabled());
-        assert!(enabled.common.gh_enabled());
+        assert!(enabled.common.hooks_enabled(true));
+        assert!(enabled.common.gh_enabled(true));
 
         let disabled_last = request(&[
             "--hooks",
@@ -767,8 +777,8 @@ mod tests {
             "--allow-unsafe",
             "--no-gh",
         ]);
-        assert!(!disabled_last.common.hooks_enabled());
-        assert!(!disabled_last.common.gh_enabled());
+        assert!(!disabled_last.common.hooks_enabled(true));
+        assert!(!disabled_last.common.gh_enabled(true));
 
         let enabled_last = request(&[
             "--no-hooks",
@@ -778,8 +788,8 @@ mod tests {
             "--hooks",
             "--gh",
         ]);
-        assert!(enabled_last.common.hooks_enabled());
-        assert!(enabled_last.common.gh_enabled());
+        assert!(enabled_last.common.hooks_enabled(true));
+        assert!(enabled_last.common.gh_enabled(true));
     }
 
     #[test]

@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_saphyr::options::{DuplicateKeyPolicy, MergeKeyPolicy};
 use thiserror::Error;
 
@@ -26,7 +26,8 @@ pub enum ConfigError {
     HomeUnavailable,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolvedConfig {
     pub paths: PathsConfig,
     pub git: GitConfig,
@@ -37,57 +38,66 @@ pub struct ResolvedConfig {
     pub selector: SelectorConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PathsConfig {
     pub worktree_root: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitConfig {
     pub base_branch: Option<String>,
     pub base_remote: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GithubConfig {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HooksConfig {
     pub enabled: bool,
     pub timeout_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocksConfig {
     pub timeout_ms: u64,
-    pub stale_lock_ttl_seconds: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListConfig {
     pub table: ListTableConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListTableConfig {
     pub columns: Vec<ListTableColumn>,
     pub path: ListPathConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListPathConfig {
     pub truncate: ListPathTruncate,
     pub min_width: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectorConfig {
     pub cd: SelectorCdConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectorCdConfig {
     pub prompt: String,
     pub surface: SelectorCdSurface,
@@ -95,12 +105,13 @@ pub struct SelectorCdConfig {
     pub fzf: SelectorFzfConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectorFzfConfig {
     pub extra_args: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ListTableColumn {
     Branch,
@@ -113,14 +124,14 @@ pub enum ListTableColumn {
     Path,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ListPathTruncate {
     Auto,
     Never,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SelectorCdSurface {
     Auto,
@@ -143,10 +154,7 @@ impl Default for ResolvedConfig {
                 enabled: true,
                 timeout_ms: 30_000,
             },
-            locks: LocksConfig {
-                timeout_ms: 15_000,
-                stale_lock_ttl_seconds: 1_800,
-            },
+            locks: LocksConfig { timeout_ms: 15_000 },
             list: ListConfig {
                 table: ListTableConfig {
                     columns: vec![
@@ -238,7 +246,6 @@ pub struct PartialHooksConfig {
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct PartialLocksConfig {
     pub timeout_ms: Option<u64>,
-    pub stale_lock_ttl_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -286,6 +293,30 @@ pub struct PartialSelectorFzfConfig {
 pub struct LoadedConfig {
     pub config: ResolvedConfig,
     pub loaded_files: Vec<PathBuf>,
+    pub sources: BTreeMap<String, Vec<ConfigSource>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConfigSource {
+    Default,
+    File { path: PathBuf },
+    CommandLine { argument: String },
+}
+
+fn leaf_keys(value: &serde_json::Value, prefix: &str, keys: &mut Vec<String>) {
+    if let Some(object) = value.as_object() {
+        for (name, value) in object {
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}.{name}")
+            };
+            leaf_keys(value, &path, keys);
+        }
+    } else {
+        keys.push(prefix.to_owned());
+    }
 }
 
 pub fn parse_partial_config(path: &Path, source: &str) -> Result<PartialConfig, ConfigError> {
@@ -379,13 +410,10 @@ pub fn merge_config(base: &mut ResolvedConfig, partial: PartialConfig) {
             base.hooks.timeout_ms = value;
         }
     }
-    if let Some(locks) = partial.locks {
-        if let Some(value) = locks.timeout_ms {
-            base.locks.timeout_ms = value;
-        }
-        if let Some(value) = locks.stale_lock_ttl_seconds {
-            base.locks.stale_lock_ttl_seconds = value;
-        }
+    if let Some(locks) = partial.locks
+        && let Some(value) = locks.timeout_ms
+    {
+        base.locks.timeout_ms = value;
     }
     if let Some(list) = partial.list
         && let Some(table) = list.table
@@ -484,17 +512,44 @@ pub fn load_resolved_config_with_global(
     let files: Vec<_> = ordered.into_iter().map(|(_, path)| path).collect();
 
     let mut config = ResolvedConfig::default();
+    let mut keys = Vec::new();
+    leaf_keys(
+        &serde_json::to_value(&config).expect("configuration is serializable"),
+        "",
+        &mut keys,
+    );
+    let mut sources = keys
+        .into_iter()
+        .map(|key| (key, vec![ConfigSource::Default]))
+        .collect::<BTreeMap<_, _>>();
     for file in &files {
         let source = fs::read_to_string(file).map_err(|source| ConfigError::Io {
             path: file.clone(),
             source,
         })?;
         merge_config(&mut config, parse_partial_config(file, &source)?);
+        if source.trim().is_empty() {
+            continue;
+        }
+        // Parsing above validates duplicate keys, types and supported fields before provenance.
+        let raw: serde_json::Value =
+            serde_saphyr::from_str(&source).map_err(|error| ConfigError::Invalid {
+                path: file.clone(),
+                reason: error.to_string(),
+            })?;
+        if !raw.is_null() {
+            let mut keys = Vec::new();
+            leaf_keys(&raw, "", &mut keys);
+            for key in keys {
+                sources.insert(key, vec![ConfigSource::File { path: file.clone() }]);
+            }
+        }
     }
     validate_worktree_root(repo_root, &config)?;
     Ok(LoadedConfig {
         config,
         loaded_files: files,
+        sources,
     })
 }
 
@@ -521,11 +576,6 @@ fn validate_partial(path: &Path, partial: &PartialConfig) -> Result<(), ConfigEr
     }
     if let Some(locks) = &partial.locks {
         validate_positive(locks.timeout_ms, "locks.timeoutMs", &invalid)?;
-        validate_positive(
-            locks.stale_lock_ttl_seconds,
-            "locks.staleLockTTLSeconds",
-            &invalid,
-        )?;
     }
     if let Some(table) = partial.list.as_ref().and_then(|list| list.table.as_ref()) {
         if let Some(columns) = &table.columns {

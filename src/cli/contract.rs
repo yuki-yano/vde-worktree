@@ -309,6 +309,25 @@ fn semantics(name: &str) -> Semantics {
             &["Print command metadata and JSON schemas; repository-independent"],
             &["vw describe --json", "vw describe exec --json"],
         ),
+        "context" => (
+            "repository and invocation directory",
+            &["Git repository and valid configuration"],
+            &[
+                "Report effective settings and per-field sources, paths, initialization and pending journals; no writes or GitHub queries",
+            ],
+            &["vw -C /projects/repo context --json"],
+        ),
+        "doctor" => (
+            "invocation directory, repository setup and optional dependencies",
+            &[],
+            &[
+                "Read configuration and pending journals without recovery; probe dependencies with 5-second limits; enabled GitHub authentication check may access the network; setup errors retain diagnostics and exit 4",
+            ],
+            &[
+                "vw doctor --json --no-gh",
+                "vw -C /projects/repo doctor --json",
+            ],
+        ),
         _ => unreachable!("every public command has documented semantics: {name}"),
     };
     Semantics {
@@ -398,7 +417,7 @@ fn describe_command(command: &ClapCommand) -> Value {
         "name": name,
         "description": command.get_about().map(ToString::to_string),
         "target": spec.target,
-        "requiresRepository": !matches!(name, "completion" | "describe"),
+        "requiresRepository": !matches!(name, "completion" | "describe" | "doctor"),
         "requiresInitialization": matches!(name, "new" | "switch" | "get" | "mv" | "del" | "gone" | "adopt" | "extract" | "absorb" | "unabsorb" | "use" | "lock" | "unlock"),
         "prerequisites": spec.prerequisites,
         "effects": spec.effects,
@@ -538,6 +557,25 @@ fn worktree_schema() -> Value {
                     ])),
                 ),
                 ("url", nullable(scalar("string"))),
+                (
+                    "diagnostic",
+                    nullable(object([
+                        (
+                            "reason",
+                            values(&[
+                                "not_observed",
+                                "disabled",
+                                "dependency_missing",
+                                "authentication_required",
+                                "command_failed",
+                                "timed_out",
+                                "invalid_response",
+                            ]),
+                        ),
+                        ("message", nullable(scalar("string"))),
+                        ("exitCode", nullable(scalar("integer"))),
+                    ])),
+                ),
             ]),
         ),
         (
@@ -565,8 +603,106 @@ pub fn envelope_schema() -> Value {
     schema
 }
 
-/// Schema for both successful and partial-result data. Ordinary failures have null data in the
-/// common envelope, and are not passed to this schema.
+fn repository_schema() -> Value {
+    object([
+        ("repoRoot", scalar("string")),
+        ("currentWorktreeRoot", scalar("string")),
+        ("gitCommonDir", scalar("string")),
+    ])
+}
+fn effective_config_schema() -> Value {
+    object([
+        ("paths", object([("worktreeRoot", scalar("string"))])),
+        (
+            "git",
+            object([
+                ("baseBranch", nullable(scalar("string"))),
+                ("baseRemote", scalar("string")),
+            ]),
+        ),
+        ("github", object([("enabled", scalar("boolean"))])),
+        (
+            "hooks",
+            object([
+                ("enabled", scalar("boolean")),
+                ("timeoutMs", scalar("integer")),
+            ]),
+        ),
+        ("locks", object([("timeoutMs", scalar("integer"))])),
+        (
+            "list",
+            object([(
+                "table",
+                object([
+                    (
+                        "columns",
+                        array(values(&[
+                            "branch", "dirty", "merged", "pr", "locked", "ahead", "behind", "path",
+                        ])),
+                    ),
+                    (
+                        "path",
+                        object([
+                            ("truncate", values(&["auto", "never"])),
+                            ("minWidth", scalar("integer")),
+                        ]),
+                    ),
+                ]),
+            )]),
+        ),
+        (
+            "selector",
+            object([(
+                "cd",
+                object([
+                    ("prompt", scalar("string")),
+                    ("surface", values(&["auto", "inline", "tmux-popup"])),
+                    ("tmuxPopupOpts", scalar("string")),
+                    ("fzf", object([("extraArgs", strings())])),
+                ]),
+            )]),
+        ),
+    ])
+}
+
+fn configuration_schema() -> Value {
+    object([
+        ("loadedFiles", strings()),
+        (
+            "sources",
+            json!({"type": "object", "additionalProperties": array(json!({"anyOf": [
+                object([("kind", values(&["default"]))]),
+                object([("kind", values(&["file"])), ("path", scalar("string"))]),
+                object([("kind", values(&["commandLine"])), ("argument", scalar("string"))]),
+            ]}))}),
+        ),
+        ("effective", effective_config_schema()),
+    ])
+}
+fn pending_recoveries_schema() -> Value {
+    array(object([
+        ("transactionId", scalar("string")),
+        ("path", scalar("string")),
+        ("journalState", values(&["valid", "invalid", "missing"])),
+        (
+            "phase",
+            nullable(values(&[
+                "prepared",
+                "branchRenamed",
+                "worktreeMoved",
+                "commitForward",
+                "committed",
+            ])),
+        ),
+        ("fromBranch", nullable(scalar("string"))),
+        ("toBranch", nullable(scalar("string"))),
+        ("sourcePath", nullable(scalar("string"))),
+        ("targetPath", nullable(scalar("string"))),
+        ("problem", nullable(scalar("string"))),
+    ]))
+}
+
+/// Schema for successful and partial-result data; ordinary failures use null data.
 #[allow(clippy::too_many_lines)]
 pub fn data_schema(command: &str) -> Value {
     let path = || object([("branch", scalar("string")), ("path", scalar("string"))]);
@@ -675,6 +811,32 @@ pub fn data_schema(command: &str) -> Value {
             ("binaries", strings()),
             ("commands", array(scalar("object"))),
             ("envelopeSchema", scalar("object")),
+        ]),
+        "context" => object([
+            ("executionDirectory", scalar("string")),
+            ("repository", repository_schema()),
+            ("initialized", scalar("boolean")),
+            ("managedWorktreeRoot", scalar("string")),
+            ("baseBranch", nullable(scalar("string"))),
+            ("baseBranchError", nullable(diagnostic_schema())),
+            ("config", configuration_schema()),
+            ("pendingRecoveries", pending_recoveries_schema()),
+        ]),
+        "doctor" => object([
+            ("executionDirectory", scalar("string")),
+            ("repository", nullable(repository_schema())),
+            ("healthy", scalar("boolean")),
+            ("config", nullable(configuration_schema())),
+            (
+                "checks",
+                array(object([
+                    ("name", scalar("string")),
+                    ("status", values(&["ok", "warning", "error", "skipped"])),
+                    ("message", scalar("string")),
+                    ("details", scalar("object")),
+                ])),
+            ),
+            ("pendingRecoveries", pending_recoveries_schema()),
         ]),
         _ => unreachable!("every public command has a data schema: {command}"),
     }

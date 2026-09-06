@@ -71,6 +71,11 @@ fn validate(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
                 validate(value, child, &format!("{path}.{key}"))?;
             } else if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
                 return Err(format!("{path}: undeclared field {key}"));
+            } else if let Some(child) = schema
+                .get("additionalProperties")
+                .filter(|child| child.is_object())
+            {
+                validate(value, child, &format!("{path}.{key}"))?;
             }
         }
     }

@@ -33,6 +33,7 @@ pub enum ErrorCode {
     UnsupportedRepositoryLayout,
     InvalidArgument,
     InvalidConfig,
+    InvalidMetadata,
     UnknownCommand,
     SafetyRejected,
     UnsafeFlagRequired,
@@ -76,6 +77,7 @@ impl ErrorCode {
             | Self::UnknownCommand
             | Self::InvalidRemoteBranchFormat => ExitCode::InvalidArgument.value(),
             Self::SafetyRejected
+            | Self::InvalidMetadata
             | Self::UnsupportedRepositoryLayout
             | Self::UnsafeFlagRequired
             | Self::NotInitialized

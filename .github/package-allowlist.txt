@@ -18,6 +18,7 @@ src/adapters/git_cli.rs
 src/adapters/mod.rs
 src/adapters/process.rs
 src/app/completion.rs
+src/app/diagnostics.rs
 src/app/dispatch.rs
 src/app/error_mapper.rs
 src/app/misc_commands.rs
@@ -59,6 +60,7 @@ src/state/metadata_transaction.rs
 src/state/mod.rs
 src/state/repo_lock.rs
 src/state/worktree_lock.rs
+tests/agent_cli_acceptance.rs
 tests/phase1_cli_acceptance.rs
 tests/phase2_cli_acceptance.rs
 tests/phase3_cli_acceptance.rs

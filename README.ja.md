@@ -124,6 +124,40 @@ branch と path は同時に指定できません。
 `copy` / `link` の対象は、明示 `--worktree`、`WT_WORKTREE_PATH`、現在の worktree の順で決まります。
 環境変数の相対 path は実行ディレクトリを基準にします。
 
+## 診断と実効設定
+
+```bash
+vw context --json
+vw doctor --json --no-gh
+```
+
+`context` は repository の各 path、初期化状態、管理ルート、base branch、保留中のメタデータ journal を返します。
+`config.effective` は CLI の上書きを含む実効値で、`config.sources` は各項目の既定値・設定ファイル・CLI 引数を示します。
+設定ファイルは global、repository、実行ディレクトリに近い設定の順に適用します。
+明示 `--hooks` / `--gh` は設定の無効化を上書きし、肯定・否定の CLI flag は最後の指定が優先されます。
+`--fzf-arg` は設定済み引数へ追加し、両方の出所を記録します。
+
+`doctor` は Git 外や設定不正でも、独立した診断項目を返します。
+保留中の transaction を復旧せずに読み、repository lock の取得や hook の実行は行いません。
+必要な設定・初期化などに問題がある場合は終了コード4を返し、`data` に診断結果を保持して `healthy` を `false` にします。
+任意の依存コマンドの不足は warning です。
+依存コマンドの検査には各5秒の制限を設けています。
+GitHub 連携が有効なら認証も確認するため通信が発生する場合があり、`--no-gh` でこの検査を省略できます。
+`context` は GitHub を照会しません。
+
+`--verbose` は解決したコンテキストと実行結果を stderr に出し、繰り返すと実効設定も表示します。
+stdout の JSON は1個のオブジェクトを維持します。
+メタデータの警告は envelope の `warnings` 配列からも取得できます。
+
+PR 取得の失敗理由は `pr.diagnostic` に入り、`disabled`、`dependency_missing`、`authentication_required`、`command_failed`、`timed_out`、`invalid_response`、`not_observed` を区別します。
+取得できた終了コードとメッセージも保持します。
+認証要求の判定は [GitHub CLI の終了コード契約](https://cli.github.com/manual/gh_help_exit-codes) に従い、通信障害などのコマンド失敗は元の診断メッセージを残します。
+PR 状態が不明な場合の `merged.byPR` は引き続き `null` です。
+
+使われていなかった `locks.staleLockTTLSeconds` は削除し、不明な設定キーとして拒否します。
+repository lock の有効期間は OS の lock が管理し、`locks.timeoutMs` は待機時間を指定します。
+初期化完了には `vw init` が作成する hooks・logs・locks・state ディレクトリが必要です。
+
 ## シェル補完
 
 コマンドから補完スクリプトを出力:
@@ -195,7 +229,9 @@ fileだけが対象です。tracked file、symlink、既存destination、destina
 ## グローバルオプション
 
 - `--json`: 機械可読の単一 JSON 出力
-- `--verbose`: 詳細ログ
+- `-C <directory>` / `--directory <directory>`: 実行コンテキストの基準ディレクトリ
+- `--worktree <path>`: status・path・exec・copy・link の明示対象
+- `--verbose`: コンテキストと結果の診断。繰り返すと実効設定も表示
 - `--hooks` / `--no-hooks`: hookを有効/無効化（無効化は`--allow-unsafe`必須）
 - `--gh` / `--no-gh`: `gh`によるPR状態判定を有効/無効化
 - `--full-path`: `list`のpath省略を無効化
@@ -642,7 +678,6 @@ hooks:
   timeoutMs: 30000
 locks:
   timeoutMs: 15000
-  staleLockTTLSeconds: 1800
 list:
   table:
     columns: [branch, dirty, merged, pr, locked, ahead, behind, path]

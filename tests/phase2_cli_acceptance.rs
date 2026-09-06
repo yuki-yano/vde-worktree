@@ -490,6 +490,13 @@ fn snapshot_warnings_use_stderr_without_corrupting_json_or_metadata() {
             let value = json_stdout(&output);
             assert_eq!(value["status"], "ok");
             assert!(value["data"].get("warnings").is_none());
+            assert!(
+                value["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|warning| warning["code"] == "INVALID_METADATA")
+            );
         }
         assert_eq!(fs::read(&lifecycle).unwrap(), before);
     }

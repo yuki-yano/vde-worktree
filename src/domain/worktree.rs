@@ -27,13 +27,47 @@ pub enum PrStatus {
 pub struct PrState {
     pub status: Option<PrStatus>,
     pub url: Option<String>,
+    pub diagnostic: Option<PrDiagnostic>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrUnavailableReason {
+    NotObserved,
+    Disabled,
+    DependencyMissing,
+    AuthenticationRequired,
+    CommandFailed,
+    TimedOut,
+    InvalidResponse,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrDiagnostic {
+    pub reason: PrUnavailableReason,
+    pub message: Option<String>,
+    pub exit_code: Option<i32>,
 }
 
 impl PrState {
     pub const fn unknown() -> Self {
+        Self::unavailable(PrUnavailableReason::NotObserved, None, None)
+    }
+
+    pub const fn unavailable(
+        reason: PrUnavailableReason,
+        message: Option<String>,
+        exit_code: Option<i32>,
+    ) -> Self {
         Self {
             status: Some(PrStatus::Unknown),
             url: None,
+            diagnostic: Some(PrDiagnostic {
+                reason,
+                message,
+                exit_code,
+            }),
         }
     }
 
@@ -41,6 +75,7 @@ impl PrState {
         Self {
             status: Some(PrStatus::None),
             url: None,
+            diagnostic: None,
         }
     }
 }
@@ -137,6 +172,7 @@ mod tests {
                 pr: PrState {
                     status: None,
                     url: None,
+                    diagnostic: None,
                 },
                 upstream: WorktreeUpstreamState {
                     ahead: None,

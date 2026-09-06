@@ -318,7 +318,7 @@ fn all_thirteen_uninitialized_write_commands_have_no_filesystem_side_effect() {
 #[test]
 fn competing_process_observes_cli_lock_timeout_contract() {
     let (_fixture, repository) = create_repository();
-    fs::create_dir_all(repository.join(".vde/worktree")).expect("mark repository initialized");
+    assert!(run_vw(&repository, &["init", "--json"]).status.success());
     let common_dir = repository.join(".git");
     let _owner = acquire_repo_lock(&common_dir, Duration::from_secs(1), "test-owner")
         .expect("acquire owner lock");
@@ -337,7 +337,7 @@ fn competing_process_observes_cli_lock_timeout_contract() {
 #[test]
 fn repository_config_controls_lock_timeout() {
     let (_fixture, repository) = create_repository();
-    fs::create_dir_all(repository.join(".vde/worktree")).expect("mark repository initialized");
+    assert!(run_vw(&repository, &["init", "--json"]).status.success());
     fs::write(
         repository.join(".vde/worktree/config.yml"),
         "locks:\n  timeoutMs: 35\n",

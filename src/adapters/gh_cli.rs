@@ -7,8 +7,10 @@ use serde::Deserialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::domain::worktree::{PrState, PrStatus};
-use crate::ports::process::{OutputPolicy, ProcessCommand, ProcessRunner, StdinPolicy};
+use crate::domain::worktree::{PrState, PrStatus, PrUnavailableReason};
+use crate::ports::process::{
+    OutputPolicy, ProcessCommand, ProcessError, ProcessRunner, StdinPolicy,
+};
 use crate::ports::snapshot::PrStateLookup;
 
 const DEFAULT_GH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -67,7 +69,7 @@ where
             return HashMap::new();
         }
         if !enabled {
-            return unknown_states(&targets);
+            return unknown_states(&targets, PrUnavailableReason::Disabled, None, None);
         }
 
         let mut merged = HashMap::with_capacity(targets.len());
@@ -102,14 +104,41 @@ where
             OsString::from("--json"),
             OsString::from("headRefName,state,mergedAt,updatedAt,url"),
         ];
-        let output = self.runner.run(&gh_command(repo_root, args, self.timeout));
-        let Ok(output) = output else {
-            return unknown_states(branches);
+        let output = match self.runner.run(&gh_command(repo_root, args, self.timeout)) {
+            Ok(output) => output,
+            Err(error) => {
+                let reason = if matches!(&error, ProcessError::Spawn(error) if error.kind() == std::io::ErrorKind::NotFound)
+                {
+                    PrUnavailableReason::DependencyMissing
+                } else {
+                    PrUnavailableReason::CommandFailed
+                };
+                return unknown_states(branches, reason, Some(&error.to_string()), None);
+            }
         };
         if output.timed_out || output.exit_code != Some(0) {
-            return unknown_states(branches);
+            let reason = if output.timed_out {
+                PrUnavailableReason::TimedOut
+            } else if output.exit_code == Some(4) {
+                PrUnavailableReason::AuthenticationRequired
+            } else {
+                PrUnavailableReason::CommandFailed
+            };
+            return unknown_states(
+                branches,
+                reason,
+                Some(String::from_utf8_lossy(&output.stderr).trim()),
+                output.exit_code,
+            );
         }
-        parse_pr_states(&output.stdout, branches).unwrap_or_else(|| unknown_states(branches))
+        parse_pr_states(&output.stdout, branches).unwrap_or_else(|| {
+            unknown_states(
+                branches,
+                PrUnavailableReason::InvalidResponse,
+                Some("gh returned an invalid PR response"),
+                output.exit_code,
+            )
+        })
     }
 }
 
@@ -135,10 +164,20 @@ fn target_branches(branches: &[Option<String>], base_branch: &str) -> Vec<String
         .collect()
 }
 
-fn unknown_states(branches: &[String]) -> HashMap<String, PrState> {
+fn unknown_states(
+    branches: &[String],
+    reason: PrUnavailableReason,
+    message: Option<&str>,
+    exit_code: Option<i32>,
+) -> HashMap<String, PrState> {
     branches
         .iter()
-        .map(|branch| (branch.clone(), PrState::unknown()))
+        .map(|branch| {
+            (
+                branch.clone(),
+                PrState::unavailable(reason, message.map(str::to_owned), exit_code),
+            )
+        })
         .collect()
 }
 
@@ -192,6 +231,7 @@ fn parse_pr_states(raw: &[u8], branches: &[String]) -> Option<HashMap<String, Pr
         let state = PrState {
             status: Some(pr_status(&record)),
             url: record.url.filter(|url| !url.is_empty()),
+            diagnostic: None,
         };
         let replace = latest
             .get(&branch)
@@ -291,7 +331,10 @@ mod tests {
             &[Some("main".into()), Some("feature/a".into()), None],
             false,
         );
-        assert_eq!(states.get("feature/a"), Some(&PrState::unknown()));
+        assert_eq!(
+            states["feature/a"].diagnostic.as_ref().unwrap().reason,
+            PrUnavailableReason::Disabled
+        );
         assert!(client.runner.commands.lock().unwrap().is_empty());
     }
 
@@ -362,6 +405,10 @@ mod tests {
             true,
         );
         assert_eq!(states["feature/a"].status, Some(PrStatus::Unknown));
+        assert_eq!(
+            states["feature/a"].diagnostic.as_ref().unwrap().reason,
+            PrUnavailableReason::InvalidResponse
+        );
 
         let unavailable = GhCli::new(FakeRunner::with_outputs(vec![Err(ProcessError::Spawn(
             std::io::Error::new(std::io::ErrorKind::NotFound, "gh not found"),
@@ -373,6 +420,37 @@ mod tests {
             true,
         );
         assert_eq!(states["feature/a"].status, Some(PrStatus::Unknown));
+        assert_eq!(
+            states["feature/a"].diagnostic.as_ref().unwrap().reason,
+            PrUnavailableReason::DependencyMissing
+        );
+    }
+
+    #[test]
+    fn unknown_states_preserve_authentication_timeout_and_failure_evidence() {
+        for (exit_code, timed_out, reason) in [
+            (Some(4), false, PrUnavailableReason::AuthenticationRequired),
+            (None, true, PrUnavailableReason::TimedOut),
+            (Some(1), false, PrUnavailableReason::CommandFailed),
+        ] {
+            let client = GhCli::new(FakeRunner::with_outputs(vec![Ok(ProcessOutput {
+                stdout: Vec::new(),
+                stderr: b"probe detail".to_vec(),
+                exit_code,
+                timed_out,
+            })]));
+            let states = client.resolve_pr_states(
+                Path::new("/repo"),
+                Some("main"),
+                &[Some("topic".to_owned())],
+                true,
+            );
+            let diagnostic = states["topic"].diagnostic.as_ref().unwrap();
+            assert_eq!(diagnostic.reason, reason);
+            assert_eq!(diagnostic.exit_code, exit_code);
+            assert_eq!(diagnostic.message.as_deref(), Some("probe detail"));
+            assert_eq!(states["topic"].status, Some(PrStatus::Unknown));
+        }
     }
 
     #[test]

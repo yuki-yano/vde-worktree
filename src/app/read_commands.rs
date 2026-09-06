@@ -15,7 +15,9 @@ use crate::app::target;
 use crate::cli::{Command, ParsedRequest};
 use crate::domain::error::{CliError, ErrorCode};
 use crate::domain::repo::RepoContext;
-use crate::domain::worktree::{PrStatus, SnapshotWarning, WorktreeSnapshot, WorktreeStatus};
+use crate::domain::worktree::{
+    PrStatus, SnapshotWarning, SnapshotWarningCode, WorktreeSnapshot, WorktreeStatus,
+};
 use crate::ports::process::ProcessRunner;
 use crate::ports::snapshot::{GitSnapshotPort, PrStateLookup};
 use crate::presentation::picker::{
@@ -106,14 +108,14 @@ where
         .collect_registry(
             &context.repo_root,
             &base_branch,
-            request.common.gh_enabled() && config.github.enabled,
+            request.common.gh_enabled(config.github.enabled),
             &registry,
         )
         .map_err(MapToCliError::map_to_cli_error)?;
     ensure_json_representable_paths(context, &snapshot)?;
     let warning_text = render_warnings(&snapshot.warnings);
 
-    match &request.command {
+    let mut output = match &request.command {
         Command::List { .. } => {
             list_output(request, context, config, runtime, &snapshot, warning_text)
         }
@@ -124,7 +126,26 @@ where
         )),
         Command::Cd => cd_output(request, context, config, runtime, &snapshot, warning_text),
         _ => unreachable!("read command was checked before snapshot collection"),
-    }
+    }?;
+    output
+        .warnings
+        .extend(snapshot.warnings.iter().map(|warning| {
+            CliError::new(
+                match warning.code {
+                    SnapshotWarningCode::InvalidLifecycle | SnapshotWarningCode::InvalidLock => {
+                        ErrorCode::InvalidMetadata
+                    }
+                    SnapshotWarningCode::LifecycleObservationFailed => ErrorCode::InternalError,
+                },
+                &warning.message,
+            )
+            .with_details(std::collections::BTreeMap::from([
+                ("warningCode".to_owned(), json!(warning.code)),
+                ("branch".to_owned(), json!(warning.branch)),
+                ("path".to_owned(), json!(warning.path)),
+            ]))
+        }));
+    Ok(output)
 }
 
 fn ensure_json_representable_paths(

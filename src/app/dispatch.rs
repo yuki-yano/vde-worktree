@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::Write as _;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,6 +11,7 @@ use crate::adapters::gh_cli::GhCli;
 use crate::adapters::git_cli::GitCli;
 use crate::adapters::process::StdProcessRunner;
 use crate::app::completion::execute_completion;
+use crate::app::error_mapper::map_metadata_transaction_error;
 use crate::app::error_mapper::{MapToCliError, map_hook_report};
 use crate::app::misc_commands::{MiscCommandOutput, execute_misc_command};
 use crate::app::mutations_change::{
@@ -54,9 +54,7 @@ use crate::state::hooks::{
     HookContext, HookDisposition, HookPhase, MutationHookContexts, SystemHookProcessRunner,
     run_post_hook, run_pre_hook,
 };
-use crate::state::metadata_transaction::{
-    MetadataTransactionError, recover_pending_metadata_transactions,
-};
+use crate::state::metadata_transaction::recover_pending_metadata_transactions;
 use crate::state::repo_lock::{RepoLock, acquire_repo_lock};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -212,7 +210,7 @@ where
 {
     let context = if matches!(
         request.command,
-        Command::Completion { .. } | Command::Describe { .. }
+        Command::Completion { .. } | Command::Describe { .. } | Command::Doctor
     ) {
         None
     } else {
@@ -261,7 +259,7 @@ where
                 .hook_timeout_ms
                 .unwrap_or(config.hooks.timeout_ms),
         );
-        let hooks_enabled = request.common.hooks_enabled() && config.hooks.enabled;
+        let hooks_enabled = request.common.hooks_enabled(config.hooks.enabled);
         execute_mutation_pipeline(
             request,
             backend,
@@ -275,7 +273,7 @@ where
     };
     drop(lock_guard);
 
-    match result {
+    let mut rendered = match result {
         Ok(mut output) => {
             for warning in &hook_warnings {
                 let _ = writeln!(output.human_stderr, "Warning: {}", warning.message);
@@ -284,6 +282,47 @@ where
             render_output(request, context.as_ref(), output)
         }
         Err(error) => render_error(request, context.as_ref(), &error),
+    };
+    append_verbose(request, context.as_ref(), config.as_ref(), &mut rendered);
+    rendered
+}
+
+fn append_verbose(
+    request: &ParsedRequest,
+    context: Option<&RepoContext>,
+    config: Option<&ResolvedConfig>,
+    rendered: &mut ProcessOutput,
+) {
+    if request.common.verbose > 0 {
+        let _ = writeln!(
+            rendered.stderr,
+            "[verbose] command={} repo={} worktree={} exit={}",
+            request.command.name(),
+            context.map_or_else(
+                || "(none)".to_owned(),
+                |context| context.repo_root.display().to_string()
+            ),
+            context.map_or_else(
+                || "(none)".to_owned(),
+                |context| context.current_worktree_root.display().to_string()
+            ),
+            rendered.exit_code
+        );
+        if let Some(config) = config {
+            let mut config = config.clone();
+            crate::app::diagnostics::apply_cli_values(&mut config, &request.common);
+            let _ = writeln!(
+                rendered.stderr,
+                "[verbose] hooks={} github={} hookTimeoutMs={} lockTimeoutMs={}",
+                config.hooks.enabled,
+                config.github.enabled,
+                config.hooks.timeout_ms,
+                config.locks.timeout_ms
+            );
+            if request.common.verbose > 1 {
+                let _ = writeln!(rendered.stderr, "[verbose] config={}", json!(config));
+            }
+        }
     }
 }
 
@@ -865,18 +904,6 @@ fn local_host_name() -> Result<String, CliError> {
     }
 }
 
-fn map_metadata_transaction_error(error: &MetadataTransactionError) -> CliError {
-    match error {
-        MetadataTransactionError::InvalidMetadata { .. }
-        | MetadataTransactionError::TargetExists { .. }
-        | MetadataTransactionError::PendingTransaction(_)
-        | MetadataTransactionError::RecoveryConflict { .. } => {
-            CliError::new(ErrorCode::LockConflict, error.to_string())
-        }
-        _ => CliError::new(ErrorCode::InternalError, error.to_string()),
-    }
-}
-
 #[allow(clippy::too_many_lines)]
 fn mutation_command_output(result: SystemMutationResult) -> Result<CommandOutput, CliError> {
     match result {
@@ -1065,18 +1092,7 @@ impl ApplicationBackend for SystemBackend {
     }
 
     fn is_initialized(&self, repo_root: &Path) -> Result<bool, CliError> {
-        let path = repo_root.join(".vde/worktree");
-        match fs::metadata(&path) {
-            Ok(metadata) => Ok(metadata.is_dir()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(CliError::new(
-                ErrorCode::InternalError,
-                format!(
-                    "failed to inspect initialization state at {}: {error}",
-                    path.display()
-                ),
-            )),
-        }
+        crate::app::diagnostics::initialization_status(repo_root)
     }
 
     fn acquire_repo_lock(
@@ -1730,6 +1746,23 @@ impl ApplicationBackend for SystemBackend {
         request: &ParsedRequest,
         context: Option<&RepoContext>,
     ) -> Result<CommandOutput, CliError> {
+        if matches!(request.command, Command::Doctor) {
+            return Ok(crate::app::diagnostics::doctor_output(
+                request,
+                &self.cwd,
+                &self.resolve_repo_context(),
+                &self.git,
+                &StdProcessRunner,
+            ));
+        }
+        if matches!(request.command, Command::Context) {
+            return crate::app::diagnostics::context_output(
+                request,
+                &self.cwd,
+                context.expect("context command resolves repository"),
+                &self.git,
+            );
+        }
         if let Command::Describe { command } = &request.command {
             let data = crate::cli::contract::describe(command.as_deref())?;
             let mut output = CommandOutput::new(data);
@@ -1787,6 +1820,7 @@ impl ApplicationBackend for SystemBackend {
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
+    use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
     use serde_json::Value;
@@ -2272,7 +2306,7 @@ mod tests {
     }
 
     #[test]
-    fn config_hook_disable_needs_no_unsafe_flag_and_cannot_be_forced_by_hooks_flag() {
+    fn explicit_hooks_flag_overrides_disabled_configuration() {
         let mut config = ResolvedConfig::default();
         config.hooks.enabled = false;
         let backend = FakeBackend {
@@ -2286,10 +2320,21 @@ mod tests {
         );
 
         assert_eq!(output.exit_code, 0);
-        assert!(backend.hook_calls.borrow().is_empty());
+        assert_eq!(
+            *backend.hook_calls.borrow(),
+            [HookPhase::Pre, HookPhase::Post]
+        );
         assert_eq!(
             *backend.trace.borrow(),
-            ["lock", "plan", "stage", "apply", "state"]
+            [
+                "lock",
+                "plan",
+                "stage",
+                "pre-hook",
+                "apply",
+                "state",
+                "post-hook"
+            ]
         );
     }
 

@@ -123,6 +123,42 @@ non-UTF-8 and control characters are rejected by the one-line path contract.
 For `copy` and `link`, explicit `--worktree` takes priority over `WT_WORKTREE_PATH`, then the current
 worktree. Relative environment paths are based on the execution directory.
 
+## Diagnostics and Effective Configuration
+
+```bash
+vw context --json
+vw doctor --json --no-gh
+```
+
+`context` reports repository paths, initialization, the managed root, base branch and pending
+metadata journals. `config.effective` includes CLI overrides; `config.sources` identifies defaults,
+files or command-line arguments for every setting. File sources are applied from global to
+repository to the nearest directory configuration. Explicit `--hooks` / `--gh` override disabled
+configuration; the last positive or negative CLI flag wins. Repeated `--fzf-arg` values append to
+configured arguments, with both sources recorded.
+
+`doctor` collects setup failures even outside Git or with invalid configuration. It observes
+pending transactions without recovery and does not acquire repository locks or run hooks.
+Required setup failures return exit 4 with diagnostics preserved in `data`; `healthy` is false.
+Missing optional dependencies are warnings. Dependency probes have 5-second limits. Enabled
+GitHub integration also checks authentication and may access the network; `--no-gh` skips those
+probes. `context` never performs a GitHub lookup.
+
+`--verbose` writes resolved context and result diagnostics to stderr. Repeat it to include the
+effective configuration while retaining a single JSON object on stdout. Metadata warnings are
+also available in the envelope's `warnings` array.
+
+PR lookup failures include `pr.diagnostic`: `disabled`, `dependency_missing`,
+`authentication_required`, `command_failed`, `timed_out`, `invalid_response`, or `not_observed`.
+The diagnostic retains the exit code and message when available. Authentication-required follows
+[GitHub CLI's exit-code contract](https://cli.github.com/manual/gh_help_exit-codes); other command
+failures, including network failures, keep their original diagnostic message. Unknown PR state
+continues to produce `merged.byPR: null`.
+
+The unused `locks.staleLockTTLSeconds` setting has been removed and is rejected as an unknown key.
+Repository locking uses the operating system's lock lifetime; `locks.timeoutMs` controls waiting.
+Initialization requires the hooks, logs, locks and state directories created by `vw init`.
+
 ## Shell Completion
 
 Generate from command:
@@ -195,7 +231,9 @@ the command runs; concurrent changes can therefore make worktree creation fail a
 ## Global Options
 
 - `--json`: machine-readable single-object output
-- `--verbose`: verbose logging
+- `-C <directory>` / `--directory <directory>`: resolve the invocation from this directory
+- `--worktree <path>`: explicit target for status, path, exec, copy and link
+- `--verbose`: context/result diagnostics; repeat to include effective configuration
 - `--hooks` / `--no-hooks`: enable or disable hooks (disabling requires `--allow-unsafe`)
 - `--gh` / `--no-gh`: enable or disable `gh`-based PR status checks
 - `--full-path`: disable path truncation in `list`
@@ -636,7 +674,6 @@ hooks:
   timeoutMs: 30000
 locks:
   timeoutMs: 15000
-  staleLockTTLSeconds: 1800
 list:
   table:
     columns: [branch, dirty, merged, pr, locked, ahead, behind, path]

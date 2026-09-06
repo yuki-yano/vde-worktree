@@ -45,7 +45,7 @@ _vw() {
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -76,7 +76,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -101,7 +101,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '(--gh)--monitor[Emit a lightweight internal snapshot for monitor integrations]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -125,7 +125,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -150,7 +150,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -175,7 +175,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -200,7 +200,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -225,7 +225,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -255,7 +255,7 @@ _arguments "${_arguments_options[@]}" : \
 '--force-unmerged[Allow deleting work not known to be merged; non-interactive use requires --allow-unsafe]' \
 '--force-locked[Allow deleting a protected worktree; non-interactive use requires --allow-unsafe]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -282,7 +282,7 @@ _arguments "${_arguments_options[@]}" : \
 '(--dry-run)--apply[Delete the eligible candidates (default\: preview only)]' \
 '(--apply)--dry-run[Only report eligible candidates (the default)]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -308,7 +308,7 @@ _arguments "${_arguments_options[@]}" : \
 '(--dry-run)--apply[Move eligible external worktrees into the managed root (default\: preview only)]' \
 '(--apply)--dry-run[Only report proposed moves (the default)]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -332,7 +332,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -359,7 +359,7 @@ _arguments "${_arguments_options[@]}" : \
 '--current[Extract the current primary branch; required]' \
 '--stash[Temporarily stash dirty tracked and untracked changes for transfer]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -386,7 +386,7 @@ _arguments "${_arguments_options[@]}" : \
 '--keep-stash[Retain the exact transfer stash after successful application]' \
 '--allow-agent[Allow non-interactive transfer; also requires --allow-unsafe]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -414,7 +414,7 @@ _arguments "${_arguments_options[@]}" : \
 '--keep-stash[Retain the exact transfer stash after successful application]' \
 '--allow-agent[Allow non-interactive transfer; also requires --allow-unsafe]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -441,7 +441,7 @@ _arguments "${_arguments_options[@]}" : \
 '--allow-agent[Allow non-interactive checkout; also requires --allow-unsafe]' \
 '--allow-shared[Allow the branch to remain attached to a linked worktree]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -466,7 +466,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -492,7 +492,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -518,7 +518,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -543,7 +543,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -570,7 +570,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -597,7 +597,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--force[Remove the lock regardless of owner or record validity]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -622,7 +622,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -648,7 +648,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--install[Atomically install the generated script instead of printing it]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -673,7 +673,7 @@ _arguments "${_arguments_options[@]}" : \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
-'*--verbose[Increase diagnostic detail on stderr (repeatable)]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
 '-v[Print the version]' \
 '--version[Print the version]' \
 '--hooks[Enable automatic command hooks]' \
@@ -686,6 +686,54 @@ _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
 '--help[Print help]' \
 '::command -- Command to describe (default\: all public commands):_default' \
+&& ret=0
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
+'--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \
+'--hook-timeout-ms=[Maximum time per hook in milliseconds (default\: hooks.timeoutMs, 30000)]:HOOK_TIMEOUT_MS:_default' \
+'--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
+'--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
+'*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
+'--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
+'*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
+'-v[Print the version]' \
+'--version[Print the version]' \
+'--hooks[Enable automatic command hooks]' \
+'--no-hooks[Disable automatic hooks; requires --allow-unsafe]' \
+'--gh[Enable GitHub pull request lookup]' \
+'--no-gh[Disable GitHub lookup and network requests made by that lookup]' \
+'--full-path[Show absolute paths in human list output]' \
+'--allow-unsafe[Acknowledge explicitly requested unsafe operations]' \
+'--strict-post-hooks[Return an error if a post-hook fails; retain the completed operation result]' \
+'-h[Print help]' \
+'--help[Print help]' \
 && ret=0
 ;;
 (help)
@@ -796,6 +844,14 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -836,6 +892,8 @@ _vw_commands() {
 'cd:Select a worktree path interactively' \
 'completion:Generate or install shell completions' \
 'describe:Describe commands, arguments, effects, and the JSON output contract' \
+'context:Show execution context, effective configuration and setting sources' \
+'doctor:Diagnose repository setup, configuration and dependencies without changing state' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'vw commands' commands "$@"
@@ -860,6 +918,11 @@ _vw__subcmd__completion_commands() {
     local commands; commands=()
     _describe -t commands 'vw completion commands' commands "$@"
 }
+(( $+functions[_vw__subcmd__context_commands] )) ||
+_vw__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw context commands' commands "$@"
+}
 (( $+functions[_vw__subcmd__copy_commands] )) ||
 _vw__subcmd__copy_commands() {
     local commands; commands=()
@@ -874,6 +937,11 @@ _vw__subcmd__del_commands() {
 _vw__subcmd__describe_commands() {
     local commands; commands=()
     _describe -t commands 'vw describe commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__doctor_commands] )) ||
+_vw__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw doctor commands' commands "$@"
 }
 (( $+functions[_vw__subcmd__exec_commands] )) ||
 _vw__subcmd__exec_commands() {
@@ -922,6 +990,8 @@ _vw__subcmd__help_commands() {
 'cd:Select a worktree path interactively' \
 'completion:Generate or install shell completions' \
 'describe:Describe commands, arguments, effects, and the JSON output contract' \
+'context:Show execution context, effective configuration and setting sources' \
+'doctor:Diagnose repository setup, configuration and dependencies without changing state' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'vw help commands' commands "$@"
@@ -946,6 +1016,11 @@ _vw__subcmd__help__subcmd__completion_commands() {
     local commands; commands=()
     _describe -t commands 'vw help completion commands' commands "$@"
 }
+(( $+functions[_vw__subcmd__help__subcmd__context_commands] )) ||
+_vw__subcmd__help__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help context commands' commands "$@"
+}
 (( $+functions[_vw__subcmd__help__subcmd__copy_commands] )) ||
 _vw__subcmd__help__subcmd__copy_commands() {
     local commands; commands=()
@@ -960,6 +1035,11 @@ _vw__subcmd__help__subcmd__del_commands() {
 _vw__subcmd__help__subcmd__describe_commands() {
     local commands; commands=()
     _describe -t commands 'vw help describe commands' commands "$@"
+}
+(( $+functions[_vw__subcmd__help__subcmd__doctor_commands] )) ||
+_vw__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'vw help doctor commands' commands "$@"
 }
 (( $+functions[_vw__subcmd__help__subcmd__exec_commands] )) ||
 _vw__subcmd__help__subcmd__exec_commands() {

@@ -1,3 +1,4 @@
+use crate::state::metadata_transaction::MetadataTransactionError;
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
@@ -386,6 +387,18 @@ fn details<const N: usize>(entries: [(&str, Value); N]) -> BTreeMap<String, Valu
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value))
         .collect()
+}
+
+pub fn map_metadata_transaction_error(error: &MetadataTransactionError) -> CliError {
+    match error {
+        MetadataTransactionError::InvalidMetadata { .. }
+        | MetadataTransactionError::TargetExists { .. }
+        | MetadataTransactionError::PendingTransaction(_)
+        | MetadataTransactionError::RecoveryConflict { .. } => {
+            CliError::new(ErrorCode::LockConflict, error.to_string())
+        }
+        _ => CliError::new(ErrorCode::InternalError, error.to_string()),
+    }
 }
 
 #[cfg(test)]
