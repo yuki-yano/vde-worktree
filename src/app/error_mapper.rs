@@ -116,6 +116,8 @@ fn hook_execution_details(
 ) -> BTreeMap<String, Value> {
     details([
         ("exitCode", json!(execution.exit_code)),
+        ("signal", json!(execution.signal)),
+        ("stderrTruncated", json!(execution.stderr_truncated)),
         ("timedOut", json!(execution.timed_out)),
         ("stderr", json!(execution.stderr)),
         ("startedAt", json!(execution.started_at)),
@@ -125,12 +127,18 @@ fn hook_execution_details(
 
 impl MapToCliError for GitCliError {
     fn map_to_cli_error(self) -> CliError {
+        (&self).map_to_cli_error()
+    }
+}
+
+impl MapToCliError for &GitCliError {
+    fn map_to_cli_error(self) -> CliError {
         let message = self.to_string();
         match self {
             GitCliError::NotGitRepository { cwd, stderr } => {
                 CliError::new(ErrorCode::NotGitRepository, message).with_details(details([
                     ("cwd", json!(cwd.to_string_lossy())),
-                    ("stderr", json!(String::from_utf8_lossy(&stderr))),
+                    ("stderr", json!(String::from_utf8_lossy(stderr))),
                 ]))
             }
             GitCliError::UnsupportedRepositoryLayout { cwd, reason } => {
@@ -152,6 +160,9 @@ impl MapToCliError for GitCliError {
                     ("cwd", json!(failure.cwd.to_string_lossy())),
                     ("argv", json!(args)),
                     ("exitCode", json!(failure.exit_code)),
+                    ("signal", json!(failure.signal)),
+                    ("stdoutTruncated", json!(failure.stdout_truncated)),
+                    ("stderrTruncated", json!(failure.stderr_truncated)),
                     ("timedOut", json!(failure.timed_out)),
                     ("stdout", json!(String::from_utf8_lossy(&failure.stdout))),
                     ("stderr", json!(String::from_utf8_lossy(&failure.stderr))),
@@ -376,6 +387,9 @@ impl MapToCliError for FzfError {
 fn fzf_failure(code: ErrorCode, message: String, failure: &FzfCommandFailure) -> CliError {
     CliError::new(code, message).with_details(details([
         ("exitCode", json!(failure.exit_code)),
+        ("signal", json!(failure.signal)),
+        ("stdoutTruncated", json!(failure.stdout_truncated)),
+        ("stderrTruncated", json!(failure.stderr_truncated)),
         ("timedOut", json!(failure.timed_out)),
         ("stdout", json!(String::from_utf8_lossy(&failure.stdout))),
         ("stderr", json!(String::from_utf8_lossy(&failure.stderr))),
@@ -390,6 +404,9 @@ fn details<const N: usize>(entries: [(&str, Value); N]) -> BTreeMap<String, Valu
 }
 
 pub fn map_metadata_transaction_error(error: &MetadataTransactionError) -> CliError {
+    if let MetadataTransactionError::Git(source) = error {
+        return source.map_to_cli_error();
+    }
     if let MetadataTransactionError::RecoveryBatch { completed, source } = error {
         let mut mapped = map_metadata_transaction_error(source);
         mapped
@@ -451,6 +468,7 @@ mod tests {
                 stderr: b"fatal: broken".to_vec(),
                 exit_code: Some(128),
                 timed_out: false,
+                ..Default::default()
             })
         }
     }
@@ -530,6 +548,8 @@ mod tests {
                 ended_at: "2026-01-01T00:00:01Z".to_owned(),
                 exit_code: None,
                 timed_out: true,
+                signal: Some(9),
+                stderr_truncated: false,
                 stderr: "slow".to_owned(),
             }));
         assert_eq!(hook_timeout.code, ErrorCode::HookTimeout);

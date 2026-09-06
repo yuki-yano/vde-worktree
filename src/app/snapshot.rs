@@ -1109,6 +1109,7 @@ mod tests {
                     stderr: Vec::new(),
                     exit_code: Some(1),
                     timed_out: false,
+                    ..Default::default()
                 });
             }
             if args.first().is_some_and(|arg| arg == "rev-parse") {
@@ -1118,6 +1119,7 @@ mod tests {
                     stderr: Vec::new(),
                     exit_code: Some(1),
                     timed_out: false,
+                    ..Default::default()
                 });
             }
             unreachable!("unexpected Git probe: {args:?}")
@@ -1161,6 +1163,7 @@ mod tests {
             stderr: Vec::new(),
             exit_code: Some(0),
             timed_out: false,
+            ..Default::default()
         }
     }
 
@@ -1170,6 +1173,7 @@ mod tests {
             stderr: Vec::new(),
             exit_code: Some(exit_code),
             timed_out: false,
+            ..Default::default()
         }
     }
 

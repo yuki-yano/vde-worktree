@@ -518,20 +518,32 @@ Safety:
 
 ```bash
 vw exec feature/foo -- cargo test
-vw exec feature/foo --json -- cargo test
+vw exec feature/foo --json --timeout-ms 600000 --max-output-bytes 2097152 -- cargo test
+vw exec feature/foo --stdin inherit -- sh
 ```
 
 What it does:
 
 - Executes command inside the target branch worktree path
 - Does not use shell expansion
-- In human mode, inherits the child process stdin, stdout, and stderr
-- In JSON mode, captures child stdout and stderr as `data.childStdout` and `data.childStderr`
+- Stdin defaults to `null` (EOF). Use `--stdin inherit` for piped input or an interactive terminal.
+- Human mode inherits stdout and stderr. JSON mode captures them as `data.childStdout` and `data.childStderr`.
+- `--timeout-ms` defaults to `300000` (5 minutes), including captured stream draining. On timeout, terminates the child and descendants in its process group.
+- `--max-output-bytes` requires `--json` and defaults to `1048576` (1 MiB) per stream. Retains the initial raw bytes, drains the remaining output, and reports `stdoutTruncated` / `stderrTruncated`. UTF-8 decoding replaces invalid or cut characters; JSON encoding can exceed the raw byte limit.
+- In a foreground terminal, gives the child process group terminal control and restores it after completion, timeout, or terminal interruption.
 
 Exit behavior:
 
 - Child success => `0`
-- Child failure => `21` (`CHILD_PROCESS_FAILED` in JSON mode)
+- Child failure, signal, or timeout => `21` (`CHILD_PROCESS_FAILED` in JSON mode)
+
+JSON retains output even on child failure. `data.childExitCode` is `null` for signal termination;
+`childSignal` contains the signal number or `null`, and `timedOut` distinguishes the timeout.
+Output truncation alone does not fail the command. Both numeric limits must be greater than zero.
+
+Internal captured commands retain at most 8 MiB per stream. Git (including metadata recovery)
+uses a 30-second timeout; Git, PR, and picker responses that exceed the output limit are rejected
+before parsing. PR diagnostics report `output_limit_exceeded`.
 
 ### `invoke`
 
@@ -562,7 +574,7 @@ Common environment variables:
 
 `mv` also provides `WT_OLD_BRANCH` and `WT_NEW_BRANCH`. `absorb` and `unabsorb` also provide `WT_SOURCE` and `WT_TARGET`.
 
-Execution logs are stored under `.vde/worktree/logs/` with `hook`, `phase`, `start`, `end`, `exitCode`, `timedOut`, and `stderr` fields.
+Execution logs are stored under `.vde/worktree/logs/` with `hook`, `phase`, `start`, `end`, `exitCode`, `signal`, `timedOut`, `stderrTruncated`, and `stderr` fields.
 
 A pre-hook failure stops the operation. A post-hook failure is a warning by default and becomes an error with `--strict-post-hooks`. Use `--hook-timeout-ms` to set the timeout.
 
@@ -594,8 +606,9 @@ What it does:
 ### `lock` / `unlock`
 
 ```bash
-vw lock feature/foo --owner codex --reason "agent in progress"
-vw unlock feature/foo --owner codex
+agent_owner="codex-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+vw lock feature/foo --owner "$agent_owner" --reason "agent in progress"
+vw unlock feature/foo --owner "$agent_owner"
 vw unlock feature/foo --force
 ```
 
@@ -603,6 +616,9 @@ What they do:
 
 - `lock` writes lock metadata under `.vde/worktree/locks/`
 - `unlock` clears lock, enforcing owner match unless `--force`
+
+Choose a unique owner for each agent session and retain the same value for unlocking.
+These branch locks persist until explicitly unlocked; they do not expire or reserve worktree creation.
 
 ### `cd`
 

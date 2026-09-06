@@ -6,10 +6,12 @@
 //! lock. The module deliberately does not acquire that lock itself, so Git mutation and metadata
 //! preflight can share one lock lifetime without lock-order inversion.
 
+use crate::adapters::git_cli::{GitCli, GitCliError};
+use crate::adapters::process::StdProcessRunner;
+use crate::ports::process::ProcessRunner;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -241,6 +243,8 @@ pub struct MetadataRenameRequest<'a> {
 
 #[derive(Debug, Error)]
 pub enum MetadataTransactionError {
+    #[error(transparent)]
+    Git(#[from] GitCliError),
     #[error("metadata recovery stopped after completed transactions: {source}")]
     RecoveryBatch {
         completed: Vec<MetadataRecoveryOutcome>,
@@ -644,6 +648,13 @@ fn commit_metadata_rename_with_injector_locked(
 pub fn recover_pending_metadata_transactions(
     repo_root: &Path,
 ) -> Result<Vec<MetadataRecoveryOutcome>, MetadataTransactionError> {
+    recover_pending_with_git(repo_root, &GitCli::new(StdProcessRunner))
+}
+
+fn recover_pending_with_git<R: ProcessRunner>(
+    repo_root: &Path,
+    git: &GitCli<R>,
+) -> Result<Vec<MetadataRecoveryOutcome>, MetadataTransactionError> {
     let root = transaction_root(repo_root);
     if !root.exists() {
         return Ok(Vec::new());
@@ -671,7 +682,7 @@ pub fn recover_pending_metadata_transactions(
             if !metadata.is_dir() && !metadata.file_type().is_symlink() {
                 return Ok(None);
             }
-            recover_metadata_directory(repo_root, &directory).map(Some)
+            recover_metadata_directory(repo_root, &directory, git).map(Some)
         })();
         match result {
             Ok(Some(outcome)) => outcomes.push(outcome),
@@ -688,9 +699,10 @@ pub fn recover_pending_metadata_transactions(
     Ok(outcomes)
 }
 
-fn recover_metadata_directory(
+fn recover_metadata_directory<R: ProcessRunner>(
     repo_root: &Path,
     directory: &Path,
+    git: &GitCli<R>,
 ) -> Result<MetadataRecoveryOutcome, MetadataTransactionError> {
     let paths = TransactionPaths::from_directory(directory.to_path_buf());
     if fs::symlink_metadata(directory)
@@ -727,7 +739,7 @@ fn recover_metadata_directory(
     revalidate_journal_target(repo_root, &journal)?;
     let resolution = match journal.phase {
         JournalPhase::Prepared | JournalPhase::BranchRenamed | JournalPhase::WorktreeMoved => {
-            match reconcile_git_transition(repo_root, &journal)? {
+            match reconcile_git_transition(repo_root, &journal, git)? {
                 GitRecoveryDirection::Rollback => {
                     rollback_prepared(repo_root, &journal, &paths)?;
                     MetadataRecoveryResolution::RolledBack
@@ -757,16 +769,16 @@ enum GitRecoveryDirection {
 }
 
 /// Reconciles both crash windows around branch rename and worktree move before metadata advances.
-fn reconcile_git_transition(
+fn reconcile_git_transition<R: ProcessRunner>(
     repo_root: &Path,
     journal: &MetadataTransactionJournal,
+    git: &GitCli<R>,
 ) -> Result<GitRecoveryDirection, MetadataTransactionError> {
-    let from = local_branch_exists(repo_root, &journal.from_branch);
-    let to = local_branch_exists(repo_root, &journal.to_branch);
+    let from = local_branch_exists(git, repo_root, &journal.from_branch)?;
+    let to = local_branch_exists(git, repo_root, &journal.to_branch)?;
     match (from, to) {
-        (None, None) => Ok(GitRecoveryDirection::Rollback),
-        (Some(true), Some(false)) => {
-            let attached = attached_worktree_path(repo_root, &journal.from_branch)?;
+        (true, false) => {
+            let attached = attached_worktree_path(git, repo_root, &journal.from_branch)?;
             if attached
                 .as_deref()
                 .is_some_and(|path| same_location(path, &journal.source_path))
@@ -780,14 +792,14 @@ fn reconcile_git_transition(
                 ))
             }
         }
-        (Some(false), Some(true)) => {
-            let attached = attached_worktree_path(repo_root, &journal.to_branch)?;
+        (false, true) => {
+            let attached = attached_worktree_path(git, repo_root, &journal.to_branch)?;
             match attached {
                 Some(path) if same_location(&path, &journal.target_path) => {
                     Ok(GitRecoveryDirection::Forward)
                 }
                 Some(path) if same_location(&path, &journal.source_path) => {
-                    finish_journaled_worktree_move(repo_root, journal)?;
+                    finish_journaled_worktree_move(git, repo_root, journal)?;
                     Ok(GitRecoveryDirection::Forward)
                 }
                 _ => Err(git_recovery_error(
@@ -797,53 +809,46 @@ fn reconcile_git_transition(
                 )),
             }
         }
-        (Some(from), Some(to)) => Err(MetadataTransactionError::InvalidJournal {
+        (from, to) => Err(MetadataTransactionError::InvalidJournal {
             path: transaction_directory(repo_root, &journal.transaction_id).join(JOURNAL_FILE),
             reason: format!(
                 "ambiguous Git branch state during recovery (sourceExists={from}, targetExists={to})"
             ),
         }),
-        _ => Err(MetadataTransactionError::InvalidJournal {
-            path: transaction_directory(repo_root, &journal.transaction_id).join(JOURNAL_FILE),
-            reason: "could not resolve both Git branch refs during recovery".to_owned(),
-        }),
     }
 }
 
-fn attached_worktree_path(
+fn attached_worktree_path<R: ProcessRunner>(
+    git: &GitCli<R>,
     repo_root: &Path,
     branch: &str,
 ) -> Result<Option<PathBuf>, MetadataTransactionError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["worktree", "list", "--porcelain", "-z"])
-        .output()
-        .map_err(|source| io_error(repo_root.to_path_buf(), source))?;
-    if !output.status.success() {
-        return Err(git_recovery_error_text(
-            repo_root,
-            format!(
-                "git worktree list failed during recovery: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
-    }
+    let output = git.execute_checked(repo_root, ["worktree", "list", "--porcelain", "-z"])?;
     let expected = format!("refs/heads/{branch}").into_bytes();
     let mut path = None;
+    let mut attachments = Vec::new();
     for field in output.stdout.split(|byte| *byte == 0) {
         if let Some(raw) = field.strip_prefix(b"worktree ") {
             path = Some(path_from_bytes(raw));
         } else if let Some(reference) = field.strip_prefix(b"branch ")
             && reference == expected
+            && let Some(path) = path.take()
         {
-            return Ok(path);
+            attachments.push(path);
         }
     }
-    Ok(None)
+    match attachments.len() {
+        0 => Ok(None),
+        1 => Ok(attachments.pop()),
+        _ => Err(git_recovery_error_text(
+            repo_root,
+            format!("multiple worktrees are attached to journal branch {branch}"),
+        )),
+    }
 }
 
-fn finish_journaled_worktree_move(
+fn finish_journaled_worktree_move<R: ProcessRunner>(
+    git: &GitCli<R>,
     repo_root: &Path,
     journal: &MetadataTransactionJournal,
 ) -> Result<(), MetadataTransactionError> {
@@ -851,27 +856,16 @@ fn finish_journaled_worktree_move(
         git_recovery_error(repo_root, journal, "journal target has no parent directory")
     })?;
     fs::create_dir_all(parent).map_err(|source| io_error(parent.to_path_buf(), source))?;
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("worktree")
-        .arg("move")
-        .arg(&journal.source_path)
-        .arg(&journal.target_path)
-        .output()
-        .map_err(|source| io_error(repo_root.to_path_buf(), source))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(git_recovery_error(
-            repo_root,
-            journal,
-            &format!(
-                "failed to finish journaled worktree move: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ))
-    }
+    git.execute_checked(
+        repo_root,
+        [
+            std::ffi::OsStr::new("worktree"),
+            std::ffi::OsStr::new("move"),
+            journal.source_path.as_os_str(),
+            journal.target_path.as_os_str(),
+        ],
+    )?;
+    Ok(())
 }
 
 fn same_location(left: &Path, right: &Path) -> bool {
@@ -924,19 +918,23 @@ fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
-fn local_branch_exists(repo_root: &Path, branch: &str) -> Option<bool> {
+fn local_branch_exists<R: ProcessRunner>(
+    git: &GitCli<R>,
+    repo_root: &Path,
+    branch: &str,
+) -> Result<bool, MetadataTransactionError> {
     let reference = format!("refs/heads/{branch}");
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["show-ref", "--verify", "--quiet"])
-        .arg(reference)
-        .output()
-        .ok()?;
-    match output.status.code() {
-        Some(0) => Some(true),
-        Some(1) => Some(false),
-        _ => None,
+    match git.execute_checked(repo_root, ["show-ref", "--verify", "--quiet", &reference]) {
+        Ok(_) => Ok(true),
+        Err(GitCliError::GitCommandFailed(failure))
+            if failure.exit_code == Some(1)
+                && !failure.timed_out
+                && !failure.stdout_truncated
+                && !failure.stderr_truncated =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -1413,6 +1411,7 @@ impl TransactionPaths {
 mod tests {
     use super::*;
     use crate::state::json_store::write_json_atomically;
+    use std::process::Command;
 
     const OLD: &str = "feature/old";
     const NEW: &str = "feature/new";
@@ -1459,6 +1458,34 @@ mod tests {
 
     fn initialized_repo() -> tempfile::TempDir {
         let directory = tempfile::tempdir().unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "initial",
+            ],
+            vec!["worktree", "add", "-q", "-b", OLD, "source-worktree"],
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         write_json_atomically(&worktree_lock_file_path(directory.path(), OLD), &old_lock())
             .unwrap();
         write_json_atomically(
@@ -1641,6 +1668,62 @@ mod tests {
         assert_new_state(repo);
         assert!(!source.exists());
         assert!(target.is_dir());
+    }
+
+    #[test]
+    fn failed_git_observation_preserves_journals_instead_of_guessing_rollback() {
+        use crate::ports::process::{ProcessCommand, ProcessError, ProcessOutput, StdinPolicy};
+        struct FailedGit {
+            timed_out: bool,
+        }
+        impl ProcessRunner for FailedGit {
+            fn run(&self, command: &ProcessCommand) -> Result<ProcessOutput, ProcessError> {
+                assert_eq!(command.timeout, Some(std::time::Duration::from_secs(30)));
+                assert_eq!(command.max_output_bytes, 8 * 1024 * 1024);
+                assert_eq!(command.stdin, StdinPolicy::Null);
+                Ok(ProcessOutput {
+                    exit_code: None,
+                    signal: Some(9),
+                    timed_out: self.timed_out,
+                    stdout_truncated: !self.timed_out,
+                    stderr: b"Git observation failed".to_vec(),
+                    ..ProcessOutput::default()
+                })
+            }
+        }
+        for timed_out in [true, false] {
+            let directory = initialized_repo();
+            let plan = prepare(directory.path(), None).unwrap();
+            let error = commit_metadata_rename_with_injector(
+                plan,
+                &mut CrashAfter(MetadataTransactionStep::TargetLockInstalled),
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                MetadataTransactionError::InjectedCrash { .. }
+            ));
+            let pending = inspect_pending_metadata_transactions(directory.path()).unwrap();
+            let before = fs::read(&pending[0].path).unwrap();
+            let target_lock = fs::read(worktree_lock_file_path(directory.path(), NEW)).unwrap();
+            let error =
+                recover_pending_with_git(directory.path(), &GitCli::new(FailedGit { timed_out }))
+                    .unwrap_err();
+            let crate::adapters::git_cli::GitCliError::GitCommandFailed(failure) = (match error {
+                MetadataTransactionError::Git(error) => error,
+                other => panic!("{other}"),
+            }) else {
+                panic!("expected failed Git observation")
+            };
+            assert_eq!(failure.timed_out, timed_out);
+            assert_eq!(failure.stdout_truncated, !timed_out);
+            assert_eq!(fs::read(&pending[0].path).unwrap(), before);
+            assert_eq!(
+                fs::read(worktree_lock_file_path(directory.path(), NEW)).unwrap(),
+                target_lock
+            );
+            assert_eq!(valid_lock(directory.path(), OLD), Some(old_lock()));
+        }
     }
 
     #[test]

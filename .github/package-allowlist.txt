@@ -17,6 +17,7 @@ src/adapters/gh_cli.rs
 src/adapters/git_cli.rs
 src/adapters/mod.rs
 src/adapters/process.rs
+src/adapters/process_terminal.rs
 src/app/completion.rs
 src/app/diagnostics.rs
 src/app/dispatch.rs

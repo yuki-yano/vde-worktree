@@ -516,20 +516,33 @@ vw use feature/foo --allow-agent --allow-unsafe
 
 ```bash
 vw exec feature/foo -- cargo test
-vw exec feature/foo --json -- cargo test
+vw exec feature/foo --json --timeout-ms 600000 --max-output-bytes 2097152 -- cargo test
+vw exec feature/foo --stdin inherit -- sh
 ```
 
 機能:
 
 - 指定 branch の worktree を `cwd` にしてコマンド実行
 - shell 展開は使わず引数配列で実行
-- human modeは子processのstdin、stdout、stderrを継承
-- JSON modeは子processのstdoutとstderrを`data.childStdout`と`data.childStderr`へ格納
+- stdin の既定は `null`（EOF）。パイプ入力や対話端末を渡す場合は `--stdin inherit` を指定
+- human mode は stdout と stderr を継承。JSON mode は `data.childStdout` と `data.childStderr` に格納
+- `--timeout-ms` の既定は `300000`（5分）で、取得中の出力を読み終えるまでの時間も含む。超過時は子プロセスと同じプロセスグループ内の子孫を終了
+- `--max-output-bytes` は `--json` が必須で、既定はストリームごとに `1048576`（1 MiB）。先頭の生バイトを保持し、超過分も読み捨てながら `stdoutTruncated` / `stderrTruncated` で省略を通知。UTF-8 の不正・分断文字は置換され、JSON エンコード後のサイズは生バイト上限を超える場合がある
+- foreground の端末では子プロセスグループに端末制御を渡し、完了・timeout・端末からの割り込み後に元へ戻す
 
 終了コード:
 
 - 子プロセス成功: `0`
-- 子プロセス失敗: `21`（JSON では `CHILD_PROCESS_FAILED`）
+- 子プロセス失敗・signal・timeout: `21`（JSON では `CHILD_PROCESS_FAILED`）
+
+JSON は子プロセス失敗時も出力を保持します。
+signal 終了時の `data.childExitCode` は `null`、`childSignal` は signal 番号（通常終了時は `null`）で、`timedOut` が timeout の有無を示します。
+出力省略だけでは失敗になりません。
+2つの数値上限はどちらも正数を指定します。
+
+内部コマンドの出力取得はストリームごとに 8 MiB が上限です。
+メタデータ復旧を含む Git の timeout は30秒で、Git・PR・picker の応答が上限を超えた場合は解析前に拒否します。
+PR 診断の理由は `output_limit_exceeded` です。
 
 ### `invoke`
 
@@ -560,7 +573,7 @@ pre-hookは操作前に存在するsource worktreeまたはrepository root、pos
 
 `mv`は`WT_OLD_BRANCH`と`WT_NEW_BRANCH`、`absorb` / `unabsorb`は`WT_SOURCE`と`WT_TARGET`も渡します。
 
-実行ログは`.vde/worktree/logs/`に保存し、`hook`、`phase`、`start`、`end`、`exitCode`、`timedOut`、`stderr`を記録します。
+実行ログは`.vde/worktree/logs/`に保存し、`hook`、`phase`、`start`、`end`、`exitCode`、`signal`、`timedOut`、`stderrTruncated`、`stderr`を記録します。
 
 pre-hook失敗は操作を中止します。post-hook失敗は既定でwarningとし、`--strict-post-hooks`時はerrorにします。timeoutは`--hook-timeout-ms`で指定できます。
 
@@ -592,8 +605,9 @@ vw link .envrc
 ### `lock` / `unlock`
 
 ```bash
-vw lock feature/foo --owner codex --reason "agent in progress"
-vw unlock feature/foo --owner codex
+agent_owner="codex-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+vw lock feature/foo --owner "$agent_owner" --reason "agent in progress"
+vw unlock feature/foo --owner "$agent_owner"
 vw unlock feature/foo --force
 ```
 
@@ -601,6 +615,9 @@ vw unlock feature/foo --force
 
 - `lock`: `.vde/worktree/locks/` に lock 情報を保存
 - `unlock`: lock を解除（owner 不一致時は `--force` 必須）
+
+owner は agent セッションごとに固有の値を選び、解除時にも同じ値を使います。
+この branch lock は明示的に解除するまで残り、有効期限や worktree 作成時の予約機能はありません。
 
 ### `cd`
 

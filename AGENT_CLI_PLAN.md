@@ -20,28 +20,28 @@ JSON 契約を変更する場合は現行の単一契約へ更新し、旧 rende
 
 ### 機能完了条件
 
-- [ ] 全23既存コマンドと追加コマンドの対象・前提・副作用・出力を help / describe から取得できる。
-- [ ] strict post-hook 後の部分成功、バッチ内の失敗、復旧資材、失敗段階、警告を JSON で判別できる。
-- [ ] shared branch の曖昧な対象は候補付きで拒否され、明示 path / -C で対象を指定できる。
-- [ ] path は不要な詳細取得をせず、status と削除再検証は対象を限定して取得する。
-- [ ] context / doctor が設定の出所・実効値・依存機能の状態を説明し、doctor は設定不正や未初期化でも診断を返す。
-- [ ] 事前検査は hook、stash、repo lock 記録、メタデータ保存、自動復旧を行わず、実行直前は最新状態で判定する。
-- [ ] exec と復旧中 Git の待ち時間が制御され、timeout・signal・出力省略を判別できる。
+- [x] 全23既存コマンドと追加コマンドの対象・前提・副作用・出力を help / describe から取得できる。
+- [x] strict post-hook 後の部分成功、バッチ内の失敗、復旧資材、失敗段階、警告を JSON で判別できる。
+- [x] shared branch の曖昧な対象は候補付きで拒否され、明示 path / -C で対象を指定できる。
+- [x] path は不要な詳細取得をせず、status と削除再検証は対象を限定して取得する。
+- [x] context / doctor が設定の出所・実効値・依存機能の状態を説明し、doctor は設定不正や未初期化でも診断を返す。
+- [x] 事前検査は hook、stash、repo lock 記録、メタデータ保存、自動復旧を行わず、実行直前は最新状態で判定する。
+- [x] exec と復旧中 Git の待ち時間が制御され、timeout・signal・出力省略を判別できる。
 
 ### テスト完了条件
 
-- [ ] 引数エラーの JSON 判定、コマンド欠落、help と動的補完接続の回帰テストが通る。
-- [ ] post-hook 後の結果保持、transfer / adopt / 削除 / 配置の途中失敗を検証する。
-- [ ] shared branch、-C の伝播、対象別の Git コマンド数、検査前後の無変更を検証する。
-- [ ] 設定優先順位、不正設定での doctor、PR の判定材料と取得失敗理由を検証する。
-- [ ] timeout 時の子孫終了、stdin、signal 終了、出力上限を検証する。
-- [ ] cargo fmt、clippy、全 target / feature のテスト、package 内容検証が通る。
+- [x] 引数エラーの JSON 判定、コマンド欠落、help と動的補完接続の回帰テストが通る。
+- [x] post-hook 後の結果保持、transfer / adopt / 削除 / 配置の途中失敗を検証する。
+- [x] shared branch、-C の伝播、対象別の Git コマンド数、検査前後の無変更を検証する。
+- [x] 設定優先順位、不正設定での doctor、PR の判定材料と取得失敗理由を検証する。
+- [x] timeout 時の子孫終了、stdin、signal 終了、出力上限を検証する。
+- [x] cargo fmt、clippy、全 target / feature のテスト、package 内容検証が通る。
 
 ### 運用反映条件
 
-- [ ] 日英 README、vw / vde-worktree、生成済み zsh / fish 補完、describe と JSON 契約が一致する。
-- [ ] 新しい実行時ファイル・テストを Cargo package と allowlist に反映する。
-- [ ] 各改修単位を検証後にコミットし、最後に未コミット差分がないことを確認する。
+- [x] 日英 README、vw / vde-worktree、生成済み zsh / fish 補完、describe と JSON 契約が一致する。
+- [x] 新しい実行時ファイル・テストを Cargo package と allowlist に反映する。
+- [x] 各改修単位を検証後にコミットし、最後に未コミット差分がないことを確認する。
 
 ## 検証記録
 
@@ -56,3 +56,13 @@ JSON 契約を変更する場合は現行の単一契約へ更新し、旧 rende
 - 改修4：context / doctor、設定項目ごとの出所と CLI 優先順位、verbose、PR unknown の理由、構造化メタデータ警告、復旧 journal の無変更観測を実装。未使用 TTL 設定を削除し、初期化判定を必要な状態ディレクトリに統一。設定不正・未初期化・制御文字 path の診断、ファイル内容と更新時刻の不変性を検証。全305テスト、clippy、補完構文、Cargo package allowlist 69ファイルの一致を確認。
 
 - 改修5：check / --dry-run を14種類の lifecycle 操作へ追加。通常の gone / adopt プレビューを含め、hook・stash・lock・Git index・メタデータ・復旧を変更しない経路を実装。検査と判定材料には同じ snapshot を使用し、PR HEAD 照合と削除直前の取り直しを実装。全308テスト、追加の引数伝播テスト、clippy、補完構文、Cargo package allowlist 70ファイルの一致を確認。復旧完了後の別処理失敗と復旧バッチ途中失敗でも完了情報を保持する。
+
+- 改修6：exec に timeout・出力上限・stdin 選択を追加し、signal・timeout・出力省略を JSON で区別。共通 runner の取得メモリを制限し、timeout と異常経路で所有するプロセスグループを終了する。復旧中 Git も30秒・8 MiB の共通経路へ移し、観測失敗時は journal を保持する。実端末で入力、Ctrl-C、foreground 復元を確認。fish の複数行候補は両バイナリ名から生成して保持するよう修正し、日英 README に実行制限とセッション固有 owner の例を反映。
+
+## 最終検証（2026-09-07、macOS）
+
+- Rust 1.89.0 の `cargo fmt --check`、`cargo clippy --offline --locked --all-targets --all-features -- -D warnings`、`cargo test --offline --locked --all-targets --all-features`、`cargo check --offline --locked --all-targets` が成功。全320テスト（unit 241、CLI acceptance 79）が成功。
+- `cargo package --offline --locked --allow-dirty` で package からのビルドに成功し、`--list` の71ファイルが `.github/package-allowlist.txt` と一致。
+- vw / vde-worktree の describe が一致し、全27公開コマンドを確認。実 CLI 出力を describe の schema と照合する受け入れテストが成功。
+- 両バイナリから生成した zsh / fish 補完が同梱ファイルとバイト単位で一致。両 shell の構文検査と、fish の両バイナリ名での stdin 候補 `null` / `inherit` の取得が成功。
+- GitHub 応答は制御した fixture で検証。実 GitHub API と他OSの実行は未検証で、push・公開・version 更新は実施しない。

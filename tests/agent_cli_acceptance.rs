@@ -534,3 +534,132 @@ fn recovery_results_survive_a_later_command_or_journal_failure() {
     assert!(journals.join("b-invalid/journal.json").exists());
     assert!(!fixture.repo.join(".worktree/planned").exists());
 }
+
+#[test]
+fn exec_exposes_stdin_limits_and_signal_termination() {
+    let fixture = Fixture::new();
+    let input = fixture.temp.path().join("stdin");
+    fs::write(&input, "inherited input\n").unwrap();
+    for (option, expected) in [(None, ""), (Some("inherit"), "inherited input\n")] {
+        let mut command = fixture.command();
+        command.args(["exec", "main", "--json", "--timeout-ms", "1000"]);
+        if let Some(option) = option {
+            command.args(["--stdin", option]);
+        }
+        let output = command
+            .args(["--", "cat"])
+            .stdin(fs::File::open(&input).unwrap())
+            .output()
+            .unwrap();
+        let value = support::parse_cli_json(&output.stdout);
+        assert!(output.status.success(), "{value}");
+        assert_eq!(value["data"]["childStdout"], expected);
+        assert_eq!(value["data"]["childSignal"], Value::Null);
+        assert_eq!(value["data"]["timedOut"], false);
+    }
+    let human = fixture
+        .command()
+        .args(["exec", "main", "--stdin", "inherit", "--", "cat"])
+        .stdin(fs::File::open(&input).unwrap())
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    assert_eq!(human.stdout, b"inherited input\n");
+    let limited = fixture.ok(&[
+        "exec",
+        "main",
+        "--json",
+        "--max-output-bytes",
+        "17",
+        "--",
+        "sh",
+        "-c",
+        "head -c 8192 /dev/zero; head -c 8192 /dev/zero >&2",
+    ]);
+    assert_eq!(limited["data"]["childStdout"].as_str().unwrap().len(), 17);
+    assert_eq!(limited["data"]["childStderr"].as_str().unwrap().len(), 17);
+    assert_eq!(limited["data"]["stdoutTruncated"], true);
+    assert_eq!(limited["data"]["stderrTruncated"], true);
+    assert_eq!(limited["data"]["childExitCode"], 0);
+    let output = fixture.run(&[
+        "exec",
+        "main",
+        "--json",
+        "--",
+        "sh",
+        "-c",
+        "printf before; printf detail >&2; kill -TERM $$",
+    ]);
+    let signal = support::parse_cli_json(&output.stdout);
+    assert_eq!(output.status.code(), Some(21));
+    assert_eq!(signal["data"]["childExitCode"], Value::Null);
+    assert_eq!(signal["data"]["childSignal"], 15);
+    assert_eq!(signal["data"]["timedOut"], false);
+    assert_eq!(signal["data"]["childStdout"], "before");
+    assert_eq!(signal["error"]["execution"]["phase"], "process");
+    for args in [
+        vec!["exec", "main", "--timeout-ms", "0", "--json", "--", "true"],
+        vec![
+            "exec",
+            "main",
+            "--max-output-bytes",
+            "0",
+            "--json",
+            "--",
+            "true",
+        ],
+        vec!["exec", "main", "--max-output-bytes", "17", "--", "true"],
+    ] {
+        assert_eq!(fixture.run(&args).status.code(), Some(3));
+    }
+}
+
+#[test]
+fn exec_timeout_preserves_output_and_terminates_descendants_even_after_leader_exit() {
+    let fixture = Fixture::new();
+    for child in [
+        "sleep 30 & printf '%s:%s\\n' \"$$\" \"$!\"; printf prefix >&2; wait",
+        "sleep 30 & printf '%s\\n' \"$!\"; printf prefix >&2",
+    ] {
+        let started = std::time::Instant::now();
+        let output = fixture.run(&[
+            "exec",
+            "main",
+            "--json",
+            "--timeout-ms",
+            "100",
+            "--",
+            "sh",
+            "-c",
+            child,
+        ]);
+        let value = support::parse_cli_json(&output.stdout);
+        assert_eq!(output.status.code(), Some(21), "{value}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        assert_eq!(value["data"]["timedOut"], true);
+        assert_eq!(value["data"]["childStderr"], "prefix");
+        assert_eq!(value["error"]["details"]["timedOut"], true);
+        for pid in value["data"]["childStdout"]
+            .as_str()
+            .unwrap()
+            .trim()
+            .split(':')
+        {
+            let _: u32 = pid.parse().expect("child PID");
+            let mut stopped = false;
+            for _ in 0..20 {
+                let output = Command::new("ps")
+                    .args(["-o", "stat=", "-p", pid])
+                    .output()
+                    .unwrap();
+                let state = String::from_utf8_lossy(&output.stdout);
+                if state.trim().is_empty() || state.trim_start().starts_with('Z') {
+                    stopped = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            assert!(stopped, "descendant {pid} is still running");
+        }
+    }
+}

@@ -9,6 +9,8 @@ use std::os::unix::process::CommandExt;
 
 use wait_timeout::ChildExt;
 
+use super::process_terminal::ForegroundTerminal;
+
 use crate::ports::process::{
     OutputPolicy, ProcessCommand, ProcessError, ProcessOutput, ProcessRunner, StdinPolicy,
 };
@@ -21,93 +23,130 @@ pub struct StdProcessRunner;
 impl ProcessRunner for StdProcessRunner {
     fn run(&self, command: &ProcessCommand) -> Result<ProcessOutput, ProcessError> {
         let started_at = Instant::now();
-        let mut process = configured_command(command);
-        let mut child = process.spawn().map_err(ProcessError::Spawn)?;
-        let process_group = ProcessGroup::for_child(&child)?;
-        let stdin_writer = match &command.stdin {
-            StdinPolicy::Bytes(bytes) => child.stdin.take().map(|mut stdin| {
-                let bytes = bytes.clone();
-                spawn_task(move || stdin.write_all(&bytes))
-            }),
-            StdinPolicy::Inherit | StdinPolicy::Null => None,
-        };
-        let stdout_reader = child.stdout.take().map(spawn_reader);
-        let stderr_reader = child.stderr.take().map(spawn_reader);
+        let deadline = command
+            .timeout
+            .map(|timeout| {
+                started_at
+                    .checked_add(timeout)
+                    .ok_or(ProcessError::InvalidTimeout)
+            })
+            .transpose()?;
+        let mut terminal = ForegroundTerminal::capture(command).map_err(ProcessError::Terminal)?;
+        let mut child = ManagedChild::spawn(command)?;
+        if let Some(terminal) = &mut terminal {
+            terminal
+                .attach(child.process.id())
+                .map_err(ProcessError::Terminal)?;
+        }
+        let result = collect_output(&mut child, command, deadline);
+        // On any I/O failure, stop and reap the owned process tree before returning its terminal.
+        drop(child);
+        if let Some(terminal) = &mut terminal {
+            terminal.restore().map_err(ProcessError::Terminal)?;
+        }
+        result
+    }
+}
 
-        let deadline = command.timeout.map(|timeout| started_at + timeout);
-        let mut stdout = None;
-        let mut stderr = None;
-        let mut stdin = None;
-        let mut status = None;
-        let mut timed_out = false;
+fn collect_output(
+    child: &mut ManagedChild,
+    command: &ProcessCommand,
+    deadline: Option<Instant>,
+) -> Result<ProcessOutput, ProcessError> {
+    let stdin_writer = match &command.stdin {
+        StdinPolicy::Bytes(bytes) => child.process.stdin.take().map(|mut stdin| {
+            let bytes = bytes.clone();
+            spawn_task(move || stdin.write_all(&bytes))
+        }),
+        StdinPolicy::Inherit | StdinPolicy::Null => None,
+    };
+    let stdout_reader = child
+        .process
+        .stdout
+        .take()
+        .map(|reader| spawn_reader(reader, command.max_output_bytes));
+    let stderr_reader = child
+        .process
+        .stderr
+        .take()
+        .map(|reader| spawn_reader(reader, command.max_output_bytes));
+    let mut stdout = None;
+    let mut stderr = None;
+    let mut stdin = None;
+    let mut status = None;
+    let mut timed_out = false;
 
-        match receive_reader(stdout_reader.as_ref(), remaining(deadline)) {
-            Ok(bytes) => stdout = Some(bytes),
+    match receive_reader(stdout_reader.as_ref(), remaining(deadline)) {
+        Ok(bytes) => stdout = Some(bytes),
+        Err(TaskFailure::TimedOut) => {
+            status = Some(child.terminate()?);
+            timed_out = true;
+        }
+        Err(error) => return Err(reader_error(error, "stdout")),
+    }
+    if !timed_out {
+        match receive_reader(stderr_reader.as_ref(), remaining(deadline)) {
+            Ok(bytes) => stderr = Some(bytes),
             Err(TaskFailure::TimedOut) => {
-                status = Some(terminate_and_reap(&mut child, process_group)?);
+                status = Some(child.terminate()?);
                 timed_out = true;
             }
-            Err(error) => return Err(reader_error(error, "stdout")),
+            Err(error) => return Err(reader_error(error, "stderr")),
         }
-        if !timed_out {
-            match receive_reader(stderr_reader.as_ref(), remaining(deadline)) {
-                Ok(bytes) => stderr = Some(bytes),
-                Err(TaskFailure::TimedOut) => {
-                    status = Some(terminate_and_reap(&mut child, process_group)?);
-                    timed_out = true;
-                }
-                Err(error) => return Err(reader_error(error, "stderr")),
-            }
-        }
-        if !timed_out {
-            match receive_writer(stdin_writer.as_ref(), remaining(deadline)) {
-                Ok(()) => stdin = Some(()),
-                Err(TaskFailure::TimedOut) => {
-                    status = Some(terminate_and_reap(&mut child, process_group)?);
-                    timed_out = true;
-                }
-                Err(error) => return Err(writer_error(error)),
-            }
-        }
-
-        if !timed_out {
-            let (child_status, child_timed_out) =
-                wait_for_child(&mut child, process_group, deadline)?;
-            status = Some(child_status);
-            timed_out = child_timed_out;
-        }
-
-        if timed_out {
-            stdout = Some(
-                stdout
-                    .map_or_else(
-                        || receive_reader(stdout_reader.as_ref(), Some(STREAM_DRAIN_GRACE)),
-                        Ok,
-                    )
-                    .map_err(|error| reader_error(error, "stdout"))?,
-            );
-            stderr = Some(
-                stderr
-                    .map_or_else(
-                        || receive_reader(stderr_reader.as_ref(), Some(STREAM_DRAIN_GRACE)),
-                        Ok,
-                    )
-                    .map_err(|error| reader_error(error, "stderr"))?,
-            );
-            if stdin.is_none() {
-                // BrokenPipe is expected after terminating the process tree. Receiving with a
-                // deadline still guarantees that a descendant cannot block this writer forever.
-                let _ = receive_writer(stdin_writer.as_ref(), Some(STREAM_DRAIN_GRACE));
-            }
-        }
-
-        Ok(ProcessOutput {
-            stdout: stdout.unwrap_or_default(),
-            stderr: stderr.unwrap_or_default(),
-            exit_code: status.expect("child status is always collected").code(),
-            timed_out,
-        })
     }
+    if !timed_out {
+        match receive_writer(stdin_writer.as_ref(), remaining(deadline)) {
+            Ok(()) => stdin = Some(()),
+            Err(TaskFailure::TimedOut) => {
+                status = Some(child.terminate()?);
+                timed_out = true;
+            }
+            Err(error) => return Err(writer_error(error)),
+        }
+    }
+
+    if !timed_out {
+        let (child_status, child_timed_out) = child.wait(deadline)?;
+        status = Some(child_status);
+        timed_out = child_timed_out;
+    }
+
+    if timed_out {
+        stdout = Some(
+            stdout
+                .map_or_else(
+                    || receive_reader(stdout_reader.as_ref(), Some(STREAM_DRAIN_GRACE)),
+                    Ok,
+                )
+                .map_err(|error| reader_error(error, "stdout"))?,
+        );
+        stderr = Some(
+            stderr
+                .map_or_else(
+                    || receive_reader(stderr_reader.as_ref(), Some(STREAM_DRAIN_GRACE)),
+                    Ok,
+                )
+                .map_err(|error| reader_error(error, "stderr"))?,
+        );
+        if stdin.is_none() {
+            // BrokenPipe is expected after terminating the process tree. Receiving with a
+            // deadline still guarantees that a descendant cannot block this writer forever.
+            let _ = receive_writer(stdin_writer.as_ref(), Some(STREAM_DRAIN_GRACE));
+        }
+    }
+
+    let status = status.expect("child status is always collected");
+    let stdout = stdout.unwrap_or_default();
+    let stderr = stderr.unwrap_or_default();
+    Ok(ProcessOutput {
+        stdout: stdout.bytes,
+        stderr: stderr.bytes,
+        stdout_truncated: stdout.truncated,
+        stderr_truncated: stderr.truncated,
+        exit_code: status.code(),
+        signal: termination_signal(status),
+        timed_out,
+    })
 }
 
 fn configured_command(command: &ProcessCommand) -> Command {
@@ -134,28 +173,6 @@ fn configured_command(command: &ProcessCommand) -> Command {
     process.stderr(output_configuration(command.stderr));
     configure_process_group(&mut process);
     process
-}
-
-fn wait_for_child(
-    child: &mut Child,
-    process_group: ProcessGroup,
-    deadline: Option<Instant>,
-) -> Result<(std::process::ExitStatus, bool), ProcessError> {
-    let Some(deadline) = deadline else {
-        return child
-            .wait()
-            .map(|status| (status, false))
-            .map_err(ProcessError::Wait);
-    };
-    let wait_duration = deadline.saturating_duration_since(Instant::now());
-    if let Some(status) = child
-        .wait_timeout(wait_duration)
-        .map_err(ProcessError::Wait)?
-    {
-        return Ok((status, false));
-    }
-
-    terminate_and_reap(child, process_group).map(|status| (status, true))
 }
 
 #[cfg(unix)]
@@ -189,23 +206,73 @@ impl ProcessGroup {
     }
 }
 
-fn terminate_and_reap(
-    child: &mut Child,
-    process_group: ProcessGroup,
-) -> Result<std::process::ExitStatus, ProcessError> {
-    // Signal the captured group while the direct child is still unreaped. Its PID therefore
-    // cannot have been reused as another process group's ID. Kill the direct child as well: it
-    // remains the process handle's authority even if group signalling was ineffective.
-    let group_kill = kill_process_group(process_group);
-    let child_kill = kill_direct_child(child);
-    let status = child
-        .wait_timeout(STREAM_DRAIN_GRACE)
-        .map_err(ProcessError::Wait)?
-        .ok_or(ProcessError::ReapTimedOut(STREAM_DRAIN_GRACE))?;
+struct ManagedChild {
+    process: Child,
+    group: ProcessGroup,
+    reaped: bool,
+}
 
-    group_kill.map_err(ProcessError::Kill)?;
-    child_kill.map_err(ProcessError::Kill)?;
-    Ok(status)
+impl ManagedChild {
+    fn spawn(command: &ProcessCommand) -> Result<Self, ProcessError> {
+        let mut process = configured_command(command)
+            .spawn()
+            .map_err(ProcessError::Spawn)?;
+        let group = match ProcessGroup::for_child(&process) {
+            Ok(group) => group,
+            Err(error) => {
+                let _ = process.kill();
+                let _ = process.wait_timeout(STREAM_DRAIN_GRACE);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            process,
+            group,
+            reaped: false,
+        })
+    }
+
+    fn wait(
+        &mut self,
+        deadline: Option<Instant>,
+    ) -> Result<(std::process::ExitStatus, bool), ProcessError> {
+        let status = match deadline {
+            Some(deadline) => self
+                .process
+                .wait_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(ProcessError::Wait)?,
+            None => Some(self.process.wait().map_err(ProcessError::Wait)?),
+        };
+        if let Some(status) = status {
+            self.reaped = true;
+            Ok((status, false))
+        } else {
+            self.terminate().map(|status| (status, true))
+        }
+    }
+
+    fn terminate(&mut self) -> Result<std::process::ExitStatus, ProcessError> {
+        // Keep the leader unreaped until group signalling so its PID cannot be reused.
+        let group_kill = kill_process_group(self.group);
+        let child_kill = kill_direct_child(&mut self.process);
+        let status = self
+            .process
+            .wait_timeout(STREAM_DRAIN_GRACE)
+            .map_err(ProcessError::Wait)?
+            .ok_or(ProcessError::ReapTimedOut(STREAM_DRAIN_GRACE))?;
+        self.reaped = true;
+        group_kill.map_err(ProcessError::Kill)?;
+        child_kill.map_err(ProcessError::Kill)?;
+        Ok(status)
+    }
+}
+
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if !self.reaped {
+            let _ = self.terminate();
+        }
+    }
 }
 
 fn kill_direct_child(child: &mut Child) -> std::io::Result<()> {
@@ -265,15 +332,43 @@ where
     Task { receiver }
 }
 
-fn spawn_reader<R>(mut reader: R) -> Task<Vec<u8>>
+#[derive(Default)]
+struct CapturedStream {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+fn spawn_reader<R>(mut reader: R, limit: usize) -> Task<CapturedStream>
 where
     R: Read + Send + 'static,
 {
     spawn_task(move || {
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        Ok(bytes)
+        let mut captured = CapturedStream::default();
+        let mut buffer = [0; 8192];
+        loop {
+            let count = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            let retained = count.min(limit.saturating_sub(captured.bytes.len()));
+            captured.bytes.extend_from_slice(&buffer[..retained]);
+            captured.truncated |= retained != count;
+        }
+        Ok(captured)
     })
+}
+
+#[cfg(unix)]
+fn termination_signal(status: std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn termination_signal(_status: std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 enum TaskFailure {
@@ -303,14 +398,17 @@ where
 }
 
 fn receive_reader(
-    reader: Option<&Task<Vec<u8>>>,
+    reader: Option<&Task<CapturedStream>>,
     timeout: Option<Duration>,
-) -> Result<Vec<u8>, TaskFailure> {
+) -> Result<CapturedStream, TaskFailure> {
     receive_task(reader, timeout)
 }
 
 fn receive_writer(writer: Option<&Task<()>>, timeout: Option<Duration>) -> Result<(), TaskFailure> {
-    receive_task(writer, timeout)
+    match receive_task(writer, timeout) {
+        Err(TaskFailure::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
 }
 
 fn reader_error(error: TaskFailure, stream: &'static str) -> ProcessError {
@@ -342,7 +440,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{ProcessGroup, StdProcessRunner, terminate_and_reap};
+    use super::{ManagedChild, ProcessGroup, StdProcessRunner};
     use crate::ports::process::{
         EnvironmentVariable, OutputPolicy, ProcessCommand, ProcessRunner, StdinPolicy,
     };
@@ -440,25 +538,100 @@ mod tests {
 
     #[test]
     fn direct_child_kill_bounds_reaping_when_group_is_already_absent() {
-        let mut child = Command::new("sleep")
+        let child = Command::new("sleep")
             .arg("30")
             .spawn()
             .expect("spawn direct child");
         let nonexistent_group = ProcessGroup { pgid: i32::MAX };
         let started_at = Instant::now();
 
-        let status = terminate_and_reap(&mut child, nonexistent_group)
+        let mut child = ManagedChild {
+            process: child,
+            group: nonexistent_group,
+            reaped: false,
+        };
+        let status = child
+            .terminate()
             .expect("direct child kill must not depend on group membership");
 
         assert!(!status.success());
         assert!(started_at.elapsed() < Duration::from_secs(2));
         assert!(
-            child.try_wait().expect("query collected child").is_some(),
+            child
+                .process
+                .try_wait()
+                .expect("query collected child")
+                .is_some(),
             "the direct child must already be reaped"
         );
     }
 
+    #[test]
+    fn bounds_each_captured_stream_and_keeps_draining_until_the_child_finishes() {
+        let mut command = ProcessCommand::new("sh");
+        command.args = [
+            "-c",
+            "head -c 1048576 /dev/zero; head -c 1048576 /dev/zero >&2",
+        ]
+        .map(OsString::from)
+        .to_vec();
+        command.max_output_bytes = 4096;
+        command.timeout = Some(Duration::from_secs(3));
+        let output = StdProcessRunner.run(&command).unwrap();
+        assert_eq!(output.exit_code, Some(0));
+        assert!(!output.timed_out);
+        assert_eq!(output.stdout.len(), 4096);
+        assert_eq!(output.stderr.len(), 4096);
+        assert!(output.stdout_truncated && output.stderr_truncated);
+        command.args = ["-c", "printf 12345"].map(OsString::from).to_vec();
+        command.max_output_bytes = 5;
+        assert!(!StdProcessRunner.run(&command).unwrap().is_truncated());
+        command.max_output_bytes = 4;
+        assert_eq!(StdProcessRunner.run(&command).unwrap().stdout, b"1234");
+    }
+
+    #[test]
+    fn reports_signal_termination_without_fabricating_an_exit_code() {
+        let mut command = ProcessCommand::new("sh");
+        command.args = ["-c", "printf before; kill -TERM $$"]
+            .map(OsString::from)
+            .to_vec();
+        command.timeout = Some(Duration::from_secs(1));
+        let output = StdProcessRunner.run(&command).unwrap();
+        assert_eq!(output.signal, Some(15));
+        assert_eq!(output.exit_code, None);
+        assert_eq!(output.stdout, b"before");
+        assert!(!output.timed_out);
+    }
+
+    #[test]
+    fn child_closing_stdin_early_does_not_replace_its_successful_exit() {
+        let mut command = ProcessCommand::new("true");
+        command.stdin = StdinPolicy::Bytes(vec![b'x'; 1024 * 1024]);
+        command.timeout = Some(Duration::from_secs(1));
+        assert_eq!(StdProcessRunner.run(&command).unwrap().exit_code, Some(0));
+    }
+
+    #[test]
+    fn dropping_an_unfinished_child_terminates_its_process_group() {
+        use std::io::BufRead;
+        let mut command = ProcessCommand::new("sh");
+        command.args = ["-c", "sleep 30 & printf '%s:%s\\n' \"$$\" \"$!\"; wait"]
+            .map(OsString::from)
+            .to_vec();
+        let mut child = ManagedChild::spawn(&command).unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.process.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        drop(child);
+        for pid in line.trim().split(':') {
+            assert_process_exits(pid);
+        }
+    }
+
     fn assert_process_exits(pid: &str) {
+        let _: u32 = pid.parse().expect("child PID");
         for _ in 0..20 {
             let exists = Command::new("sh")
                 .args(["-c", "kill -0 \"$1\" 2>/dev/null", "sh", pid])

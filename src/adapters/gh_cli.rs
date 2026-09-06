@@ -116,6 +116,14 @@ where
                 return unknown_states(branches, reason, Some(&error.to_string()), None);
             }
         };
+        if output.is_truncated() {
+            return unknown_states(
+                branches,
+                PrUnavailableReason::OutputLimitExceeded,
+                Some("gh response exceeded the captured output limit"),
+                output.exit_code,
+            );
+        }
         if output.timed_out || output.exit_code != Some(0) {
             let reason = if output.timed_out {
                 PrUnavailableReason::TimedOut
@@ -321,7 +329,26 @@ mod tests {
             stderr: Vec::new(),
             exit_code: Some(0),
             timed_out: false,
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn truncated_response_is_unknown_even_if_its_prefix_is_valid_json() {
+        let mut output = success("[]");
+        output.stdout_truncated = true;
+        let client = GhCli::new(FakeRunner::with_outputs(vec![Ok(output)]));
+        let states = client.resolve_pr_states(
+            Path::new("/repo"),
+            Some("main"),
+            &[Some("topic".to_owned())],
+            true,
+        );
+        assert_eq!(states["topic"].status, Some(PrStatus::Unknown));
+        assert_eq!(
+            states["topic"].diagnostic.as_ref().unwrap().reason,
+            PrUnavailableReason::OutputLimitExceeded
+        );
     }
 
     #[test]
@@ -382,6 +409,7 @@ mod tests {
             stderr: b"not logged in".to_vec(),
             exit_code: Some(1),
             timed_out: false,
+            ..Default::default()
         });
         let runner = FakeRunner::with_outputs(vec![Ok(success(&first.to_string())), failed]);
         let client = GhCli::new(runner);
@@ -440,6 +468,7 @@ mod tests {
                 stderr: b"probe detail".to_vec(),
                 exit_code,
                 timed_out,
+                ..Default::default()
             })]));
             let states = client.resolve_pr_states(
                 Path::new("/repo"),

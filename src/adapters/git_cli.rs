@@ -19,6 +19,9 @@ pub enum GitCliError {
 
 #[derive(Debug)]
 pub struct GitCommandFailure {
+    pub signal: Option<i32>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
     pub cwd: PathBuf,
     pub args: Vec<OsString>,
     pub exit_code: Option<i32>,
@@ -55,11 +58,12 @@ impl fmt::Display for GitCliError {
             ),
             Self::GitCommandFailed(failure) => write!(
                 formatter,
-                "git command failed in {} (args: {:?}, exit code: {:?}, timed out: {})",
+                "git command failed in {} (args: {:?}, exit code: {:?}, timed out: {}, output truncated: {})",
                 failure.cwd.display(),
                 failure.args,
                 failure.exit_code,
-                failure.timed_out
+                failure.timed_out,
+                failure.stdout_truncated || failure.stderr_truncated
             ),
         }
     }
@@ -121,17 +125,24 @@ where
                 "0",
             ));
 
-        self.runner.run(&command).map_err(|source| {
+        let output = self.runner.run(&command).map_err(|source| {
             GitCliError::GitCommandFailed(Box::new(GitCommandFailure {
                 cwd: cwd.to_path_buf(),
-                args,
+                args: args.clone(),
+                signal: None,
+                stdout_truncated: false,
+                stderr_truncated: false,
                 exit_code: None,
                 timed_out: false,
                 stdout: Vec::new(),
                 stderr: Vec::new(),
                 source: Some(source),
             }))
-        })
+        })?;
+        if output.is_truncated() {
+            return Err(command_failure(cwd, args, output));
+        }
+        Ok(output)
     }
 
     pub fn execute_checked<I, S>(&self, cwd: &Path, args: I) -> Result<ProcessOutput, GitCliError>
@@ -339,6 +350,9 @@ fn command_failure(cwd: &Path, args: Vec<OsString>, output: ProcessOutput) -> Gi
     GitCliError::GitCommandFailed(Box::new(GitCommandFailure {
         cwd: cwd.to_path_buf(),
         args,
+        signal: output.signal,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
         exit_code: output.exit_code,
         timed_out: output.timed_out,
         stdout: output.stdout,
@@ -364,6 +378,28 @@ mod tests {
             .status()
             .expect("run git fixture command");
         assert!(status.success(), "git fixture command failed: {args:?}");
+    }
+
+    #[test]
+    fn truncated_success_is_an_error_before_any_git_output_parser_runs() {
+        use crate::ports::process::{ProcessCommand, ProcessError, ProcessOutput, ProcessRunner};
+        struct Truncated;
+        impl ProcessRunner for Truncated {
+            fn run(&self, _command: &ProcessCommand) -> Result<ProcessOutput, ProcessError> {
+                Ok(ProcessOutput {
+                    stdout: b"valid prefix".to_vec(),
+                    stdout_truncated: true,
+                    exit_code: Some(0),
+                    ..ProcessOutput::default()
+                })
+            }
+        }
+        let error = GitCli::new(Truncated)
+            .execute(std::path::Path::new("/repo"), ["status"])
+            .unwrap_err();
+        assert!(
+            matches!(error, GitCliError::GitCommandFailed(failure) if failure.stdout_truncated && failure.exit_code == Some(0))
+        );
     }
 
     #[test]

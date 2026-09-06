@@ -139,6 +139,8 @@ pub struct HookProcessRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookProcessOutput {
+    pub signal: Option<i32>,
+    pub stderr_truncated: bool,
     pub exit_code: Option<i32>,
     pub stderr: String,
     pub timed_out: bool,
@@ -171,6 +173,8 @@ impl HookProcessRunner for SystemHookProcessRunner {
             .map_err(|error| error.to_string())?;
         Ok(HookProcessOutput {
             exit_code: output.exit_code,
+            signal: output.signal,
+            stderr_truncated: output.stderr_truncated,
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             timed_out: output.timed_out,
         })
@@ -179,6 +183,8 @@ impl HookProcessRunner for SystemHookProcessRunner {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookExecution {
+    pub signal: Option<i32>,
+    pub stderr_truncated: bool,
     pub started_at: String,
     pub ended_at: String,
     pub exit_code: Option<i32>,
@@ -221,6 +227,8 @@ pub struct HookRunReport {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookLogFields {
+    pub signal: Option<i32>,
+    pub stderr_truncated: bool,
     pub hook: String,
     pub phase: HookPhase,
     pub start: String,
@@ -257,6 +265,15 @@ impl HookLogFields {
                     .map_or_else(|| "null".to_owned(), |code| code.to_string())
             ),
             format!("timedOut={}", if self.timed_out { "1" } else { "0" }),
+            format!(
+                "signal={}",
+                self.signal
+                    .map_or_else(|| "null".to_owned(), |signal| signal.to_string())
+            ),
+            format!(
+                "stderrTruncated={}",
+                if self.stderr_truncated { "1" } else { "0" }
+            ),
             format!("stderr={}", self.stderr),
             String::new(),
         ]
@@ -372,6 +389,8 @@ pub fn run_hook(
                         started_at: start.clone(),
                         ended_at: timestamp()?,
                         exit_code: None,
+                        signal: None,
+                        stderr_truncated: false,
                         timed_out: false,
                         stderr: message.clone(),
                     },
@@ -382,6 +401,8 @@ pub fn run_hook(
                         started_at: start.clone(),
                         ended_at: timestamp()?,
                         exit_code: output.exit_code,
+                        signal: output.signal,
+                        stderr_truncated: output.stderr_truncated,
                         timed_out: output.timed_out,
                         stderr: output.stderr,
                     };
@@ -414,11 +435,13 @@ fn log_fields(
     fallback_start: &str,
     outcome: &HookOutcome,
 ) -> Result<HookLogFields, HookError> {
-    let (start, end, exit_code, timed_out, stderr) = match outcome {
+    let (start, end, exit_code, signal, timed_out, stderr_truncated, stderr) = match outcome {
         HookOutcome::Missing { path } => (
             fallback_start.to_owned(),
             timestamp()?,
             None,
+            None,
+            false,
             false,
             format!("hook not found: {}", path.display()),
         ),
@@ -426,6 +449,8 @@ fn log_fields(
             fallback_start.to_owned(),
             timestamp()?,
             None,
+            None,
+            false,
             false,
             format!("hook is not executable: {}", path.display()),
         ),
@@ -436,7 +461,9 @@ fn log_fields(
             execution.started_at.clone(),
             execution.ended_at.clone(),
             execution.exit_code,
+            execution.signal,
             execution.timed_out,
+            execution.stderr_truncated,
             execution.stderr.clone(),
         ),
     };
@@ -446,7 +473,9 @@ fn log_fields(
         start,
         end,
         exit_code,
+        signal,
         timed_out,
+        stderr_truncated,
         stderr,
     })
 }
@@ -565,6 +594,8 @@ mod tests {
         let runner = FakeRunner {
             output: Ok(HookProcessOutput {
                 exit_code: None,
+                signal: Some(9),
+                stderr_truncated: true,
                 stderr: "slow".to_owned(),
                 timed_out: true,
             }),
@@ -595,6 +626,8 @@ mod tests {
             "start=",
             "end=",
             "exitCode=null",
+            "signal=9",
+            "stderrTruncated=1",
             "timedOut=1",
             "stderr=slow",
         ] {
@@ -628,6 +661,8 @@ mod tests {
         let runner = FakeRunner {
             output: Ok(HookProcessOutput {
                 exit_code: Some(0),
+                signal: None,
+                stderr_truncated: false,
                 stderr: String::new(),
                 timed_out: false,
             }),

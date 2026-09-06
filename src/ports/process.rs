@@ -41,6 +41,8 @@ impl EnvironmentVariable {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessCommand {
+    /// Maximum retained bytes for each captured stream; excess bytes are drained and discarded.
+    pub max_output_bytes: usize,
     pub program: OsString,
     pub args: Vec<OsString>,
     pub cwd: Option<PathBuf>,
@@ -56,6 +58,7 @@ impl ProcessCommand {
     pub fn new(program: impl Into<OsString>) -> Self {
         Self {
             program: program.into(),
+            max_output_bytes: 8 * 1024 * 1024,
             args: Vec::new(),
             cwd: None,
             inherit_env: true,
@@ -68,16 +71,27 @@ impl ProcessCommand {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProcessOutput {
+    pub signal: Option<i32>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
 }
 
+impl ProcessOutput {
+    pub const fn is_truncated(&self) -> bool {
+        self.stdout_truncated || self.stderr_truncated
+    }
+}
+
 #[derive(Debug)]
 pub enum ProcessError {
+    InvalidTimeout,
+    Terminal(std::io::Error),
     Spawn(std::io::Error),
     Wait(std::io::Error),
     Kill(std::io::Error),
@@ -93,6 +107,10 @@ pub enum ProcessError {
 impl fmt::Display for ProcessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidTimeout => {
+                formatter.write_str("process timeout is outside the supported clock range")
+            }
+            Self::Terminal(error) => write!(formatter, "failed to manage child terminal: {error}"),
             Self::Spawn(error) => write!(formatter, "failed to spawn process: {error}"),
             Self::Wait(error) => write!(formatter, "failed to wait for process: {error}"),
             Self::Kill(error) => write!(formatter, "failed to kill process after timeout: {error}"),
@@ -118,12 +136,14 @@ impl std::error::Error for ProcessError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Spawn(error)
+            | Self::Terminal(error)
             | Self::Wait(error)
             | Self::Kill(error)
             | Self::Stdin(error)
             | Self::Stdout(error)
             | Self::Stderr(error) => Some(error),
-            Self::ReaderThreadPanicked(_)
+            Self::InvalidTimeout
+            | Self::ReaderThreadPanicked(_)
             | Self::WriterThreadPanicked
             | Self::StreamDrainTimedOut(_)
             | Self::ReapTimedOut(_) => None,

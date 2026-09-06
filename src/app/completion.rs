@@ -77,6 +77,21 @@ fn completion_command() -> clap::Command {
 }
 
 pub fn generate_completion(shell: CompletionShell) -> Result<String, CliError> {
+    let generated = generate_for_binary(shell, "vw")?;
+    let script = match shell {
+        CompletionShell::Zsh => enhance_zsh(&generated)?,
+        CompletionShell::Fish => {
+            let aliases = generate_for_binary(shell, "vde-worktree")?;
+            enhance_fish(&generated, &aliases)
+        }
+    };
+    debug_assert!(!script.contains("node"));
+    debug_assert!(!script.contains("npm"));
+    debug_assert!(!script.contains("pnpm"));
+    Ok(script)
+}
+
+fn generate_for_binary(shell: CompletionShell, binary: &str) -> Result<String, CliError> {
     let mut command = completion_command();
     let mut bytes = Vec::new();
     generate(
@@ -85,23 +100,15 @@ pub fn generate_completion(shell: CompletionShell) -> Result<String, CliError> {
             CompletionShell::Fish => Shell::Fish,
         },
         &mut command,
-        "vw",
+        binary,
         &mut bytes,
     );
-    let generated = String::from_utf8(bytes).map_err(|error| {
+    String::from_utf8(bytes).map_err(|error| {
         CliError::new(
             ErrorCode::InternalError,
             format!("completion generator produced invalid UTF-8: {error}"),
         )
-    })?;
-    let script = match shell {
-        CompletionShell::Zsh => enhance_zsh(&generated)?,
-        CompletionShell::Fish => enhance_fish(&generated),
-    };
-    debug_assert!(!script.contains("node"));
-    debug_assert!(!script.contains("npm"));
-    debug_assert!(!script.contains("pnpm"));
-    Ok(script)
+    })
 }
 
 fn run_completion(
@@ -1380,13 +1387,7 @@ fn replace_zsh_command_argument(
     ))
 }
 
-fn enhance_fish(generated: &str) -> String {
-    let aliases = generated
-        .lines()
-        .filter(|line| line.starts_with("complete -c vw "))
-        .map(|line| line.replacen("complete -c vw ", "complete -c vde-worktree ", 1))
-        .collect::<Vec<_>>()
-        .join("\n");
+fn enhance_fish(generated: &str, aliases: &str) -> String {
     let mut dynamic = String::new();
     for kind in ["worktrees", "use-branches", "remote-branches", "hooks"] {
         let commands = COMPLETION_BINDINGS
@@ -1480,6 +1481,22 @@ mod tests {
         let fish = generate_completion(CompletionShell::Fish).unwrap();
         assert!(fish.contains("__fish_vw_using_subcommand switch use unabsorb"));
         assert!(fish.contains("__vw_dynamic_candidates use-branches"));
+    }
+
+    #[test]
+    fn fish_keeps_multiline_enum_candidates_for_both_binary_names() {
+        let script = generate_completion(CompletionShell::Fish).unwrap();
+        for binary in ["vw", "vde-worktree"] {
+            let prefix = format!("complete -c {binary} ");
+            let completion = script
+                .split(&prefix)
+                .skip(1)
+                .find(|completion| {
+                    completion.starts_with("-n ") && completion.contains(" -l stdin ")
+                })
+                .expect("stdin completion for binary");
+            assert!(completion.contains("null\\t''\ninherit\\t''\""));
+        }
     }
 
     #[test]

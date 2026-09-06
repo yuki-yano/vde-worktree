@@ -43,6 +43,7 @@ pub enum PrUnavailableReason {
     InvalidResponse,
     HeadMismatch,
     HeadUnavailable,
+    OutputLimitExceeded,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

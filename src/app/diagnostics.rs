@@ -219,7 +219,8 @@ fn dependency_probe(
     command.timeout = Some(Duration::from_secs(5));
     match runner.run(&command) {
         Ok(output) => {
-            let success = output.exit_code == Some(0) && !output.timed_out;
+            let success =
+                output.exit_code == Some(0) && !output.timed_out && !output.is_truncated();
             check(
                 program,
                 if success {
@@ -232,6 +233,7 @@ fn dependency_probe(
                 if success { "available" } else { "probe failed" },
                 json!({
                     "exitCode": output.exit_code, "timedOut": output.timed_out,
+                    "signal": output.signal, "stdoutTruncated": output.stdout_truncated, "stderrTruncated": output.stderr_truncated,
                     "version": expose_output.then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned()),
                 }),
             )

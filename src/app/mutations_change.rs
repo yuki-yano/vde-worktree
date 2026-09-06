@@ -1531,6 +1531,7 @@ fn git_output_error_os(cwd: &Path, args: &[OsString], output: &ProcessOutput) ->
 fn map_metadata_error(source: MetadataTransactionError) -> CliError {
     let message = source.to_string();
     match source {
+        MetadataTransactionError::Git(source) => source.map_to_cli_error(),
         MetadataTransactionError::RecoveryBatch { .. } => {
             crate::app::error_mapper::map_metadata_transaction_error(&source)
         }
@@ -1639,6 +1640,7 @@ mod tests {
                 stderr: b"conflict".to_vec(),
                 exit_code: Some(1),
                 timed_out: false,
+                ..Default::default()
             })
         }
     }
@@ -1667,6 +1669,7 @@ mod tests {
                     stderr: b"injected stash OID resolution failure".to_vec(),
                     exit_code: Some(1),
                     timed_out: false,
+                    ..Default::default()
                 });
             }
             self.inner.execute(cwd, &args)

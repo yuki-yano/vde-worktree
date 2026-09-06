@@ -96,7 +96,7 @@ where
     R: ProcessRunner,
 {
     let result = match &request.command {
-        Command::Exec { branch, argv } => execute_in_worktree(
+        Command::Exec { branch, argv, .. } => execute_in_worktree(
             request,
             context,
             git,
@@ -140,10 +140,24 @@ fn execute_in_worktree<R: ProcessRunner>(
             "exec requires an executable after --",
         )
     })?;
+    let Command::Exec { options, .. } = &request.command else {
+        unreachable!("exec options")
+    };
     let mut command = ProcessCommand::new(program);
     command.args = child_arguments.to_vec();
     command.cwd = Some(target.path.clone());
-    command.stdin = StdinPolicy::Inherit;
+    command.timeout = Some(Duration::from_millis(options.timeout_ms));
+    command.max_output_bytes = usize::try_from(options.max_output_bytes.unwrap_or(1024 * 1024))
+        .map_err(|_| {
+            CliError::new(
+                ErrorCode::InvalidArgument,
+                "max-output-bytes exceeds the supported size",
+            )
+        })?;
+    command.stdin = match options.stdin {
+        crate::cli::ExecStdin::Null => StdinPolicy::Null,
+        crate::cli::ExecStdin::Inherit => StdinPolicy::Inherit,
+    };
     command.stdout = if request.common.json {
         OutputPolicy::Capture
     } else {
@@ -159,28 +173,43 @@ fn execute_in_worktree<R: ProcessRunner>(
             ("branch".to_owned(), json!(branch)),
             ("path".to_owned(), json!(target_path)),
         ]))
+        .at_phase(ExecutionPhase::Process, ExecutionState::Unknown, &[])
     })?;
-    let child_exit_code = child.exit_code.unwrap_or(1);
+    let child_exit_code = child.exit_code;
     let data = json!({
         "branch": branch,
         "path": target_path,
         "childExitCode": child_exit_code,
+        "childSignal": child.signal,
+        "timedOut": child.timed_out,
+        "stdoutTruncated": child.stdout_truncated,
+        "stderrTruncated": child.stderr_truncated,
         "childStdout": String::from_utf8_lossy(&child.stdout),
         "childStderr": String::from_utf8_lossy(&child.stderr),
     });
-    if child_exit_code == 0 && !child.timed_out {
+    if child_exit_code == Some(0) && !child.timed_out {
         return Ok(MiscCommandOutput::success(data));
     }
     let error = CliError::new(
         ErrorCode::ChildProcessFailed,
-        "target command exited with non-zero status",
+        if child.timed_out {
+            "target command exceeded its timeout"
+        } else if child.signal.is_some() {
+            "target command terminated by signal"
+        } else {
+            "target command exited with non-zero status"
+        },
     )
     .with_details(BTreeMap::from([
         ("branch".to_owned(), json!(branch)),
         ("path".to_owned(), json!(target_path)),
         ("childExitCode".to_owned(), json!(child_exit_code)),
+        ("childSignal".to_owned(), json!(child.signal)),
         ("timedOut".to_owned(), json!(child.timed_out)),
-    ]));
+        ("stdoutTruncated".to_owned(), json!(child.stdout_truncated)),
+        ("stderrTruncated".to_owned(), json!(child.stderr_truncated)),
+    ]))
+    .at_phase(ExecutionPhase::Process, ExecutionState::Unknown, &["spawn"]);
     Ok(MiscCommandOutput::partial(data, error))
 }
 
@@ -2759,6 +2788,7 @@ mod tests {
             stderr: stderr.to_vec(),
             exit_code: Some(exit_code),
             timed_out: false,
+            ..Default::default()
         }
     }
 
@@ -2810,7 +2840,9 @@ mod tests {
         assert_eq!(command.program, "tool");
         assert_eq!(command.args, ["$HOME", "a b"].map(OsString::from));
         assert_eq!(command.cwd, Some(PathBuf::from("/repo/.worktree/topic")));
-        assert_eq!(command.stdin, StdinPolicy::Inherit);
+        assert_eq!(command.stdin, StdinPolicy::Null);
+        assert_eq!(command.timeout, Some(Duration::from_millis(300_000)));
+        assert_eq!(command.max_output_bytes, 1024 * 1024);
         assert_eq!(command.stdout, OutputPolicy::Capture);
         assert_eq!(command.stderr, OutputPolicy::Capture);
     }

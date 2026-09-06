@@ -285,6 +285,8 @@ pub enum Command {
     },
     /// Run an argv command in a branch worktree.
     Exec {
+        #[command(flatten)]
+        options: ExecOptions,
         #[arg(required_unless_present = "worktree", conflicts_with = "worktree")]
         /// Branch whose attached worktree becomes the child process cwd.
         branch: Option<String>,
@@ -406,6 +408,27 @@ impl Command {
             Self::CompletionCandidates { .. } => "__complete",
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct ExecOptions {
+    #[arg(long, default_value_t = 300_000, value_parser = clap::value_parser!(u64).range(1..))]
+    /// Maximum child runtime in milliseconds, including captured stream draining.
+    pub timeout_ms: u64,
+
+    #[arg(long, requires = "json", value_parser = clap::value_parser!(u64).range(1..))]
+    /// Retain at most this many raw bytes per JSON output stream (default: 1048576); drain the rest.
+    pub max_output_bytes: Option<u64>,
+
+    #[arg(long, value_enum, default_value = "null")]
+    /// Child stdin: null closes input; inherit passes the invoking process input through.
+    pub stdin: ExecStdin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExecStdin {
+    Null,
+    Inherit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

@@ -246,7 +246,7 @@ fn semantics(name: &str) -> Semantics {
             "unambiguous branch or explicit --worktree path",
             &["Registered worktree; executable argv after --"],
             &[
-                "Run arbitrary child process in the worktree; JSON captures child stdout/stderr, human mode inherits terminal streams",
+                "Run argv in the worktree; default 300000 ms timeout, closed stdin and 1048576 captured bytes per JSON stream; report signal, timeout and truncation; human mode inherits output streams",
             ],
             &[
                 "vw exec feature/topic --json -- cargo test",
@@ -463,6 +463,7 @@ fn semantic_constraints(command: &str) -> Vec<Value> {
     match command {
         "list" => constraints.push(json!({"when": "monitor", "requires": ["json", "no_gh"], "conflictsWith": ["gh"]})),
         "del" => constraints.push(json!({"when": "nonInteractive", "whenAny": ["force", "force_dirty", "allow_unpushed", "force_unmerged", "force_locked"], "requires": ["allow_unsafe"]})),
+        "exec" => constraints.push(json!({"when": "max_output_bytes", "requires": ["json"]})),
         "absorb" | "unabsorb" | "use" => constraints.push(json!({"when": "nonInteractive", "requires": ["allow_agent", "allow_unsafe"]})),
         _ => {}
     }
@@ -587,6 +588,7 @@ fn worktree_schema() -> Value {
                                 "not_observed",
                                 "head_mismatch",
                                 "head_unavailable",
+                                "output_limit_exceeded",
                                 "disabled",
                                 "dependency_missing",
                                 "authentication_required",
@@ -862,7 +864,11 @@ fn result_data_schema(command: &str) -> Value {
         "exec" => object([
             ("branch", nullable(scalar("string"))),
             ("path", scalar("string")),
-            ("childExitCode", scalar("integer")),
+            ("childExitCode", nullable(scalar("integer"))),
+            ("childSignal", nullable(scalar("integer"))),
+            ("timedOut", scalar("boolean")),
+            ("stdoutTruncated", scalar("boolean")),
+            ("stderrTruncated", scalar("boolean")),
             ("childStdout", scalar("string")),
             ("childStderr", scalar("string")),
         ]),

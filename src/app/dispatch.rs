@@ -2031,6 +2031,7 @@ mod tests {
                 stderr: b"fatal: fake adapter failure".to_vec(),
                 exit_code: Some(128),
                 timed_out: false,
+                ..Default::default()
             })
         }
     }

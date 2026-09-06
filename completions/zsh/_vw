@@ -472,6 +472,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (exec)
 _arguments "${_arguments_options[@]}" : \
+'--timeout-ms=[Maximum child runtime in milliseconds, including captured stream draining]:TIMEOUT_MS:_default' \
+'--max-output-bytes=[Retain at most this many raw bytes per JSON output stream (default\: 1048576); drain the rest]:MAX_OUTPUT_BYTES:_default' \
+'--stdin=[Child stdin\: null closes input; inherit passes the invoking process input through]:STDIN:(null inherit)' \
 '-C+[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
 '--directory=[Resolve repository, config, hooks and relative paths from this directory]:DIRECTORY:_files' \
 '--worktree=[Select a registered worktree by path for status, path, exec, copy or link]:PATH:_files' \

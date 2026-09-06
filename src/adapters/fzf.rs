@@ -47,6 +47,9 @@ pub enum FzfError {
 
 #[derive(Debug)]
 pub struct FzfCommandFailure {
+    pub signal: Option<i32>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub stdout: Vec<u8>,
@@ -149,10 +152,10 @@ where
         command.stderr = OutputPolicy::Inherit;
         command.timeout = None;
         let output = self.runner.run(&command).map_err(map_process_error)?;
-        if output.exit_code == Some(130) {
+        if output.exit_code == Some(130) || output.signal == Some(2) {
             return Ok(FzfSelection::Cancelled);
         }
-        if output.exit_code != Some(0) || output.timed_out {
+        if output.exit_code != Some(0) || output.timed_out || output.is_truncated() {
             return Err(FzfError::CommandFailed(output.into()));
         }
 
@@ -182,7 +185,7 @@ where
             }
             Err(error) => return Err(FzfError::Process(error)),
         };
-        if output.exit_code == Some(0) && !output.timed_out {
+        if output.exit_code == Some(0) && !output.timed_out && !output.is_truncated() {
             Ok(())
         } else {
             Err(FzfError::DependencyMissing)
@@ -194,7 +197,7 @@ where
             .runner
             .run(&check_command(cwd, "--help"))
             .map_err(map_process_error)?;
-        if output.exit_code != Some(0) || output.timed_out {
+        if output.exit_code != Some(0) || output.timed_out || output.is_truncated() {
             return Err(FzfError::CapabilityCheckFailed(output.into()));
         }
         Ok(output
@@ -207,6 +210,9 @@ where
 impl From<ProcessOutput> for FzfCommandFailure {
     fn from(output: ProcessOutput) -> Self {
         Self {
+            signal: output.signal,
+            stdout_truncated: output.stdout_truncated,
+            stderr_truncated: output.stderr_truncated,
             exit_code: output.exit_code,
             timed_out: output.timed_out,
             stdout: output.stdout,
@@ -352,6 +358,7 @@ mod tests {
             stderr: Vec::new(),
             exit_code: Some(exit_code),
             timed_out: false,
+            ..Default::default()
         }
     }
 
@@ -373,6 +380,19 @@ mod tests {
             stderr_is_terminal: true,
             in_tmux: false,
         }
+    }
+
+    #[test]
+    fn truncated_selection_is_rejected_even_if_its_prefix_matches_a_candidate() {
+        let mut selection = output("* main\t/repo\tpreview\n", 0);
+        selection.stdout_truncated = true;
+        let adapter = FzfAdapter::new(FakeRunner::with_outputs(vec![
+            output("0.60.0", 0),
+            selection,
+        ]));
+        assert!(
+            matches!(adapter.select_path(&request(&[candidate()])), Err(FzfError::CommandFailed(failure)) if failure.stdout_truncated)
+        );
     }
 
     #[test]

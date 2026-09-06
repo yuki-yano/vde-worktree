@@ -860,6 +860,7 @@ mod tests {
                 timed_out: false,
                 stdout: Vec::new(),
                 stderr: b"injected".to_vec(),
+                ..Default::default()
             })
         }
     }
