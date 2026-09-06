@@ -123,6 +123,49 @@ pub struct CliError {
     pub code: ErrorCode,
     pub message: String,
     pub details: BTreeMap<String, Value>,
+    pub execution: ExecutionReport,
+}
+
+/// Observed execution state, never a promise that retrying is safe. Hooks may have independent
+/// effects even when the command's own reversible staging was restored.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionReport {
+    pub phase: ExecutionPhase,
+    pub state: ExecutionState,
+    pub completed: Vec<String>,
+    pub recovery: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecutionPhase {
+    Parse,
+    Resolve,
+    Configure,
+    Lock,
+    Recover,
+    Preflight,
+    Stage,
+    PreHook,
+    Apply,
+    Finalize,
+    PostHook,
+    Process,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecutionState {
+    NotStarted,
+    RolledBack,
+    Applied,
+    Partial,
+    RecoveryRequired,
+    #[default]
+    Unknown,
 }
 
 impl CliError {
@@ -131,6 +174,7 @@ impl CliError {
             code,
             message: message.into(),
             details: BTreeMap::new(),
+            execution: ExecutionReport::default(),
         }
     }
 
@@ -142,6 +186,34 @@ impl CliError {
 
     pub const fn exit_code(&self) -> i32 {
         self.code.exit_code()
+    }
+
+    /// Adds boundary context without replacing more precise command-specific evidence.
+    #[must_use]
+    pub fn at_phase(
+        mut self,
+        phase: ExecutionPhase,
+        state: ExecutionState,
+        completed: &[&str],
+    ) -> Self {
+        if self.execution.phase == ExecutionPhase::Unknown {
+            self.execution.phase = phase;
+        }
+        if self.execution.state == ExecutionState::Unknown {
+            self.execution.state = state;
+        }
+        for step in completed {
+            if !self.execution.completed.iter().any(|value| value == step) {
+                self.execution.completed.push((*step).to_owned());
+            }
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_recovery(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.execution.recovery.insert(key.into(), value);
+        self
     }
 }
 

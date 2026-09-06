@@ -12,7 +12,7 @@ use crate::adapters::gh_cli::GhCli;
 use crate::adapters::git_cli::GitCli;
 use crate::adapters::process::StdProcessRunner;
 use crate::app::completion::execute_completion;
-use crate::app::error_mapper::{MapToCliError, map_hook_outcome};
+use crate::app::error_mapper::{MapToCliError, map_hook_report};
 use crate::app::misc_commands::{MiscCommandOutput, execute_misc_command};
 use crate::app::mutations_change::{
     ExtractGitApplied, ExtractPlan, ExtractResult, LockPlan, MvGitApplied, MvPlan, MvResult,
@@ -43,7 +43,7 @@ use crate::app::transfer::{
     rollback_transfer_after_pre_hook_failure, stage_transfer,
 };
 use crate::cli::{Command, ParsedRequest};
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::repo::RepoContext;
 use crate::domain::worktree::WorktreeSnapshot;
 use crate::presentation::json::{
@@ -65,12 +65,13 @@ pub struct CommandOutput {
     pub human_stdout: String,
     pub human_stderr: String,
     pub partial_error: Option<CliError>,
+    pub warnings: Vec<CliError>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ApplicationHookResult {
     Continue,
-    Warning(String),
+    Warning(CliError),
 }
 
 /// A command-specific mutation plan whose hook target and phase-specific cwd were fixed during
@@ -96,6 +97,7 @@ impl CommandOutput {
             human_stdout: String::new(),
             human_stderr: String::new(),
             partial_error: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -104,7 +106,12 @@ impl CommandOutput {
             data,
             human_stdout: String::new(),
             human_stderr: String::new(),
-            partial_error: Some(error),
+            partial_error: Some(error.at_phase(
+                ExecutionPhase::Finalize,
+                ExecutionState::Partial,
+                &[],
+            )),
+            warnings: Vec::new(),
         }
     }
 }
@@ -116,6 +123,7 @@ impl From<MiscCommandOutput> for CommandOutput {
             human_stdout: output.human_stdout,
             human_stderr: output.human_stderr,
             partial_error: output.partial_error,
+            warnings: Vec::new(),
         }
     }
 }
@@ -202,60 +210,41 @@ pub fn dispatch<B>(request: &ParsedRequest, backend: &B) -> ProcessOutput
 where
     B: ApplicationBackend,
 {
-    let command_name = request.command.name();
     let context = if matches!(request.command, Command::Completion { .. }) {
         None
     } else {
         match backend.resolve_repo_context() {
             Ok(context) => Some(context),
-            Err(error) => return render_error(request, None, &error),
+            Err(error) => {
+                return render_error(
+                    request,
+                    None,
+                    &error.at_phase(ExecutionPhase::Resolve, ExecutionState::NotStarted, &[]),
+                );
+            }
         }
     };
     let config = match context.as_ref() {
         Some(context) => match backend.resolve_config(context) {
             Ok(config) => Some(config),
-            Err(error) => return render_error(request, Some(context), &error),
+            Err(error) => {
+                return render_error(
+                    request,
+                    Some(context),
+                    &error.at_phase(ExecutionPhase::Configure, ExecutionState::NotStarted, &[]),
+                );
+            }
         },
         None => None,
     };
 
     let write_command = is_write_command(&request.command);
-    let mut lock_guard = None;
-    if write_command {
-        let context = context
-            .as_ref()
-            .expect("repository commands always resolve a context");
-        if !matches!(request.command, Command::Init) {
-            match backend.is_initialized(&context.repo_root) {
-                Ok(true) => {}
-                Ok(false) => {
-                    let error = CliError::new(
-                        ErrorCode::NotInitialized,
-                        "Repository is not initialized. Run `vde-worktree init` first.",
-                    )
-                    .with_details(BTreeMap::from([(
-                        "repoRoot".to_owned(),
-                        json!(context.repo_root),
-                    )]));
-                    return render_error(request, Some(context), &error);
-                }
-                Err(error) => return render_error(request, Some(context), &error),
-            }
-        }
-        let timeout = Duration::from_millis(request.common.lock_timeout_ms.unwrap_or_else(|| {
-            config
-                .as_ref()
-                .expect("repository commands always resolve config")
-                .locks
-                .timeout_ms
-        }));
-        match backend.acquire_repo_lock(context, timeout, command_name) {
-            Ok(guard) => lock_guard = Some(guard),
-            Err(error) => return render_error(request, Some(context), &error),
-        }
-    }
+    let lock_guard = match mutation_lock(request, backend, context.as_ref(), config.as_ref()) {
+        Ok(guard) => guard,
+        Err(error) => return render_error(request, context.as_ref(), &error),
+    };
 
-    let mut hook_warnings = String::new();
+    let mut hook_warnings = Vec::new();
     let result = if write_command {
         let context = context
             .as_ref()
@@ -285,11 +274,55 @@ where
 
     match result {
         Ok(mut output) => {
-            output.human_stderr.push_str(&hook_warnings);
+            for warning in &hook_warnings {
+                let _ = writeln!(output.human_stderr, "Warning: {}", warning.message);
+            }
+            output.warnings.extend(hook_warnings);
             render_output(request, context.as_ref(), output)
         }
         Err(error) => render_error(request, context.as_ref(), &error),
     }
+}
+
+fn mutation_lock<B: ApplicationBackend>(
+    request: &ParsedRequest,
+    backend: &B,
+    context: Option<&RepoContext>,
+    config: Option<&ResolvedConfig>,
+) -> Result<Option<B::LockGuard>, CliError> {
+    if !is_write_command(&request.command) {
+        return Ok(None);
+    }
+    let context = context.expect("write commands resolve a context");
+    let config = config.expect("write commands resolve config");
+    if !matches!(request.command, Command::Init) {
+        let initialized = backend
+            .is_initialized(&context.repo_root)
+            .map_err(|error| {
+                error.at_phase(ExecutionPhase::Preflight, ExecutionState::NotStarted, &[])
+            })?;
+        if !initialized {
+            return Err(CliError::new(
+                ErrorCode::NotInitialized,
+                "Repository is not initialized. Run `vde-worktree init` first.",
+            )
+            .with_details(BTreeMap::from([(
+                "repoRoot".to_owned(),
+                json!(context.repo_root),
+            )]))
+            .at_phase(ExecutionPhase::Preflight, ExecutionState::NotStarted, &[]));
+        }
+    }
+    let timeout = Duration::from_millis(
+        request
+            .common
+            .lock_timeout_ms
+            .unwrap_or(config.locks.timeout_ms),
+    );
+    backend
+        .acquire_repo_lock(context, timeout, request.command.name())
+        .map(Some)
+        .map_err(|error| error.at_phase(ExecutionPhase::Lock, ExecutionState::NotStarted, &[]))
 }
 
 fn execute_mutation_pipeline<B>(
@@ -298,13 +331,25 @@ fn execute_mutation_pipeline<B>(
     context: &RepoContext,
     hooks_enabled: bool,
     hook_timeout: Duration,
-    hook_warnings: &mut String,
+    hook_warnings: &mut Vec<CliError>,
 ) -> Result<CommandOutput, CliError>
 where
     B: ApplicationBackend,
 {
-    let plan = backend.prepare_mutation(request, context)?;
-    let stage = backend.stage_mutation(request, context, &plan)?;
+    let plan = backend
+        .prepare_mutation(request, context)
+        .map_err(|error| {
+            error.at_phase(ExecutionPhase::Preflight, ExecutionState::NotStarted, &[])
+        })?;
+    let stage = backend
+        .stage_mutation(request, context, &plan)
+        .map_err(|error| {
+            error.at_phase(
+                ExecutionPhase::Stage,
+                ExecutionState::Unknown,
+                &["preflight"],
+            )
+        })?;
     if hooks_enabled && uses_command_hooks(&request.command) && plan.requires_hooks() {
         match backend.run_hook(
             HookPhase::Pre,
@@ -315,7 +360,11 @@ where
             Ok(result) => collect_hook_result(result, hook_warnings),
             Err(hook_error) => {
                 return match backend.rollback_mutation_stage(request, context, &plan, &stage) {
-                    Ok(()) => Err(hook_error),
+                    Ok(()) => Err(hook_error.at_phase(
+                        ExecutionPhase::PreHook,
+                        ExecutionState::RolledBack,
+                        &["preflight", "stage", "rollbackStage"],
+                    )),
                     Err(restore_error) => {
                         Err(hook_error_with_restore_failure(hook_error, &restore_error))
                     }
@@ -323,8 +372,24 @@ where
             }
         }
     }
-    let applied = backend.apply_mutation(request, context, &plan, stage)?;
-    let mut output = backend.update_mutation_state(request, context, &plan, applied)?;
+    let applied = backend
+        .apply_mutation(request, context, &plan, stage)
+        .map_err(|error| {
+            error.at_phase(
+                ExecutionPhase::Apply,
+                ExecutionState::Unknown,
+                &["preflight", "stage"],
+            )
+        })?;
+    let mut output = backend
+        .update_mutation_state(request, context, &plan, applied)
+        .map_err(|error| {
+            error.at_phase(
+                ExecutionPhase::Finalize,
+                ExecutionState::Partial,
+                &["preflight", "stage", "apply"],
+            )
+        })?;
     if hooks_enabled && uses_command_hooks(&request.command) && plan.requires_hooks() {
         match backend.run_hook(
             HookPhase::Post,
@@ -334,6 +399,11 @@ where
         ) {
             Ok(result) => collect_hook_result(result, hook_warnings),
             Err(post_hook_error) if output.partial_error.is_some() => {
+                let post_hook_error = post_hook_error.at_phase(
+                    ExecutionPhase::PostHook,
+                    ExecutionState::Partial,
+                    &[],
+                );
                 let partial_error = output
                     .partial_error
                     .as_mut()
@@ -344,10 +414,17 @@ where
                         "code": post_hook_error.code,
                         "message": post_hook_error.message,
                         "details": post_hook_error.details,
+                        "execution": post_hook_error.execution,
                     }),
                 );
             }
-            Err(post_hook_error) => return Err(post_hook_error),
+            Err(post_hook_error) => {
+                output.partial_error = Some(post_hook_error.at_phase(
+                    ExecutionPhase::PostHook,
+                    ExecutionState::Applied,
+                    &["preflight", "stage", "apply", "finalize"],
+                ));
+            }
         }
     }
     Ok(output)
@@ -365,12 +442,13 @@ fn hook_error_with_restore_failure(mut hook_error: CliError, restore_error: &Cli
             "details": restore_error.details,
         }),
     );
-    hook_error
+    hook_error.at_phase(ExecutionPhase::PreHook, ExecutionState::RecoveryRequired, &["preflight", "stage"])
+        .with_recovery("rollbackError", json!({"code": restore_error.code, "details": restore_error.details, "execution": restore_error.execution}))
 }
 
-fn collect_hook_result(result: ApplicationHookResult, warnings: &mut String) {
-    if let ApplicationHookResult::Warning(text) = result {
-        warnings.push_str(&text);
+fn collect_hook_result(result: ApplicationHookResult, warnings: &mut Vec<CliError>) {
+    if let ApplicationHookResult::Warning(error) = result {
+        warnings.push(error);
     }
 }
 
@@ -405,12 +483,13 @@ fn render_output(
 ) -> ProcessOutput {
     if let Some(error) = &output.partial_error {
         if request.common.json {
-            let envelope = PartialErrorEnvelope::new(
+            let mut envelope = PartialErrorEnvelope::new(
                 request.command.name(),
                 context.map(|value| value.repo_root.to_string_lossy().into_owned()),
                 output.data,
                 ErrorPayload::from(error),
             );
+            envelope.warnings = output.warnings.iter().map(ErrorPayload::from).collect();
             return match to_stdout_json(&envelope) {
                 Ok(stdout) => ProcessOutput {
                     exit_code: error.exit_code(),
@@ -432,11 +511,12 @@ fn render_output(
         };
     }
     if request.common.json {
-        let envelope = SuccessEnvelope::new(
+        let mut envelope = SuccessEnvelope::new(
             request.command.name(),
             context.map(|value| value.repo_root.to_string_lossy().into_owned()),
             output.data,
         );
+        envelope.warnings = output.warnings.iter().map(ErrorPayload::from).collect();
         return match to_stdout_json(&envelope) {
             Ok(stdout) => ProcessOutput {
                 exit_code: 0,
@@ -971,14 +1051,11 @@ impl ApplicationBackend for SystemBackend {
         }
         .map_err(MapToCliError::map_to_cli_error)?;
         if report.disposition == HookDisposition::Fatal {
-            return Err(map_hook_outcome(&report.outcome));
+            return Err(map_hook_report(&report));
         }
         if report.disposition == HookDisposition::Warning {
-            let warning = map_hook_outcome(&report.outcome);
-            return Ok(ApplicationHookResult::Warning(format!(
-                "Warning: {}\n",
-                warning.message
-            )));
+            let warning = map_hook_report(&report);
+            return Ok(ApplicationHookResult::Warning(warning));
         }
         Ok(ApplicationHookResult::Continue)
     }
@@ -989,8 +1066,13 @@ impl ApplicationBackend for SystemBackend {
         request: &ParsedRequest,
         context: &RepoContext,
     ) -> Result<Self::MutationPlan, CliError> {
-        recover_pending_metadata_transactions(&context.repo_root)
-            .map_err(|error| map_metadata_transaction_error(&error))?;
+        recover_pending_metadata_transactions(&context.repo_root).map_err(|error| {
+            map_metadata_transaction_error(&error).at_phase(
+                ExecutionPhase::Recover,
+                ExecutionState::RecoveryRequired,
+                &[],
+            )
+        })?;
         let config = self.mutation_config(context)?;
         let managed_root =
             resolve_managed_worktree_root(&context.repo_root, &config.paths.worktree_root);
@@ -1757,7 +1839,12 @@ mod tests {
                     || {
                         Ok(self.post_warning.clone().map_or(
                             ApplicationHookResult::Continue,
-                            ApplicationHookResult::Warning,
+                            |warning| {
+                                ApplicationHookResult::Warning(CliError::new(
+                                    ErrorCode::HookFailed,
+                                    warning.trim().trim_start_matches("Warning: "),
+                                ))
+                            },
                         ))
                     },
                     Err,
@@ -2376,10 +2463,13 @@ mod tests {
             )
             .expect("non-strict post-hook failure is a warning");
 
-        assert_eq!(
-            result,
-            ApplicationHookResult::Warning("Warning: hook execution failed\n".to_owned())
-        );
+        let ApplicationHookResult::Warning(warning) = result else {
+            panic!("expected warning")
+        };
+        assert_eq!(warning.code, ErrorCode::HookFailed);
+        assert_eq!(warning.details["hook"], "post-new");
+        assert_eq!(warning.details["phase"], "post");
+        assert!(warning.details["logPath"].as_str().is_some());
     }
 
     #[test]

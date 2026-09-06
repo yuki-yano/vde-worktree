@@ -125,7 +125,7 @@ fn monitor_list_rejects_every_invalid_option_combination() {
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn monitor_list_keeps_schema_v2_and_skips_upstream_and_lifecycle_writes() {
+fn monitor_list_keeps_public_schema_and_skips_upstream_and_lifecycle_writes() {
     let (fixture, repo) = repository();
     let feature_path = fixture.path().join("feature-monitor");
     git(
@@ -177,7 +177,7 @@ fn monitor_list_keeps_schema_v2_and_skips_upstream_and_lifecycle_writes() {
         String::from_utf8_lossy(&monitor.stderr)
     );
     let value = json_stdout(&monitor);
-    assert_eq!(value["schemaVersion"], 2);
+    assert_eq!(value["schemaVersion"], 3);
     assert_eq!(value["command"], "list");
     assert_eq!(value["status"], "ok");
     assert_eq!(value["repoRoot"], repo.to_string_lossy().as_ref());
@@ -929,6 +929,7 @@ fn a008_cd_success_is_one_absolute_path_line_or_json_data_path() {
             human_stdout: format!("{path}\n"),
             human_stderr: String::new(),
             partial_error: None,
+            warnings: Vec::new(),
         }),
     };
     let human = dispatch(&parsed(&["cd"]), &backend);

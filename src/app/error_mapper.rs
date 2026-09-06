@@ -5,17 +5,76 @@ use serde_json::{Value, json};
 use crate::adapters::fzf::{FzfCommandFailure, FzfError};
 use crate::adapters::git_cli::GitCliError;
 use crate::app::snapshot::SnapshotError;
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::path::PathContainmentError;
 use crate::ports::process::ProcessError;
 use crate::state::config::ConfigError;
-use crate::state::hooks::{HookError, HookOutcome};
+use crate::state::hooks::{HookError, HookOutcome, HookPhase, HookRunReport};
 use crate::state::lifecycle::LifecycleError;
 use crate::state::repo_lock::RepoLockError;
 use crate::state::worktree_lock::WorktreeLockError;
 
 pub trait MapToCliError {
     fn map_to_cli_error(self) -> CliError;
+}
+
+pub fn map_transaction_error(mut error: CliError, phase: ExecutionPhase) -> CliError {
+    for key in [
+        "recoveryPath",
+        "backupPath",
+        "stagedPath",
+        "transactionPath",
+        "recoveryPathUnavailable",
+        "recoveryPathError",
+        "rollbackFailures",
+        "cleanupError",
+        "transactionCleanupError",
+    ] {
+        if let Some(value) = error.details.get(key) {
+            error
+                .execution
+                .recovery
+                .insert(key.to_owned(), value.clone());
+        }
+    }
+    let state = if error.details.get("recoveryRequired") == Some(&json!(true))
+        || error.details.get("rollbackFailed") == Some(&json!(true))
+    {
+        ExecutionState::RecoveryRequired
+    } else if error.details.get("committed") == Some(&json!(true)) {
+        ExecutionState::Applied
+    } else if error.details.get("committed") == Some(&json!(false)) {
+        ExecutionState::RolledBack
+    } else {
+        ExecutionState::Unknown
+    };
+    let completed = if error.details.get("committed") == Some(&json!(true))
+        && error.details.get("rollbackFailed") != Some(&json!(true))
+    {
+        &["apply"][..]
+    } else {
+        &[]
+    };
+    error.at_phase(phase, state, completed)
+}
+
+pub fn map_hook_report(report: &HookRunReport) -> CliError {
+    let mut error = map_hook_outcome(&report.outcome);
+    error.details.insert("hook".to_owned(), json!(report.hook));
+    error
+        .details
+        .insert("phase".to_owned(), json!(report.phase.as_str()));
+    error
+        .details
+        .insert("logPath".to_owned(), json!(report.log_path));
+    error.at_phase(
+        match report.phase {
+            HookPhase::Pre => ExecutionPhase::PreHook,
+            HookPhase::Post => ExecutionPhase::PostHook,
+        },
+        ExecutionState::Unknown,
+        &[],
+    )
 }
 
 pub fn map_hook_outcome(outcome: &HookOutcome) -> CliError {

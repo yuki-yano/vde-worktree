@@ -163,6 +163,7 @@ where
             human_stdout: String::new(),
             human_stderr: warning_text,
             partial_error: None,
+            warnings: Vec::new(),
         });
     }
 
@@ -202,6 +203,7 @@ where
         human_stdout: format!("{}\n", rendered.styled),
         human_stderr: warning_text,
         partial_error: None,
+        warnings: Vec::new(),
     })
 }
 
@@ -233,6 +235,7 @@ fn status_output(
         ),
         human_stderr: warning_text,
         partial_error: None,
+        warnings: Vec::new(),
     })
 }
 
@@ -256,6 +259,7 @@ fn path_output(
         human_stdout: format!("{}\n", worktree.path.display()),
         human_stderr: warning_text,
         partial_error: None,
+        warnings: Vec::new(),
     })
 }
 
@@ -311,6 +315,7 @@ where
             human_stdout: format!("{}\n", path.display()),
             human_stderr: warning_text,
             partial_error: None,
+            warnings: Vec::new(),
         }),
         FzfSelection::Cancelled => Err(CliError::new(ErrorCode::Cancelled, "selection cancelled")),
     }

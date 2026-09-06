@@ -37,9 +37,10 @@ use nix::unistd::{UnlinkatFlags, fsync, unlinkat};
 use rustix::fs::{RenameFlags, renameat_with};
 use serde_json::json;
 
+use crate::app::error_mapper::map_transaction_error;
 use crate::app::misc_commands::MiscCommandOutput;
 use crate::cli::{Command, CompletionShell, ParsedRequest, clap_command};
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase};
 
 pub fn execute_completion(
     request: &ParsedRequest,
@@ -111,7 +112,9 @@ fn run_completion(
         || default_install_path(shell, home),
         |path| Ok(path.to_path_buf()),
     )?;
-    let cleanup_error = atomic_install(&destination, script.as_bytes())?;
+    let cleanup_error = atomic_install(&destination, script.as_bytes())
+        .map_err(|error| map_transaction_error(error, ExecutionPhase::Apply))?
+        .map(|error| map_transaction_error(error, ExecutionPhase::Finalize));
     let installed = cleanup_error
         .as_ref()
         .and_then(|error| error.details.get("committed"))

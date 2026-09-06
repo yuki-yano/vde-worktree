@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::app::error_mapper::MapToCliError;
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::path::ValidatedManagedPath;
 use crate::domain::repo::RepoContext;
 use crate::domain::worktree::{WorktreeSnapshot, WorktreeStatus};
@@ -256,13 +256,23 @@ where
     G::Error: MapToCliError,
 {
     let plan = staged.plan;
-    revalidate_before_apply(git, &plan)?;
+    let mut completed = Vec::new();
+    if staged.stash_oid.is_some() {
+        completed.push("stashSource");
+    }
+    let failure = |error, step, completed: &[&str]| {
+        transfer_failure(error, &plan, staged.stash_oid.as_deref(), step, completed)
+    };
+    revalidate_before_apply(git, &plan)
+        .map_err(|error| failure(error, "revalidation", &completed))?;
     if plan.checkout_primary {
         run_git_checked(
             git,
             &plan.repo_root,
             ["checkout", "--ignore-other-worktrees", &plan.branch],
-        )?;
+        )
+        .map_err(|error| failure(error, "checkoutPrimary", &completed))?;
+        completed.push("checkoutPrimary");
     }
     if let Some(stash_oid) = &staged.stash_oid {
         apply_exact_stash(
@@ -270,16 +280,19 @@ where
             &plan.target_path,
             stash_oid,
             "failed to apply transfer stash to target worktree",
-        )?;
+        )
+        .map_err(|error| failure(error, "applyStash", &completed))?;
+        completed.push("applyStash");
     }
-
     let stash_ref = match (&staged.stash_oid, plan.retention) {
         (Some(stash_oid), StashRetention::DropAfterApply) => {
-            drop_exact_stash(git, &plan.repo_root, stash_oid)?;
+            drop_exact_stash(git, &plan.repo_root, stash_oid)
+                .map_err(|error| failure(error, "dropStash", &completed))?;
             None
         }
         (Some(stash_oid), StashRetention::Keep) => Some(
-            find_stash_ref(git, &plan.repo_root, stash_oid)?
+            find_stash_ref(git, &plan.repo_root, stash_oid)
+                .map_err(|error| failure(error, "resolveRetainedStash", &completed))?
                 .unwrap_or_else(|| stash_oid.to_owned()),
         ),
         (None, _) => None,
@@ -292,6 +305,31 @@ where
         stashed: staged.stash_oid.is_some(),
         stash_ref,
     })
+}
+
+fn transfer_failure(
+    error: CliError,
+    plan: &TransferPlan,
+    stash_oid: Option<&str>,
+    step: &str,
+    completed: &[&str],
+) -> CliError {
+    let phase = if matches!(step, "dropStash" | "resolveRetainedStash") {
+        ExecutionPhase::Finalize
+    } else {
+        ExecutionPhase::Apply
+    };
+    let state = if stash_oid.is_some() {
+        ExecutionState::RecoveryRequired
+    } else {
+        ExecutionState::Unknown
+    };
+    error
+        .at_phase(phase, state, completed)
+        .with_recovery("failedStep", json!(step))
+        .with_recovery("stashOid", json!(stash_oid))
+        .with_recovery("sourcePath", json!(plan.source_path))
+        .with_recovery("targetPath", json!(plan.target_path))
 }
 
 fn revalidate_before_apply<G>(git: &G, plan: &TransferPlan) -> Result<(), CliError>
@@ -460,6 +498,7 @@ fn stage_recovery_error(
     primary
         .details
         .insert("stashOid".to_owned(), json!(stash_oid));
+    let restored = recovery_error.is_none() && stash_oid.is_some();
     if let Some(recovery_error) = recovery_error {
         primary.details.insert(
             "stageRecoveryError".to_owned(),
@@ -470,7 +509,23 @@ fn stage_recovery_error(
             }),
         );
     }
+    let state = if restored {
+        ExecutionState::RolledBack
+    } else {
+        ExecutionState::RecoveryRequired
+    };
     primary
+        .at_phase(
+            ExecutionPhase::Stage,
+            state,
+            if restored {
+                &["stashSource", "restoreSource", "dropStash"]
+            } else {
+                &["stashSource"]
+            },
+        )
+        .with_recovery("stashOid", json!(if restored { None } else { stash_oid }))
+        .with_recovery("message", json!(recovery))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1213,6 +1268,12 @@ mod tests {
         let error = apply_transfer(&adapter, staged.clone()).unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidArgument);
         assert_eq!(error.details["targetBranch"], "main");
+        assert_eq!(
+            error.execution.recovery["stashOid"],
+            json!(staged.stash_oid)
+        );
+        assert_eq!(error.execution.recovery["failedStep"], "revalidation");
+        assert_eq!(error.execution.state, ExecutionState::RecoveryRequired);
         assert!(!target.join("from-primary").exists());
         assert!(staged.stash_oid.is_some());
         assert_eq!(stash_oids(repo).len(), 1);
@@ -1235,6 +1296,8 @@ mod tests {
         .unwrap();
         let fault = FaultGit::new(Fault::ResolveOid, &source, repo);
         let error = stage_transfer(&fault, plan).unwrap_err();
+        assert_eq!(error.execution.state, ExecutionState::RolledBack);
+        assert_eq!(error.execution.recovery["stashOid"], Value::Null);
         assert!(
             error.details["stageRecovery"]
                 .as_str()
@@ -1324,7 +1387,16 @@ mod tests {
             .unwrap();
             let staged = stage_transfer(&normal, plan).unwrap();
             let fault = FaultGit::new(fault_kind, &source, repo);
-            assert!(apply_transfer(&fault, staged).is_err());
+            let oid = staged.stash_oid.clone().unwrap();
+            let error = apply_transfer(&fault, staged).unwrap_err();
+            assert_eq!(error.execution.state, ExecutionState::RecoveryRequired);
+            assert_eq!(error.execution.recovery["stashOid"], oid);
+            assert_eq!(error.execution.recovery["sourcePath"], json!(source));
+            assert_eq!(error.execution.recovery["targetPath"], json!(repo));
+            assert_eq!(
+                error.execution.completed.contains(&"applyStash".to_owned()),
+                fault_kind == Fault::StashDrop
+            );
             let target_copy = repo.join("payload").exists();
             let stash_copy = !stash_oids(repo).is_empty();
             assert!(

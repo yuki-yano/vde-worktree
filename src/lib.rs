@@ -12,6 +12,7 @@ use std::io::{self, Write};
 use app::dispatch::{SystemBackend, dispatch};
 use app::result::{EntrypointOutcome, ProcessOutput};
 use cli::CliParseResult;
+use domain::error::{ExecutionPhase, ExecutionState};
 use presentation::json::{ErrorEnvelope, ErrorPayload, to_stdout_json};
 
 pub fn entrypoint<I, T>(args: I) -> EntrypointOutcome
@@ -29,6 +30,7 @@ where
             EntrypointOutcome::Rendered(ProcessOutput::stdout(0, text))
         }
         CliParseResult::Invalid { error, rendered: _ } => {
+            let error = error.at_phase(ExecutionPhase::Parse, ExecutionState::NotStarted, &[]);
             if json_requested {
                 let envelope = ErrorEnvelope::new(command, None, ErrorPayload::from(&error));
                 match to_stdout_json(&envelope) {
@@ -185,7 +187,7 @@ mod tests {
                 assert!(output.stderr.is_empty());
                 assert!(output.stdout.ends_with('\n'));
                 let value: Value = serde_json::from_str(&output.stdout).expect("valid JSON");
-                assert_eq!(value["schemaVersion"], 2);
+                assert_eq!(value["schemaVersion"], 3);
                 assert_eq!(value["command"], "list");
                 assert_eq!(value["status"], "error");
                 assert!(value["data"].is_null());

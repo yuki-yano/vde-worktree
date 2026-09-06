@@ -535,7 +535,7 @@ Overall policy:
 
 ## JSON Contract
 
-With `--json`, stdout always emits exactly one schema version 2 JSON object.
+With `--json`, stdout always emits exactly one schema version 3 JSON object.
 
 Common success fields:
 
@@ -545,6 +545,7 @@ Common success fields:
 - `repoRoot`
 - `data`
 - `error`
+- `warnings`
 
 Error shape:
 
@@ -553,6 +554,18 @@ Error shape:
 - `error.code`
 - `error.message`
 - `error.details`
+- `error.execution`: `phase`, `state`, `completed`, and `recovery`
+
+`warnings` is always an array of structured diagnostics with the same fields as `error`.
+Hook diagnostics include `details.hook`, `details.phase`, and `details.logPath`; human warnings also go to stderr.
+A strict post-hook failure returns a nonzero exit code while retaining `data`; `error.execution.state` is `applied` when the operation and state finalization completed.
+A pre-hook failure can report `rolledBack` for the command's staging; this does not undo arbitrary side effects performed by the hook itself.
+
+Execution phases are `parse`, `resolve`, `configure`, `lock`, `recover`, `preflight`, `stage`, `preHook`, `apply`, `finalize`, `postHook`, `process`, or `unknown`.
+States are `notStarted`, `rolledBack`, `applied`, `partial`, `recoveryRequired`, or `unknown`.
+`completed` lists observed completed steps, and `recovery` identifies remaining stash OIDs, paths, or failed cleanup steps.
+`unknown` means that the outcome was not established; no state implies that blind retries are safe.
+Batch failures retain per-target `details` and `execution` as well as all successful results.
 
 ## Configuration (`config.yml`)
 

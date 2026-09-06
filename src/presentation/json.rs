@@ -3,15 +3,16 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionReport};
 
-const SCHEMA_VERSION: u8 = 2;
+pub const SCHEMA_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ErrorPayload {
     code: ErrorCode,
     message: String,
     details: BTreeMap<String, Value>,
+    execution: ExecutionReport,
 }
 
 impl ErrorPayload {
@@ -24,13 +25,19 @@ impl ErrorPayload {
             code,
             message: message.into(),
             details,
+            execution: ExecutionReport::default(),
         }
     }
 }
 
 impl From<&CliError> for ErrorPayload {
     fn from(error: &CliError) -> Self {
-        Self::new(error.code, error.message.clone(), error.details.clone())
+        Self {
+            code: error.code,
+            message: error.message.clone(),
+            details: error.details.clone(),
+            execution: error.execution.clone(),
+        }
     }
 }
 
@@ -43,6 +50,7 @@ pub struct SuccessEnvelope<T> {
     repo_root: Option<String>,
     data: T,
     error: (),
+    pub warnings: Vec<ErrorPayload>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -54,6 +62,7 @@ pub struct ErrorEnvelope {
     repo_root: Option<String>,
     data: (),
     error: ErrorPayload,
+    pub warnings: Vec<ErrorPayload>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -65,6 +74,7 @@ pub struct PartialErrorEnvelope<T> {
     repo_root: Option<String>,
     data: T,
     error: ErrorPayload,
+    pub warnings: Vec<ErrorPayload>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -88,6 +98,7 @@ impl<T> SuccessEnvelope<T> {
             repo_root,
             data,
             error: (),
+            warnings: Vec::new(),
         }
     }
 }
@@ -101,6 +112,7 @@ impl ErrorEnvelope {
             repo_root,
             data: (),
             error,
+            warnings: Vec::new(),
         }
     }
 }
@@ -119,6 +131,7 @@ impl<T> PartialErrorEnvelope<T> {
             repo_root,
             data,
             error,
+            warnings: Vec::new(),
         }
     }
 }
@@ -221,7 +234,7 @@ mod tests {
                 .map(String::as_str)
                 .collect::<std::collections::BTreeSet<_>>();
 
-            assert_eq!(value["schemaVersion"], 2, "{command}");
+            assert_eq!(value["schemaVersion"], 3, "{command}");
             assert_eq!(value["command"], command, "{command}");
             assert_eq!(value["status"], "ok", "{command}");
             assert_eq!(value["repoRoot"], "/repo", "{command}");
@@ -236,6 +249,7 @@ mod tests {
                     "repoRoot",
                     "schemaVersion",
                     "status",
+                    "warnings",
                 ]
                 .into_iter()
                 .collect(),

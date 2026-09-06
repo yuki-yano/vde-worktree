@@ -540,7 +540,7 @@ vw completion zsh --install
 
 ## JSON 契約
 
-`--json` 指定時、stdout はschema version 2の単一 JSON objectです。
+`--json` 指定時、stdout はschema version 3の単一 JSON objectです。
 
 共通成功フィールド:
 
@@ -550,6 +550,7 @@ vw completion zsh --install
 - `repoRoot`
 - `data`
 - `error`
+- `warnings`
 
 エラー時:
 
@@ -558,6 +559,18 @@ vw completion zsh --install
 - `error.code`
 - `error.message`
 - `error.details`
+- `error.execution`: `phase`、`state`、`completed`、`recovery`
+
+`warnings` は常に配列で、各診断は `error` と同じフィールドを持ちます。
+hook の診断には `details.hook`、`details.phase`、`details.logPath` を含め、human 向けの警告も stderr に出します。
+strict post-hook が失敗した場合も `data` を保持し、操作本体と状態保存が完了していれば `error.execution.state` は `applied` になります。
+pre-hook 失敗時の `rolledBack` はコマンド自身の staging の復元を表し、hook が独自に行った副作用の取消しは保証しません。
+
+phase は `parse`、`resolve`、`configure`、`lock`、`recover`、`preflight`、`stage`、`preHook`、`apply`、`finalize`、`postHook`、`process`、`unknown` です。
+state は `notStarted`、`rolledBack`、`applied`、`partial`、`recoveryRequired`、`unknown` です。
+`completed` は完了を観測した処理、`recovery` は残っている stash OID・path・失敗した後処理などを表します。
+`unknown` は結果が確定していないことを表します。いずれの state も、無条件に再実行してよいという意味ではありません。
+一括操作は、成功済みの結果とともに対象ごとの `details` と `execution` を保持します。
 
 ## 設定（config.yml）
 

@@ -837,6 +837,7 @@ fn a020_unabsorb_enforces_safety_and_can_retain_the_exact_transfer_stash() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn transfer_hook_cwd_and_strict_post_failure_preserve_the_applied_result() {
     let fixture = Fixture::new();
     let source = fixture.managed("feature/hook-cwd");
@@ -879,6 +880,9 @@ fn transfer_hook_cwd_and_strict_post_failure_preserve_the_applied_result() {
         ],
     );
     assert_success(&non_strict);
+    let report: Value = serde_json::from_slice(&non_strict.stdout).expect("JSON warning result");
+    assert_eq!(report["warnings"][0]["code"], "HOOK_FAILED");
+    assert_eq!(report["warnings"][0]["details"]["hook"], "post-absorb");
     assert!(String::from_utf8_lossy(&non_strict.stderr).contains("Warning:"));
     assert_eq!(
         fs::read_to_string(pre_pwd).expect("pre pwd").trim(),
@@ -927,7 +931,20 @@ fn transfer_hook_cwd_and_strict_post_failure_preserve_the_applied_result() {
         ],
     );
     let strict = assert_error(&strict, "HOOK_FAILED");
-    assert!(strict["data"].is_null());
+    assert_eq!(strict["data"]["branch"], "feature/hook-strict");
+    assert_eq!(strict["data"]["path"], utf8(&fixture.repo));
+    assert_eq!(strict["error"]["execution"]["phase"], "postHook");
+    assert_eq!(strict["error"]["execution"]["state"], "applied");
+    assert_eq!(strict["error"]["details"]["hook"], "post-absorb");
+    assert_eq!(strict["error"]["details"]["phase"], "post");
+    assert!(
+        Path::new(
+            strict["error"]["details"]["logPath"]
+                .as_str()
+                .expect("hook log path")
+        )
+        .is_file()
+    );
     assert_eq!(
         fs::read_to_string(strict_post_pwd)
             .expect("strict post pwd")

@@ -5,12 +5,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::adapters::git_cli::GitCli;
 use crate::app::error_mapper::MapToCliError;
 use crate::app::misc_commands::copy_worktree_include_paths;
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionReport, ExecutionState};
 use crate::domain::path::{ValidatedManagedPath, ValidatedPathOperationError};
 use crate::domain::repo::RepoContext;
 use crate::domain::worktree::WorktreeSnapshot;
@@ -237,6 +237,8 @@ pub struct AdoptSkipped {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdoptFailed {
+    pub details: BTreeMap<String, Value>,
+    pub execution: ExecutionReport,
     pub branch: String,
     pub from_path: PathBuf,
     pub to_path: PathBuf,
@@ -859,7 +861,10 @@ pub fn apply_adopt<G: CreateMutationGit>(
     let mut failed = Vec::new();
     for candidate in &plan.candidates {
         let result =
-            apply_adopt_candidate(git, &plan.repo_root, &plan.managed_worktree_root, candidate);
+            apply_adopt_candidate(git, &plan.repo_root, &plan.managed_worktree_root, candidate)
+                .map_err(|error| {
+                    error.at_phase(ExecutionPhase::Apply, ExecutionState::Unknown, &[])
+                });
         match result {
             Ok(()) => moved.push(candidate.clone()),
             Err(error) => failed.push(AdoptFailed {
@@ -868,6 +873,8 @@ pub fn apply_adopt<G: CreateMutationGit>(
                 to_path: candidate.to_path.clone(),
                 code: error.code.to_string(),
                 message: error.message,
+                details: error.details,
+                execution: error.execution,
             }),
         }
     }
@@ -887,9 +894,15 @@ fn apply_adopt_candidate<G: CreateMutationGit>(
     managed_worktree_root: &Path,
     candidate: &AdoptCandidate,
 ) -> Result<(), CliError> {
-    revalidate_existing_attachment(git, repo_root, &candidate.branch, &candidate.from_path)?;
+    revalidate_existing_attachment(git, repo_root, &candidate.branch, &candidate.from_path)
+        .map_err(|error| {
+            error.at_phase(ExecutionPhase::Preflight, ExecutionState::NotStarted, &[])
+        })?;
     let target =
-        revalidate_absent_target(managed_worktree_root, &candidate.branch, &candidate.to_path)?;
+        revalidate_absent_target(managed_worktree_root, &candidate.branch, &candidate.to_path)
+            .map_err(|error| {
+                error.at_phase(ExecutionPhase::Preflight, ExecutionState::NotStarted, &[])
+            })?;
     create_parent(&target)?;
     git.run_git_checked(
         repo_root,
@@ -1298,6 +1311,11 @@ fn rollback_created_worktree<G: CreateMutationGit>(
         ] {
             original.details.remove(key);
         }
+        original.execution.recovery.clear();
+        original
+            .execution
+            .completed
+            .push("removeCreatedWorktree".to_owned());
         original
             .details
             .insert("worktreeRolledBack".to_owned(), json!(true));
@@ -1307,7 +1325,24 @@ fn rollback_created_worktree<G: CreateMutationGit>(
     {
         failures.push(error.message);
     }
+    original.execution.state = if failures.is_empty() {
+        ExecutionState::RolledBack
+    } else {
+        ExecutionState::RecoveryRequired
+    };
     if !failures.is_empty() {
+        original
+            .execution
+            .recovery
+            .insert("worktreePath".to_owned(), json!(target));
+        original
+            .execution
+            .recovery
+            .insert("branch".to_owned(), json!(branch));
+        original
+            .execution
+            .recovery
+            .insert("rollbackFailures".to_owned(), json!(failures));
         original
             .details
             .insert("worktreeRollbackFailures".to_owned(), json!(failures));
@@ -2260,6 +2295,9 @@ mod tests {
         let result = apply_adopt(&adapter, &apply).expect("partial result");
         assert!(result.has_failures());
         assert_eq!(result.failed[0].code, "TARGET_PATH_NOT_EMPTY");
+        assert_eq!(result.failed[0].details["path"], json!(target));
+        assert_eq!(result.failed[0].execution.phase, ExecutionPhase::Preflight);
+        assert_eq!(result.failed[0].execution.state, ExecutionState::NotStarted);
         assert!(external.is_dir());
     }
 

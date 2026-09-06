@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::app::error_mapper::MapToCliError;
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionReport, ExecutionState};
 use crate::domain::worktree::{WorktreeSnapshot, WorktreeStatus};
 use crate::ports::process::ProcessOutput;
 use crate::ports::snapshot::GitSnapshotPort;
@@ -268,6 +268,7 @@ impl GonePlan {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoneFailure {
+    pub execution: ExecutionReport,
     pub branch: String,
     pub path: PathBuf,
     pub phase: String,
@@ -436,6 +437,11 @@ fn push_gone_failure(
     error: CliError,
     default_phase: &'static str,
 ) {
+    let error = if error.execution.phase == ExecutionPhase::Unknown {
+        error.at_phase(ExecutionPhase::Preflight, ExecutionState::NotStarted, &[])
+    } else {
+        error
+    };
     let phase = error
         .details
         .get("failedPhase")
@@ -449,6 +455,7 @@ fn push_gone_failure(
         code: error.code.to_string(),
         message: error.message,
         details: error.details,
+        execution: error.execution,
     });
 }
 
@@ -713,7 +720,29 @@ fn deletion_failure(
         .details
         .insert("failedPhase".to_owned(), json!(failed_phase));
     error.details.insert("progress".to_owned(), json!(progress));
+    for (step, done) in [
+        ("worktreeRemove", progress.worktree_removed),
+        ("branchDelete", progress.branch_deleted),
+        ("lifecycleDelete", progress.lifecycle_deleted),
+        ("lockDelete", progress.lock_deleted),
+    ] {
+        if done {
+            error.execution.completed.push(step.to_owned());
+        }
+    }
+    let state = if error.execution.completed.is_empty() {
+        ExecutionState::Unknown
+    } else {
+        ExecutionState::Partial
+    };
+    let phase = if matches!(failed_phase, "lifecycleDelete" | "lockDelete") {
+        ExecutionPhase::Finalize
+    } else {
+        ExecutionPhase::Apply
+    };
     error
+        .at_phase(phase, state, &[])
+        .with_recovery("remainingStep", json!(failed_phase))
 }
 
 fn error<const N: usize>(
@@ -1257,6 +1286,9 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.details["failedPhase"], "branchDelete");
+        assert_eq!(error.execution.state, ExecutionState::Partial);
+        assert_eq!(error.execution.completed, ["worktreeRemove"]);
+        assert_eq!(error.execution.recovery["remainingStep"], "branchDelete");
         assert_eq!(error.details["progress"]["worktreeRemoved"], true);
         assert_eq!(error.details["progress"]["branchDeleted"], false);
 
@@ -1275,6 +1307,11 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.details["failedPhase"], "lifecycleDelete");
+        assert_eq!(error.execution.phase, ExecutionPhase::Finalize);
+        assert_eq!(
+            error.execution.completed,
+            ["worktreeRemove", "branchDelete"]
+        );
         assert_eq!(error.details["progress"]["branchDeleted"], true);
         assert_eq!(error.details["progress"]["lifecycleDeleted"], false);
 

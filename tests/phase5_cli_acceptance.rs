@@ -112,7 +112,7 @@ fn assert_success(output: &Output) {
 fn assert_error(output: &Output, code: &str, exit_code: i32) -> Value {
     let value = json(output);
     assert_eq!(output.status.code(), Some(exit_code));
-    assert_eq!(value["schemaVersion"], 2);
+    assert_eq!(value["schemaVersion"], 3);
     assert_eq!(value["status"], "error");
     assert_eq!(value["error"]["code"], code);
     value
@@ -626,7 +626,7 @@ fn a024_completion_is_repo_independent_json_installable_and_node_free() {
             .expect("generate completion in clean environment");
         assert_success(&output);
         let value = json(&output);
-        assert_eq!(value["schemaVersion"], 2);
+        assert_eq!(value["schemaVersion"], 3);
         assert_eq!(value["command"], "completion");
         assert_eq!(value["repoRoot"], Value::Null);
         assert_eq!(value["data"]["shell"], shell);

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::app::error_mapper::MapToCliError;
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::path::{ValidatedManagedPath, ValidatedPathOperationError};
 use crate::domain::repo::RepoContext;
 use crate::domain::worktree::{WorktreeSnapshot, WorktreeStatus};
@@ -334,7 +334,7 @@ where
             .details
             .insert("repoRoot".to_owned(), json!(repo_root));
     }
-    original
+    annotate_mv_rollback(original, plan, &failures)
 }
 
 fn compensate_applied_mv<G>(
@@ -376,6 +376,42 @@ where
     if !failures.is_empty() {
         original
             .details
+            .insert("rollbackFailures".to_owned(), json!(failures));
+    }
+    annotate_mv_rollback(original, plan, &failures)
+}
+
+fn annotate_mv_rollback(
+    mut original: CliError,
+    plan: &MvApplyPlan,
+    failures: &[String],
+) -> CliError {
+    original.execution.state = if failures.is_empty() {
+        ExecutionState::RolledBack
+    } else {
+        ExecutionState::RecoveryRequired
+    };
+    if failures.is_empty() {
+        original
+            .execution
+            .completed
+            .push("rollbackRename".to_owned());
+    } else {
+        original
+            .execution
+            .recovery
+            .insert("sourcePath".to_owned(), json!(plan.current_path));
+        original
+            .execution
+            .recovery
+            .insert("oldBranch".to_owned(), json!(plan.old_branch));
+        original
+            .execution
+            .recovery
+            .insert("newBranch".to_owned(), json!(plan.new_branch));
+        original
+            .execution
+            .recovery
             .insert("rollbackFailures".to_owned(), json!(failures));
     }
     original
@@ -687,10 +723,26 @@ where
             "recoveryWorktreePath".to_owned(),
             json!(applied.target_path),
         );
-        return Err(error);
+        return Err(error
+            .at_phase(
+                ExecutionPhase::Finalize,
+                ExecutionState::RecoveryRequired,
+                &["apply"],
+            )
+            .with_recovery("stashOid", json!(applied.stash_oid))
+            .with_recovery("worktreePath", json!(applied.target_path)));
     }
     if let Some(stash_oid) = &applied.stash_oid {
-        drop_stash_by_oid(git, &applied.plan.repo_root, stash_oid)?;
+        drop_stash_by_oid(git, &applied.plan.repo_root, stash_oid).map_err(|error| {
+            error
+                .at_phase(
+                    ExecutionPhase::Finalize,
+                    ExecutionState::RecoveryRequired,
+                    &["apply", "persistLifecycle"],
+                )
+                .with_recovery("stashOid", json!(stash_oid))
+                .with_recovery("worktreePath", json!(applied.target_path))
+        })?;
     }
     Ok(ExtractResult {
         branch: applied.plan.branch,
@@ -1236,11 +1288,25 @@ where
     });
     match restore {
         Ok(()) => {
+            original.execution.state = ExecutionState::RolledBack;
+            original
+                .execution
+                .completed
+                .push("restoreSource".to_owned());
             original
                 .details
                 .insert("autoRestoreCompleted".to_owned(), json!(true));
         }
         Err(error) => {
+            original.execution.state = ExecutionState::RecoveryRequired;
+            original
+                .execution
+                .recovery
+                .insert("stashRef".to_owned(), json!(stash_reference));
+            original
+                .execution
+                .recovery
+                .insert("worktreePath".to_owned(), json!(plan.repo_root));
             original
                 .details
                 .insert("autoRestoreFailed".to_owned(), json!(true));
@@ -1298,6 +1364,9 @@ where
 
     let mut error = extract_recovery_details(original, plan, stash_oid, &plan.base_branch);
     if failures.is_empty() {
+        error.execution.state = ExecutionState::RolledBack;
+        error.execution.recovery.clear();
+        error.execution.completed.push("rollbackExtract".to_owned());
         error
             .details
             .insert("autoRestoreCompleted".to_owned(), json!(true));
@@ -1336,6 +1405,11 @@ fn extract_recovery_details(
             .insert("stashOid".to_owned(), json!(stash_oid));
     }
     error
+        .at_phase(ExecutionPhase::Apply, ExecutionState::RecoveryRequired, &[])
+        .with_recovery("stashOid", json!(stash_oid))
+        .with_recovery("worktreePath", json!(plan.target_path))
+        .with_recovery("originalBranch", json!(plan.branch))
+        .with_recovery("currentBranch", json!(current_branch))
 }
 
 fn resolve_stash_top<G>(git: &G, cwd: &Path) -> Result<String, CliError>

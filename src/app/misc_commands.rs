@@ -43,10 +43,10 @@ use nix::unistd::{UnlinkatFlags, symlinkat, unlinkat};
 use rustix::fs::{RenameFlags, renameat_with};
 
 use crate::adapters::git_cli::GitCli;
-use crate::app::error_mapper::{MapToCliError, map_hook_outcome};
+use crate::app::error_mapper::{MapToCliError, map_hook_report, map_transaction_error};
 use crate::app::snapshot::parse_worktree_porcelain;
 use crate::cli::{Command, CompletionCandidateKind, ParsedRequest};
-use crate::domain::error::{CliError, ErrorCode};
+use crate::domain::error::{CliError, ErrorCode, ExecutionPhase, ExecutionState};
 use crate::domain::repo::RepoContext;
 use crate::domain::worktree::GitWorktree;
 use crate::ports::process::{OutputPolicy, ProcessCommand, ProcessRunner, StdinPolicy};
@@ -245,7 +245,7 @@ fn invoke_hook<R: ProcessRunner>(
     )
     .map_err(MapToCliError::map_to_cli_error)?;
     if report.disposition == HookDisposition::Fatal {
-        return Err(map_hook_outcome(&report.outcome));
+        return Err(map_hook_report(&report));
     }
     Ok(MiscCommandOutput::success(json!({ "hook": hook.as_str() })))
 }
@@ -1192,6 +1192,16 @@ struct DestinationHandle {
 fn execute_placement_batch(
     plans: &[PlacementPlan],
     placement: FilePlacement,
+    observer: &impl PlacementObserver,
+) -> Result<Option<CliError>, CliError> {
+    execute_placement_batch_inner(plans, placement, observer)
+        .map(|error| error.map(|error| map_transaction_error(error, ExecutionPhase::Finalize)))
+        .map_err(|error| map_transaction_error(error, ExecutionPhase::Apply))
+}
+
+fn execute_placement_batch_inner(
+    plans: &[PlacementPlan],
+    placement: FilePlacement,
     observer: &dyn PlacementObserver,
 ) -> Result<Option<CliError>, CliError> {
     let target_root = plans
@@ -1248,6 +1258,11 @@ fn execute_placement_batch(
                 .insert("committedState".to_owned(), json!("partial"));
             error.details.insert("committed".to_owned(), json!(true));
         } else {
+            error.execution.state = ExecutionState::RolledBack;
+            error
+                .execution
+                .completed
+                .push("rollbackPlacement".to_owned());
             attach_transaction_cleanup(&mut error, transaction.close());
         }
         return Err(error);
