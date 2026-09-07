@@ -27,6 +27,8 @@ impl Fixture {
         fs::create_dir(&bin).unwrap();
         let fixture = Self { temp, repo, bin };
         fixture.git(&["init", "-q", "-b", "main"]);
+        // Detached auto-maintenance must not change Git files during read-only evidence capture.
+        fixture.git(&["config", "maintenance.auto", "false"]);
         fixture.git(&["config", "user.name", "Test"]);
         fixture.git(&["config", "user.email", "test@example.com"]);
         fixture.git(&["commit", "--allow-empty", "-q", "-m", "initial"]);
