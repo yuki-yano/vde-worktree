@@ -93,21 +93,52 @@ impl Fixture {
     }
 }
 
-fn files(root: &Path) -> BTreeMap<PathBuf, (Option<Vec<u8>>, std::time::SystemTime)> {
+#[derive(Debug, PartialEq, Eq)]
+enum FileEvidence {
+    Directory,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+}
+
+fn files(root: &Path) -> BTreeMap<PathBuf, (FileEvidence, std::time::SystemTime)> {
     let mut result = BTreeMap::new();
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries {
-            let path = entry.unwrap().path();
-            let modified = fs::metadata(&path).unwrap().modified().unwrap();
-            if path.is_dir() {
-                result.insert(path.clone(), (None, modified));
-                result.extend(files(&path));
-            } else {
-                result.insert(path.clone(), (Some(fs::read(path).unwrap()), modified));
-            }
-        }
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return result,
+        Err(error) => panic!("cannot inspect {}: {error}", root.display()),
+    };
+    for entry in entries {
+        let path = entry.unwrap().path();
+        let metadata = fs::symlink_metadata(&path)
+            .unwrap_or_else(|error| panic!("cannot inspect {}: {error}", path.display()));
+        let modified = metadata.modified().unwrap();
+        let evidence = if metadata.file_type().is_symlink() {
+            FileEvidence::Symlink(fs::read_link(&path).unwrap())
+        } else if metadata.is_dir() {
+            result.extend(files(&path));
+            FileEvidence::Directory
+        } else {
+            FileEvidence::File(fs::read(&path).unwrap())
+        };
+        result.insert(path, (evidence, modified));
     }
     result
+}
+
+#[test]
+fn filesystem_evidence_records_dangling_symlinks() {
+    let directory = tempfile::tempdir().unwrap();
+    let link = directory.path().join("dangling");
+    std::os::unix::fs::symlink("missing-target", &link).unwrap();
+    let cycle = directory.path().join("cycle");
+    std::os::unix::fs::symlink(".", &cycle).unwrap();
+    let evidence = files(directory.path());
+    assert_eq!(evidence.len(), 2);
+    assert_eq!(
+        evidence[&link].0,
+        FileEvidence::Symlink("missing-target".into())
+    );
+    assert_eq!(evidence[&cycle].0, FileEvidence::Symlink(".".into()));
 }
 
 #[test]
