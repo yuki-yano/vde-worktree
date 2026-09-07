@@ -454,6 +454,12 @@ fn semantic_constraints(command: &str) -> Vec<Value> {
     if matches!(command, "path" | "exec") {
         constraints.push(json!({"exactlyOne": ["branch", "worktree"]}));
     }
+    if command == "status" {
+        constraints.push(json!({"when": "branch", "conflictsWith": ["worktree"]}));
+    }
+    if matches!(command, "gone" | "adopt") {
+        constraints.push(json!({"when": "apply", "conflictsWith": ["dry_run"]}));
+    }
     if !matches!(command, "status" | "path" | "exec" | "copy" | "link") {
         constraints.push(json!({"unsupported": ["worktree"]}));
     }

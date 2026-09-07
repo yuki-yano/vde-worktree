@@ -164,22 +164,16 @@ pub enum Command {
     /// List worktrees and status metadata.
     List {
         /// Emit a lightweight internal snapshot for monitor integrations.
-        #[arg(
-            long,
-            requires_all = ["json", "no_gh"],
-            conflicts_with = "gh"
-        )]
+        #[arg(long)]
         monitor: bool,
     },
     /// Show a single worktree status.
     Status {
-        #[arg(conflicts_with = "worktree")]
         /// Branch to inspect (default: current worktree).
         branch: Option<String>,
     },
     /// Print the absolute path for a branch worktree.
     Path {
-        #[arg(required_unless_present = "worktree", conflicts_with = "worktree")]
         /// Branch whose attached worktree path is printed.
         branch: Option<String>,
     },
@@ -220,13 +214,13 @@ pub enum Command {
     },
     /// Find or delete stale merged worktrees.
     Gone {
-        #[arg(long, conflicts_with = "dry_run")]
+        #[arg(long)]
         /// Delete the eligible candidates (default: preview only).
         apply: bool,
     },
     /// Find or move unmanaged worktrees into the managed root.
     Adopt {
-        #[arg(long, conflicts_with = "dry_run")]
+        #[arg(long)]
         /// Move eligible external worktrees into the managed root (default: preview only).
         apply: bool,
     },
@@ -287,7 +281,6 @@ pub enum Command {
     Exec {
         #[command(flatten)]
         options: ExecOptions,
-        #[arg(required_unless_present = "worktree", conflicts_with = "worktree")]
         /// Branch whose attached worktree becomes the child process cwd.
         branch: Option<String>,
         #[arg(last = true, required = true, num_args = 1.., allow_hyphen_values = true)]
@@ -416,7 +409,7 @@ pub struct ExecOptions {
     /// Maximum child runtime in milliseconds, including captured stream draining.
     pub timeout_ms: u64,
 
-    #[arg(long, requires = "json", value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     /// Retain at most this many raw bytes per JSON output stream (default: 1048576); drain the rest.
     pub max_output_bytes: Option<u64>,
 
@@ -560,7 +553,9 @@ fn parse_args(args: &[OsString], nested_check: bool) -> CliParseResult {
             }
             apply_toggle(&mut cli.common.hooks, &mut cli.common.no_hooks, hints.hooks);
             apply_toggle(&mut cli.common.gh, &mut cli.common.no_gh, hints.gh);
-            if let Err(error) = validate_common_options(&cli.common) {
+            if let Err(error) = validate_common_options(&cli.common)
+                .and_then(|()| validate_command_options(&cli.command, &cli.common))
+            {
                 let rendered = format!("error: {}\n", error.message);
                 return CliParseResult::Invalid { error, rendered };
             }
@@ -606,6 +601,36 @@ fn validate_common_options(common: &CommonOptions) -> Result<(), CliError> {
     })?;
     validate_fzf_extra_args(&common.fzf_args)
         .map_err(|error| CliError::new(ErrorCode::InvalidArgument, error.to_string()))
+}
+
+fn validate_command_options(command: &Command, common: &CommonOptions) -> Result<(), CliError> {
+    // Clap validates subcommand relations before propagating ancestor global arguments.
+    // Cross-command constraints must use the fully resolved options, independent of argv position.
+    let message = match command {
+        Command::Status { branch: Some(_) }
+        | Command::Path { branch: Some(_) }
+        | Command::Exec {
+            branch: Some(_), ..
+        } if common.worktree.is_some() => Some("branch and --worktree cannot be used together"),
+        Command::Path { branch: None } | Command::Exec { branch: None, .. }
+            if common.worktree.is_none() =>
+        {
+            Some("a branch or --worktree path is required")
+        }
+        Command::Exec { options, .. } if options.max_output_bytes.is_some() && !common.json => {
+            Some("--max-output-bytes requires --json")
+        }
+        Command::List { monitor: true } if !common.json || !common.no_gh || common.gh => {
+            Some("--monitor requires --json and --no-gh, and cannot be used with --gh")
+        }
+        Command::Gone { apply: true } | Command::Adopt { apply: true } if common.dry_run => {
+            Some("--apply and --dry-run cannot be used together")
+        }
+        _ => None,
+    };
+    message.map_or(Ok(()), |message| {
+        Err(CliError::new(ErrorCode::InvalidArgument, message))
+    })
 }
 
 #[derive(Default, Debug)]
@@ -847,6 +872,43 @@ mod tests {
         assert_eq!(before.common, after.common);
         assert!(before.common.json);
         assert_eq!(before.common.lock_timeout_ms, Some(42));
+    }
+
+    #[test]
+    fn validates_global_relations_independently_of_argument_position() {
+        for (globals, command) in [
+            (
+                vec!["--json"],
+                vec!["exec", "topic", "--max-output-bytes", "17"],
+            ),
+            (vec!["--worktree", "/repo/topic"], vec!["exec"]),
+            (vec!["--worktree", "/repo/topic"], vec!["path"]),
+            (vec!["--worktree", "/repo/topic"], vec!["status"]),
+            (vec!["--json", "--no-gh"], vec!["list", "--monitor"]),
+        ] {
+            let child = if command[0] == "exec" {
+                vec!["--", "true"]
+            } else {
+                vec![]
+            };
+            let before = [globals.clone(), command.clone(), child.clone()].concat();
+            let after = [command, globals, child].concat();
+            assert_eq!(request(&before), request(&after), "{before:?}");
+        }
+        for args in [
+            vec!["--worktree", "/repo/topic", "status", "topic"],
+            vec!["--worktree", "/repo/topic", "path", "topic"],
+            vec!["--worktree", "/repo/topic", "exec", "topic", "--", "true"],
+            vec!["--dry-run", "gone", "--apply"],
+            vec!["--dry-run", "adopt", "--apply"],
+            vec!["--json", "list", "--monitor"],
+            vec!["--no-gh", "list", "--monitor"],
+            vec!["path"],
+            vec!["exec", "--", "true"],
+        ] {
+            let result = parse_from([vec!["vw"], args.clone()].concat());
+            assert!(matches!(result, CliParseResult::Invalid { .. }), "{args:?}");
+        }
     }
 
     #[test]

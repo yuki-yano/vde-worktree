@@ -101,7 +101,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
-'(--gh)--monitor[Emit a lightweight internal snapshot for monitor integrations]' \
+'--monitor[Emit a lightweight internal snapshot for monitor integrations]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
 '--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
@@ -288,7 +288,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
-'(--dry-run)--apply[Delete the eligible candidates (default\: preview only)]' \
+'--apply[Delete the eligible candidates (default\: preview only)]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
 '--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \
@@ -314,7 +314,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lock-timeout-ms=[Maximum wait for the repository mutation lock in milliseconds (default\: locks.timeoutMs, 15000)]:LOCK_TIMEOUT_MS:_default' \
 '--prompt=[Override the interactive cd picker prompt]:PROMPT:_default' \
 '*--fzf-arg=[Append one fzf argument; use --fzf-arg=VALUE for values beginning with a dash]:FZF_ARGS:_default' \
-'(--dry-run)--apply[Move eligible external worktrees into the managed root (default\: preview only)]' \
+'--apply[Move eligible external worktrees into the managed root (default\: preview only)]' \
 '--json[Emit one JSON schema 3 object on stdout; diagnostics remain available as structured warnings]' \
 '--dry-run[Inspect a lifecycle mutation without hooks, staging, locks, metadata writes or recovery]' \
 '*--verbose[Show resolved context and result diagnostics on stderr; repeat to include configuration]' \

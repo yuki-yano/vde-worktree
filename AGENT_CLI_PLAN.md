@@ -66,3 +66,7 @@ JSON 契約を変更する場合は現行の単一契約へ更新し、旧 rende
 - vw / vde-worktree の describe が一致し、全27公開コマンドを確認。実 CLI 出力を describe の schema と照合する受け入れテストが成功。
 - 両バイナリから生成した zsh / fish 補完が同梱ファイルとバイト単位で一致。両 shell の構文検査と、fish の両バイナリ名での stdin 候補 `null` / `inherit` の取得が成功。
 - GitHub 応答は制御した fixture で検証。実 GitHub API と他OSの実行は未検証で、push・公開・version 更新は実施しない。
+
+公開準備での追加検証では、subcommand より前の global option が Clap の引数間制約に反映されないケースを修正した。
+`--json`、`--worktree`、monitor、apply / dry-run の制約を解析済み値で検証し、前後どちらの指定位置でも同じ結果になる回帰テストを追加した。
+修正後の全321テスト、fmt、clippy、package 検証、publish dry-run、一時環境へのインストールと実行確認が成功した。

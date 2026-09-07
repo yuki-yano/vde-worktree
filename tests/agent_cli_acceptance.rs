@@ -565,22 +565,29 @@ fn exec_exposes_stdin_limits_and_signal_termination() {
         .unwrap();
     assert!(human.status.success());
     assert_eq!(human.stdout, b"inherited input\n");
-    let limited = fixture.ok(&[
-        "exec",
-        "main",
-        "--json",
-        "--max-output-bytes",
-        "17",
-        "--",
-        "sh",
-        "-c",
-        "head -c 8192 /dev/zero; head -c 8192 /dev/zero >&2",
-    ]);
-    assert_eq!(limited["data"]["childStdout"].as_str().unwrap().len(), 17);
-    assert_eq!(limited["data"]["childStderr"].as_str().unwrap().len(), 17);
-    assert_eq!(limited["data"]["stdoutTruncated"], true);
-    assert_eq!(limited["data"]["stderrTruncated"], true);
-    assert_eq!(limited["data"]["childExitCode"], 0);
+    for prefix in [
+        vec!["exec", "main", "--json"],
+        vec!["--json", "--worktree", ".", "exec"],
+    ] {
+        let args = [
+            prefix,
+            vec![
+                "--max-output-bytes",
+                "17",
+                "--",
+                "sh",
+                "-c",
+                "head -c 8192 /dev/zero; head -c 8192 /dev/zero >&2",
+            ],
+        ]
+        .concat();
+        let limited = fixture.ok(&args);
+        assert_eq!(limited["data"]["childStdout"].as_str().unwrap().len(), 17);
+        assert_eq!(limited["data"]["childStderr"].as_str().unwrap().len(), 17);
+        assert_eq!(limited["data"]["stdoutTruncated"], true);
+        assert_eq!(limited["data"]["stderrTruncated"], true);
+        assert_eq!(limited["data"]["childExitCode"], 0);
+    }
     let output = fixture.run(&[
         "exec",
         "main",
